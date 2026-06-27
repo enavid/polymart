@@ -1,0 +1,24 @@
+site_name: Polymart Documentation
+site_description: White-label, multi-niche e-commerce platform.
+theme:
+  name: material
+  direction: rtl
+  features:
+    - navigation.sections
+    - content.code.copy
+
+nav:
+  - Home: index.md
+  - Research links: 01-research-links.md
+  - Features report: 02-features-report.md
+  - Roadmap: 03-roadmap.md
+  - Observability: 04-observability.md
+  - ADRs:
+      - Record architecture decisions: adr/0001-record-architecture-decisions.md
+      - Clean Architecture layering: adr/0002-clean-architecture-layering.md
+      - Observability stack: adr/0003-observability-stack.md
+
+markdown_extensions:
+  - admonition
+  - pymdownx.superfences
+  - tables
