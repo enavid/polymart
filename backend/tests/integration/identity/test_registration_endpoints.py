@@ -18,6 +18,7 @@ from unittest import mock
 
 import pytest
 from django.contrib.auth import get_user_model
+from rest_framework.response import Response
 from rest_framework.test import APIClient
 from structlog.testing import capture_logs
 
@@ -55,13 +56,11 @@ def fixed_code() -> Iterator[None]:
 
 @pytest.fixture
 def captured_sms() -> Iterator[mock.Mock]:
-    with mock.patch(
-        "src.infrastructure.identity.services.LoggingSmsSender.send_otp"
-    ) as sender:
+    with mock.patch("src.infrastructure.identity.services.LoggingSmsSender.send_otp") as sender:
         yield sender
 
 
-def _request_otp(client: APIClient, purpose: OtpPurpose, phone: str = _PHONE) -> object:
+def _request_otp(client: APIClient, purpose: OtpPurpose, phone: str = _PHONE) -> Response:
     return client.post(
         _REQUEST_URL, {"phone_number": phone, "purpose": purpose.value}, format="json"
     )
@@ -181,9 +180,7 @@ class TestRegister:
         assert response.status_code == 400
         assert not get_user_model().objects.filter(phone_number=_CANONICAL).exists()
 
-    def test_registration_without_a_requested_code_is_rejected(
-        self, client: APIClient
-    ) -> None:
+    def test_registration_without_a_requested_code_is_rejected(self, client: APIClient) -> None:
         response = client.post(
             _REGISTER_URL,
             {"phone_number": _PHONE, "code": _CODE, "password": _PASSWORD},

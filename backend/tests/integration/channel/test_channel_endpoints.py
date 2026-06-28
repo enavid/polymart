@@ -116,9 +116,7 @@ class TestAuthorization:
 
         assert response.status_code == 403
 
-    def test_object_scoped_manager_can_change_its_own_channel(
-        self, auth_client: APIClient
-    ) -> None:
+    def test_object_scoped_manager_can_change_its_own_channel(self, auth_client: APIClient) -> None:
         # An admin creates two channels; a fresh user is scoped to only one.
         for slug, name in (("coffee", "Coffee"), ("tea", "Tea")):
             auth_client.post(
@@ -139,9 +137,7 @@ class TestAuthorization:
             "/api/v1/channels/coffee/", {"is_active": False}, format="json"
         )
         # The same scope must NOT extend to a channel it was not granted.
-        denied = scoped_client.patch(
-            "/api/v1/channels/tea/", {"is_active": False}, format="json"
-        )
+        denied = scoped_client.patch("/api/v1/channels/tea/", {"is_active": False}, format="json")
 
         assert granted.status_code == 200
         assert granted.data["is_active"] is False

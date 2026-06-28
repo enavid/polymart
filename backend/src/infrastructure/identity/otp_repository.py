@@ -23,10 +23,9 @@ class DjangoOtpRepository(OtpRepository):
 
     def get_latest(self, phone_number: str, purpose: OtpPurpose) -> OtpChallenge | None:
         # Default ordering is "-created_at", so .first() is the newest challenge.
-        model = (
-            OtpChallengeModel.objects.filter(phone_number=phone_number, purpose=purpose.value)
-            .first()
-        )
+        model = OtpChallengeModel.objects.filter(
+            phone_number=phone_number, purpose=purpose.value
+        ).first()
         return to_domain(model) if model is not None else None
 
     def _insert(self, challenge: OtpChallenge) -> OtpChallenge:

@@ -24,9 +24,7 @@ from src.infrastructure.identity.user_directory import DjangoUserDirectory
 
 
 def _verifier() -> OtpVerifier:
-    return OtpVerifier(
-        otp_repo=DjangoOtpRepository(), hasher=HmacCodeHasher(), clock=SystemClock()
-    )
+    return OtpVerifier(otp_repo=DjangoOtpRepository(), hasher=HmacCodeHasher(), clock=SystemClock())
 
 
 def build_request_otp() -> RequestOtp:

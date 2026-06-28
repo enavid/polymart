@@ -59,9 +59,7 @@ class FakeOtpRepository(OtpRepository):
 
     def get_latest(self, phone_number: str, purpose: OtpPurpose) -> OtpChallenge | None:
         matching = [
-            row
-            for row in self._rows
-            if row.phone_number == phone_number and row.purpose == purpose
+            row for row in self._rows if row.phone_number == phone_number and row.purpose == purpose
         ]
         if not matching:
             return None
@@ -401,9 +399,7 @@ class TestRegisterUser:
                 phone_number_raw=_PHONE, code=_CODE, password=_PASSWORD, full_name="", email=""
             )
 
-    def test_never_logs_the_password(
-        self, request_otp: RequestOtp, register: RegisterUser
-    ) -> None:
+    def test_never_logs_the_password(self, request_otp: RequestOtp, register: RegisterUser) -> None:
         _issue(request_otp, OtpPurpose.REGISTRATION)
 
         with capture_logs() as logs:
