@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from src.domain.catalog.exceptions import (
     InvalidAttributeChoiceError,
     InvalidAttributeCodeError,
+    InvalidMediaAssetError,
     InvalidProductCodeError,
     InvalidProductTypeCodeError,
     InvalidSkuError,
@@ -27,6 +28,10 @@ _SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 _SKU_RE = re.compile(r"^[A-Z0-9]+(?:-[A-Z0-9]+)*$")
 _SLUG_MAX_LENGTH = 64
 _LABEL_MAX_LENGTH = 255
+_URL_MAX_LENGTH = 2048
+# A media URL is either absolute (a CDN/object-store link) or site-relative (a
+# path served by the platform), so themes can point at either without code changes.
+_URL_PREFIXES = ("http://", "https://", "/")
 
 
 @dataclass(frozen=True)
@@ -109,6 +114,34 @@ class AttributeValue:
 
     attribute: AttributeCode
     value: str
+
+
+@dataclass(frozen=True)
+class MediaAsset:
+    """One image attached to a variant: a URL plus optional alt text.
+
+    The URL may be absolute (``https://...``) or site-relative (``/media/...``);
+    alt text is optional but bounded. This is a reference, not a stored file --
+    upload/storage is an infrastructure concern handled outside the domain.
+    """
+
+    url: str
+    alt_text: str = ""
+
+    def __post_init__(self) -> None:
+        url = self.url.strip()
+        if (
+            not url
+            or len(url) > _URL_MAX_LENGTH
+            or any(ch.isspace() for ch in url)
+            or not url.startswith(_URL_PREFIXES)
+        ):
+            raise InvalidMediaAssetError(f"url {self.url!r}")
+        alt_text = self.alt_text.strip()
+        if len(alt_text) > _LABEL_MAX_LENGTH:
+            raise InvalidMediaAssetError(f"alt_text {self.alt_text!r}")
+        object.__setattr__(self, "url", url)
+        object.__setattr__(self, "alt_text", alt_text)
 
 
 @dataclass(frozen=True)

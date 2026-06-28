@@ -17,6 +17,18 @@ from src.domain.catalog.enums import AttributeInputType
 _CODE_MAX_LENGTH = 64
 _NAME_MAX_LENGTH = 255
 _INPUT_TYPE_MAX_LENGTH = 32
+_KIND_MAX_LENGTH = 16
+_URL_MAX_LENGTH = 2048
+
+# Discriminates how a product type assigns an attribute: product-level (shared by
+# every variant) vs variant-level (an option that distinguishes variants). Stored
+# on the through row so both levels share one ordered table.
+PRODUCT_ATTRIBUTE_KIND = "product"
+VARIANT_ATTRIBUTE_KIND = "variant"
+_ATTRIBUTE_KIND_CHOICES: list[tuple[str, str]] = [
+    (PRODUCT_ATTRIBUTE_KIND, PRODUCT_ATTRIBUTE_KIND),
+    (VARIANT_ATTRIBUTE_KIND, VARIANT_ATTRIBUTE_KIND),
+]
 
 
 class AttributeModel(models.Model):
@@ -99,7 +111,11 @@ class ProductTypeModel(models.Model):
 
 
 class ProductTypeAttributeModel(models.Model):
-    """Ordered assignment of an attribute to a product type (M2M through row)."""
+    """Ordered assignment of an attribute to a product type (M2M through row).
+
+    ``kind`` records the assignment level (product vs variant); ``position`` orders
+    the attributes *within* their level.
+    """
 
     product_type = models.ForeignKey(
         ProductTypeModel, related_name="attribute_links", on_delete=models.CASCADE
@@ -107,13 +123,19 @@ class ProductTypeAttributeModel(models.Model):
     attribute = models.ForeignKey(
         AttributeModel, related_name="product_type_links", on_delete=models.PROTECT
     )
+    kind = models.CharField(
+        max_length=_KIND_MAX_LENGTH,
+        choices=_ATTRIBUTE_KIND_CHOICES,
+        default=PRODUCT_ATTRIBUTE_KIND,
+    )
     position = models.PositiveSmallIntegerField(default=0)
 
     class Meta:
         app_label = "catalog"
         db_table = "catalog_product_type_attribute"
-        ordering = ("position",)
-        # An attribute is assigned to a product type at most once.
+        ordering = ("kind", "position")
+        # An attribute is assigned to a product type at most once, regardless of
+        # level -- this also enforces the domain's "not on both levels" rule.
         constraints: ClassVar[list[models.BaseConstraint]] = [
             models.UniqueConstraint(
                 fields=["product_type", "attribute"],
@@ -202,3 +224,60 @@ class ProductVariantModel(models.Model):
 
     def __str__(self) -> str:
         return self.sku
+
+
+class ProductVariantAttributeValueModel(models.Model):
+    """A variant's value for one of its product type's *variant* attributes."""
+
+    variant = models.ForeignKey(
+        ProductVariantModel, related_name="attribute_values", on_delete=models.CASCADE
+    )
+    attribute = models.ForeignKey(
+        AttributeModel, related_name="variant_values", on_delete=models.PROTECT
+    )
+    # Canonical string form of the value (text, number, boolean literal, or choice
+    # slug); the domain decides conformance before it is stored here.
+    value = models.TextField()
+    position = models.PositiveSmallIntegerField(default=0)
+
+    class Meta:
+        app_label = "catalog"
+        db_table = "catalog_product_variant_attribute_value"
+        ordering = ("position",)
+        # A variant holds at most one value per attribute.
+        constraints: ClassVar[list[models.BaseConstraint]] = [
+            models.UniqueConstraint(
+                fields=["variant", "attribute"],
+                name="uniq_value_per_variant_attribute",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.variant_id}:{self.attribute_id}"
+
+
+class ProductVariantMediaModel(models.Model):
+    """One image attached to a variant (a URL reference, not a stored file)."""
+
+    variant = models.ForeignKey(
+        ProductVariantModel, related_name="media", on_delete=models.CASCADE
+    )
+    # Absolute (CDN) or site-relative URL; the domain validates its shape.
+    url = models.CharField(max_length=_URL_MAX_LENGTH)
+    alt_text = models.CharField(max_length=_NAME_MAX_LENGTH, blank=True, default="")
+    position = models.PositiveSmallIntegerField(default=0)
+
+    class Meta:
+        app_label = "catalog"
+        db_table = "catalog_product_variant_media"
+        ordering = ("position",)
+        # The same image is never listed twice on one variant.
+        constraints: ClassVar[list[models.BaseConstraint]] = [
+            models.UniqueConstraint(
+                fields=["variant", "url"],
+                name="uniq_media_url_per_variant",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.variant_id}:{self.url}"

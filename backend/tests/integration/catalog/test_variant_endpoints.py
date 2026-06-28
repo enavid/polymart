@@ -51,6 +51,34 @@ def _create_product(client: APIClient, code: str = "house-blend") -> None:
     assert response.status_code == 201
 
 
+def _create_product_with_options(client: APIClient, code: str = "house-blend") -> None:
+    """Create a coffee type whose variant-level attribute is a required 'weight'."""
+    assert (
+        client.post(
+            "/api/v1/catalog/attributes/",
+            {"code": "weight", "name": "Weight", "input_type": "number", "required": True},
+            format="json",
+        ).status_code
+        == 201
+    )
+    assert (
+        client.post(
+            "/api/v1/catalog/product-types/",
+            {"code": "coffee", "name": "Coffee", "variant_attributes": ["weight"]},
+            format="json",
+        ).status_code
+        == 201
+    )
+    assert (
+        client.post(
+            "/api/v1/catalog/products/",
+            {"code": code, "name": code.title(), "product_type": "coffee"},
+            format="json",
+        ).status_code
+        == 201
+    )
+
+
 class TestSecurity:
     def test_listing_requires_authentication(self) -> None:
         response = APIClient().get("/api/v1/catalog/products/house-blend/variants/")
@@ -142,6 +170,124 @@ class TestCreate:
 
         response = auth_client.post(
             "/api/v1/catalog/products/house-blend/variants/", {}, format="json"
+        )
+
+        assert response.status_code == 400
+
+
+class TestOptionValues:
+    def test_creates_a_variant_with_conforming_options(self, auth_client: APIClient) -> None:
+        _create_product_with_options(auth_client)
+
+        response = auth_client.post(
+            "/api/v1/catalog/products/house-blend/variants/",
+            {
+                "sku": "coffee-250",
+                "name": "250g Bag",
+                "values": [{"attribute": "weight", "value": "250"}],
+            },
+            format="json",
+        )
+
+        assert response.status_code == 201
+        assert response.data["values"] == [{"attribute": "weight", "value": "250"}]
+
+    def test_missing_required_option_returns_400(self, auth_client: APIClient) -> None:
+        _create_product_with_options(auth_client)
+
+        response = auth_client.post(
+            "/api/v1/catalog/products/house-blend/variants/",
+            {"sku": "coffee-250", "name": "250g Bag"},
+            format="json",
+        )
+
+        assert response.status_code == 400
+
+    def test_value_for_unassigned_attribute_returns_400(self, auth_client: APIClient) -> None:
+        _create_product_with_options(auth_client)
+
+        response = auth_client.post(
+            "/api/v1/catalog/products/house-blend/variants/",
+            {
+                "sku": "coffee-250",
+                "name": "250g Bag",
+                "values": [
+                    {"attribute": "weight", "value": "250"},
+                    {"attribute": "grind", "value": "espresso"},
+                ],
+            },
+            format="json",
+        )
+
+        assert response.status_code == 400
+
+    def test_retrieve_includes_option_values(self, auth_client: APIClient) -> None:
+        _create_product_with_options(auth_client)
+        auth_client.post(
+            "/api/v1/catalog/products/house-blend/variants/",
+            {
+                "sku": "coffee-250",
+                "name": "250g Bag",
+                "values": [{"attribute": "weight", "value": "250"}],
+            },
+            format="json",
+        )
+
+        response = auth_client.get("/api/v1/catalog/variants/COFFEE-250/")
+
+        assert response.status_code == 200
+        assert response.data["values"] == [{"attribute": "weight", "value": "250"}]
+
+
+class TestMedia:
+    def test_creates_a_variant_with_media(self, auth_client: APIClient) -> None:
+        _create_product(auth_client)
+
+        response = auth_client.post(
+            "/api/v1/catalog/products/house-blend/variants/",
+            {
+                "sku": "coffee-250",
+                "name": "250g Bag",
+                "media": [
+                    {"url": "/media/front.jpg", "alt_text": "Front"},
+                    {"url": "https://cdn.example.com/back.jpg"},
+                ],
+            },
+            format="json",
+        )
+
+        assert response.status_code == 201
+        assert response.data["media"] == [
+            {"url": "/media/front.jpg", "alt_text": "Front"},
+            {"url": "https://cdn.example.com/back.jpg", "alt_text": ""},
+        ]
+
+    def test_malformed_media_url_returns_400(self, auth_client: APIClient) -> None:
+        _create_product(auth_client)
+
+        response = auth_client.post(
+            "/api/v1/catalog/products/house-blend/variants/",
+            {
+                "sku": "coffee-250",
+                "name": "250g Bag",
+                "media": [{"url": "ftp://nope/x.jpg"}],
+            },
+            format="json",
+        )
+
+        assert response.status_code == 400
+
+    def test_duplicate_media_url_returns_400(self, auth_client: APIClient) -> None:
+        _create_product(auth_client)
+
+        response = auth_client.post(
+            "/api/v1/catalog/products/house-blend/variants/",
+            {
+                "sku": "coffee-250",
+                "name": "250g Bag",
+                "media": [{"url": "/media/a.jpg"}, {"url": "/media/a.jpg"}],
+            },
+            format="json",
         )
 
         assert response.status_code == 400

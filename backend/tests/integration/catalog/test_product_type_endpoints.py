@@ -87,6 +87,54 @@ class TestCreate:
 
         assert response.status_code == 201
         assert response.data["attributes"] == []
+        assert response.data["variant_attributes"] == []
+
+    def test_creates_a_type_with_variant_attributes_in_order(
+        self, auth_client: APIClient
+    ) -> None:
+        _create_attribute(auth_client, "origin")
+        _create_attribute(auth_client, "weight")
+        _create_attribute(auth_client, "grind")
+
+        response = auth_client.post(
+            "/api/v1/catalog/product-types/",
+            {
+                "code": "coffee",
+                "name": "Coffee",
+                "attributes": ["origin"],
+                "variant_attributes": ["weight", "grind"],
+            },
+            format="json",
+        )
+
+        assert response.status_code == 201
+        assert response.data["attributes"] == ["origin"]
+        assert response.data["variant_attributes"] == ["weight", "grind"]
+
+    def test_attribute_on_both_levels_returns_400(self, auth_client: APIClient) -> None:
+        _create_attribute(auth_client, "origin")
+
+        response = auth_client.post(
+            "/api/v1/catalog/product-types/",
+            {
+                "code": "coffee",
+                "name": "Coffee",
+                "attributes": ["origin"],
+                "variant_attributes": ["origin"],
+            },
+            format="json",
+        )
+
+        assert response.status_code == 400
+
+    def test_unknown_variant_attribute_returns_400(self, auth_client: APIClient) -> None:
+        response = auth_client.post(
+            "/api/v1/catalog/product-types/",
+            {"code": "coffee", "name": "Coffee", "variant_attributes": ["ghost"]},
+            format="json",
+        )
+
+        assert response.status_code == 400
 
     def test_audit_event_records_the_authenticated_actor(
         self, auth_client: APIClient, admin_user: AbstractBaseUser

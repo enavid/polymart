@@ -12,7 +12,11 @@ from src.domain.catalog.exceptions import (
     UnknownAttributeError,
 )
 from src.domain.catalog.value_objects import AttributeCode, ProductTypeCode
-from src.infrastructure.catalog.models import ProductTypeAttributeModel, ProductTypeModel
+from src.infrastructure.catalog.models import (
+    VARIANT_ATTRIBUTE_KIND,
+    ProductTypeAttributeModel,
+    ProductTypeModel,
+)
 from src.infrastructure.catalog.repositories import (
     DjangoAttributeRepository,
     DjangoProductTypeRepository,
@@ -55,6 +59,50 @@ class TestAdd:
             ("roast-level", 0),
             ("origin", 1),
         ]
+
+    def test_persists_and_round_trips_both_attribute_levels(self) -> None:
+        _seed_attributes("origin", "weight", "grind")
+        repo = DjangoProductTypeRepository()
+
+        stored = repo.add(
+            ProductType(
+                code=ProductTypeCode("coffee"),
+                name="Coffee",
+                attributes=(AttributeCode("origin"),),
+                variant_attributes=(AttributeCode("weight"), AttributeCode("grind")),
+            )
+        )
+
+        # Returned entity keeps each level in its declared order.
+        assert [a.value for a in stored.attributes] == ["origin"]
+        assert [a.value for a in stored.variant_attributes] == ["weight", "grind"]
+        # And a fresh read reconstructs the same split.
+        loaded = repo.get_by_code("coffee")
+        assert [a.value for a in loaded.attributes] == ["origin"]
+        assert [a.value for a in loaded.variant_attributes] == ["weight", "grind"]
+        # Variant links carry the variant kind, positioned within their own level.
+        variant_rows = ProductTypeAttributeModel.objects.filter(
+            product_type_id=stored.id, kind=VARIANT_ATTRIBUTE_KIND
+        ).order_by("position")
+        assert [(r.attribute.code, r.position) for r in variant_rows] == [
+            ("weight", 0),
+            ("grind", 1),
+        ]
+
+    def test_rejects_a_reference_to_a_vanished_variant_attribute(self) -> None:
+        # Defensive guard for the concurrent-deletion race on a variant attribute.
+        repo = DjangoProductTypeRepository()
+
+        with pytest.raises(UnknownAttributeError):
+            repo.add(
+                ProductType(
+                    code=ProductTypeCode("coffee"),
+                    name="Coffee",
+                    variant_attributes=(AttributeCode("ghost"),),
+                )
+            )
+
+        assert ProductTypeModel.objects.filter(code="coffee").exists() is False
 
     def test_persists_a_type_without_attributes(self) -> None:
         stored = DjangoProductTypeRepository().add(

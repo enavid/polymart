@@ -74,7 +74,11 @@ def build_list_products() -> ListProducts:
 
 def build_create_variant() -> CreateVariant:
     return CreateVariant(
-        DjangoVariantRepository(), DjangoProductRepository(), build_audit_recorder()
+        DjangoVariantRepository(),
+        DjangoProductRepository(),
+        DjangoProductTypeRepository(),
+        DjangoAttributeRepository(),
+        build_audit_recorder(),
     )
 
 

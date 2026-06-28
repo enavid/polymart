@@ -8,11 +8,13 @@ from src.domain.catalog.value_objects import (
     AttributeChoice,
     AttributeCode,
     AttributeValue,
+    MediaAsset,
     ProductCode,
     ProductTypeCode,
     Sku,
 )
 from src.infrastructure.catalog.models import (
+    VARIANT_ATTRIBUTE_KIND,
     AttributeModel,
     ProductModel,
     ProductTypeModel,
@@ -52,15 +54,21 @@ def product_type_to_domain(model: ProductTypeModel) -> ProductType:
     """Rebuild a product type from a persisted row and its ordered attribute links.
 
     Relies on the caller having loaded ``attribute_links`` (and each link's
-    ``attribute``), ordered by position via the link model's ``Meta.ordering``.
+    ``attribute``), ordered by (kind, position) via the link model's
+    ``Meta.ordering`` so each level comes back in its declared order.
     """
+    product_attributes: list[AttributeCode] = []
+    variant_attributes: list[AttributeCode] = []
+    for link in model.attribute_links.all():
+        code = AttributeCode(link.attribute.code)
+        bucket = variant_attributes if link.kind == VARIANT_ATTRIBUTE_KIND else product_attributes
+        bucket.append(code)
     return ProductType(
         id=model.pk,
         code=ProductTypeCode(model.code),
         name=model.name,
-        attributes=tuple(
-            AttributeCode(link.attribute.code) for link in model.attribute_links.all()
-        ),
+        attributes=tuple(product_attributes),
+        variant_attributes=tuple(variant_attributes),
     )
 
 
@@ -105,16 +113,25 @@ def apply_product_scalar_fields(product: Product, model: ProductModel) -> Produc
 
 
 def variant_to_domain(model: ProductVariantModel) -> ProductVariant:
-    """Rebuild a variant from a persisted row.
+    """Rebuild a variant from a persisted row and its ordered option values.
 
     Relies on the caller having loaded the related ``product`` (via
-    ``select_related``) so reading the parent code triggers no extra query.
+    ``select_related``) and the ``attribute_values`` (and each value's
+    ``attribute``) and ``media`` (via ``prefetch_related``) so the mapper triggers
+    no extra query.
     """
     return ProductVariant(
         id=model.pk,
         product=ProductCode(model.product.code),
         sku=Sku(model.sku),
         name=model.name,
+        values=tuple(
+            AttributeValue(attribute=AttributeCode(value.attribute.code), value=value.value)
+            for value in model.attribute_values.all()
+        ),
+        media=tuple(
+            MediaAsset(url=asset.url, alt_text=asset.alt_text) for asset in model.media.all()
+        ),
     )
 
 

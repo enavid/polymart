@@ -200,6 +200,90 @@ class TestCreateProductType:
                 )
             )
 
+    def test_persists_variant_attributes_in_order(
+        self,
+        product_types: FakeProductTypeRepository,
+        attributes: FakeAttributeRepository,
+        audit: FakeAuditRecorder,
+    ) -> None:
+        _seed_attribute(attributes, audit, "origin")
+        _seed_attribute(attributes, audit, "weight")
+        _seed_attribute(attributes, audit, "grind")
+
+        product_type = CreateProductType(product_types, attributes, audit).execute(
+            CreateProductTypeCommand(
+                code="coffee",
+                name="Coffee",
+                attributes=("origin",),
+                variant_attributes=("weight", "grind"),
+            )
+        )
+
+        assert [a.value for a in product_type.attributes] == ["origin"]
+        assert [a.value for a in product_type.variant_attributes] == ["weight", "grind"]
+
+    def test_rejects_an_unknown_variant_attribute_reference(
+        self,
+        product_types: FakeProductTypeRepository,
+        attributes: FakeAttributeRepository,
+        audit: FakeAuditRecorder,
+    ) -> None:
+        _seed_attribute(attributes, audit, "origin")
+
+        with pytest.raises(UnknownAttributeError):
+            CreateProductType(product_types, attributes, audit).execute(
+                CreateProductTypeCommand(
+                    code="coffee",
+                    name="Coffee",
+                    attributes=("origin",),
+                    variant_attributes=("ghost",),
+                )
+            )
+
+        assert product_types.list_all() == []
+
+    def test_rejects_an_attribute_assigned_to_both_levels(
+        self,
+        product_types: FakeProductTypeRepository,
+        attributes: FakeAttributeRepository,
+        audit: FakeAuditRecorder,
+    ) -> None:
+        _seed_attribute(attributes, audit, "origin")
+
+        with pytest.raises(DuplicateAttributeAssignmentError):
+            CreateProductType(product_types, attributes, audit).execute(
+                CreateProductTypeCommand(
+                    code="coffee",
+                    name="Coffee",
+                    attributes=("origin",),
+                    variant_attributes=("origin",),
+                )
+            )
+
+    def test_audit_entry_counts_both_attribute_levels(
+        self,
+        product_types: FakeProductTypeRepository,
+        attributes: FakeAttributeRepository,
+        audit: FakeAuditRecorder,
+    ) -> None:
+        _seed_attribute(attributes, audit, "origin")
+        _seed_attribute(attributes, audit, "weight")
+
+        CreateProductType(product_types, attributes, audit).execute(
+            CreateProductTypeCommand(
+                code="coffee",
+                name="Coffee",
+                attributes=("origin",),
+                variant_attributes=("weight",),
+            ),
+            actor="operator",
+        )
+
+        call = next(c for c in audit.calls if c.action == "product_type.created")
+        recorded = {change.field: change.after for change in call.changes}
+        assert recorded["attribute_count"] == 1
+        assert recorded["variant_attribute_count"] == 1
+
     def test_rejects_a_duplicate_code(
         self,
         product_types: FakeProductTypeRepository,

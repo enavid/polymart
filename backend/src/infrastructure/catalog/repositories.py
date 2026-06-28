@@ -23,6 +23,7 @@ from src.domain.catalog.exceptions import (
     VariantAlreadyExistsError,
     VariantNotFoundError,
 )
+from src.domain.catalog.value_objects import AttributeCode
 from src.infrastructure.catalog.mappers import (
     apply_product_scalar_fields,
     apply_product_type_scalar_fields,
@@ -34,12 +35,16 @@ from src.infrastructure.catalog.mappers import (
     variant_to_domain,
 )
 from src.infrastructure.catalog.models import (
+    PRODUCT_ATTRIBUTE_KIND,
+    VARIANT_ATTRIBUTE_KIND,
     AttributeChoiceModel,
     AttributeModel,
     ProductAttributeValueModel,
     ProductModel,
     ProductTypeAttributeModel,
     ProductTypeModel,
+    ProductVariantAttributeValueModel,
+    ProductVariantMediaModel,
     ProductVariantModel,
 )
 
@@ -49,6 +54,9 @@ logger = structlog.get_logger(__name__)
 # the mappers never trigger a per-row query.
 _PRODUCT_TYPE_PREFETCH = "attribute_links__attribute"
 _PRODUCT_VALUES_PREFETCH = "attribute_values__attribute"
+# A variant's option values and media are both loaded up front so the mapper never
+# triggers a per-row query.
+_VARIANT_PREFETCH = ("attribute_values__attribute", "media")
 
 
 class DjangoAttributeRepository(AttributeRepository):
@@ -115,14 +123,32 @@ class DjangoProductTypeRepository(ProductTypeRepository):
             raise ProductTypeAlreadyExistsError(product_type.code.value) from exc
         return self.get_by_code(product_type.code.value)
 
-    @staticmethod
-    def _link_attributes(product_type: ProductType, model: ProductTypeModel) -> None:
-        # Resolve the referenced codes to rows in one query, preserving the
-        # product type's declared order via the link position.
-        codes = [attribute.value for attribute in product_type.attributes]
+    @classmethod
+    def _link_attributes(cls, product_type: ProductType, model: ProductTypeModel) -> None:
+        # Resolve every referenced code (both levels) to a row in one query,
+        # preserving each level's declared order via the link position.
+        codes = [
+            attribute.value
+            for attribute in (*product_type.attributes, *product_type.variant_attributes)
+        ]
         by_code = {a.code: a for a in AttributeModel.objects.filter(code__in=codes)}
+        links = [
+            *cls._level_links(product_type.attributes, model, by_code, PRODUCT_ATTRIBUTE_KIND),
+            *cls._level_links(
+                product_type.variant_attributes, model, by_code, VARIANT_ATTRIBUTE_KIND
+            ),
+        ]
+        ProductTypeAttributeModel.objects.bulk_create(links)
+
+    @staticmethod
+    def _level_links(
+        attributes: tuple[AttributeCode, ...],
+        model: ProductTypeModel,
+        by_code: dict[str, AttributeModel],
+        kind: str,
+    ) -> list[ProductTypeAttributeModel]:
         links = []
-        for position, attribute in enumerate(product_type.attributes):
+        for position, attribute in enumerate(attributes):
             attribute_model = by_code.get(attribute.value)
             if attribute_model is None:
                 # The use case validated existence; reaching here means the
@@ -130,10 +156,10 @@ class DjangoProductTypeRepository(ProductTypeRepository):
                 raise UnknownAttributeError(attribute.value)
             links.append(
                 ProductTypeAttributeModel(
-                    product_type=model, attribute=attribute_model, position=position
+                    product_type=model, attribute=attribute_model, kind=kind, position=position
                 )
             )
-        ProductTypeAttributeModel.objects.bulk_create(links)
+        return links
 
     def get_by_code(self, code: str) -> ProductType:
         try:
@@ -229,9 +255,14 @@ class DjangoVariantRepository(VariantRepository):
     """Persist product variants with the Django ORM, returning domain entities."""
 
     def add(self, variant: ProductVariant) -> ProductVariant:
-        model = self._build_model(variant)
         try:
-            model.save()
+            # A variant and all its option values are one unit: persist them
+            # together so a failed value insert leaves nothing behind.
+            with transaction.atomic():
+                model = self._build_model(variant)
+                model.save()
+                self._save_values(variant, model)
+                self._save_media(variant, model)
         except IntegrityError as exc:
             # Unique-constraint violation on SKU -> domain-level conflict (a
             # concurrent insert won the race after the use case's pre-check).
@@ -250,9 +281,48 @@ class DjangoVariantRepository(VariantRepository):
             raise ProductNotFoundError(code) from exc
         return apply_variant_scalar_fields(variant, ProductVariantModel(product=product))
 
+    @staticmethod
+    def _save_values(variant: ProductVariant, model: ProductVariantModel) -> None:
+        # Resolve the referenced attribute codes to rows in one query, preserving
+        # the conformance-checked order via the value position.
+        codes = [value.attribute.value for value in variant.values]
+        by_code = {a.code: a for a in AttributeModel.objects.filter(code__in=codes)}
+        rows = []
+        for position, value in enumerate(variant.values):
+            attribute_model = by_code.get(value.attribute.value)
+            if attribute_model is None:
+                # The use case validated existence; reaching here means the
+                # attribute vanished concurrently. Surface it as a domain error.
+                raise UnknownAttributeError(value.attribute.value)
+            rows.append(
+                ProductVariantAttributeValueModel(
+                    variant=model,
+                    attribute=attribute_model,
+                    value=value.value,
+                    position=position,
+                )
+            )
+        ProductVariantAttributeValueModel.objects.bulk_create(rows)
+
+    @staticmethod
+    def _save_media(variant: ProductVariant, model: ProductVariantModel) -> None:
+        ProductVariantMediaModel.objects.bulk_create(
+            ProductVariantMediaModel(
+                variant=model,
+                url=asset.url,
+                alt_text=asset.alt_text,
+                position=position,
+            )
+            for position, asset in enumerate(variant.media)
+        )
+
     def get_by_sku(self, sku: str) -> ProductVariant:
         try:
-            model = ProductVariantModel.objects.select_related("product").get(sku=sku)
+            model = (
+                ProductVariantModel.objects.select_related("product")
+                .prefetch_related(*_VARIANT_PREFETCH)
+                .get(sku=sku)
+            )
         except ProductVariantModel.DoesNotExist as exc:
             raise VariantNotFoundError(sku) from exc
         return variant_to_domain(model)
@@ -261,7 +331,9 @@ class DjangoVariantRepository(VariantRepository):
         return ProductVariantModel.objects.filter(sku=sku).exists()
 
     def list_for_product(self, product_code: str) -> list[ProductVariant]:
-        models = ProductVariantModel.objects.select_related("product").filter(
-            product__code=product_code
+        models = (
+            ProductVariantModel.objects.select_related("product")
+            .prefetch_related(*_VARIANT_PREFETCH)
+            .filter(product__code=product_code)
         )
         return [variant_to_domain(model) for model in models]

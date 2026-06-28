@@ -39,6 +39,7 @@ from src.domain.catalog.value_objects import (
     AttributeChoice,
     AttributeCode,
     AttributeValue,
+    MediaAsset,
     ProductCode,
     ProductTypeCode,
     Sku,
@@ -169,6 +170,7 @@ class CreateProductTypeCommand:
     code: str
     name: str
     attributes: tuple[str, ...] = field(default_factory=tuple)
+    variant_attributes: tuple[str, ...] = field(default_factory=tuple)
 
 
 class CreateProductType:
@@ -187,16 +189,21 @@ class CreateProductType:
     def execute(
         self, command: CreateProductTypeCommand, *, actor: str | None = None
     ) -> ProductType:
-        # Build value objects first: invalid input (codes, name, duplicate refs)
-        # fails fast, before any I/O.
+        # Build value objects first: invalid input (codes, name, duplicate refs
+        # within or across the two attribute levels) fails fast, before any I/O.
         product_type = ProductType(
             code=ProductTypeCode(command.code),
             name=command.name,
             attributes=tuple(AttributeCode(code) for code in command.attributes),
+            variant_attributes=tuple(AttributeCode(code) for code in command.variant_attributes),
         )
         code = product_type.code.value
 
-        self._reject_unknown_attributes(product_type.attributes, actor=actor)
+        # Both levels reference real attributes; uniqueness across them is already
+        # enforced by the entity.
+        self._reject_unknown_attributes(
+            (*product_type.attributes, *product_type.variant_attributes), actor=actor
+        )
 
         # Pre-check for a clean error; the repository remains the source of truth
         # and will still raise on a concurrent insert.
@@ -210,6 +217,7 @@ class CreateProductType:
             product_type_id=persisted.id,
             code=code,
             attribute_count=len(persisted.attributes),
+            variant_attribute_count=len(persisted.variant_attributes),
             actor=actor,
         )
         self._audit.record(
@@ -220,6 +228,10 @@ class CreateProductType:
             changes=(
                 FieldChange(field="code", after=code),
                 FieldChange(field="attribute_count", after=len(persisted.attributes)),
+                FieldChange(
+                    field="variant_attribute_count",
+                    after=len(persisted.variant_attributes),
+                ),
             ),
         )
         return persisted
@@ -378,19 +390,31 @@ class ListProducts:
 
 
 @dataclass(frozen=True)
+class MediaInput:
+    """Raw media input for a variant. Validated into a ``MediaAsset`` by the domain."""
+
+    url: str
+    alt_text: str = ""
+
+
+@dataclass(frozen=True)
 class CreateVariantCommand:
     """Input for creating a variant. Raw strings are validated by the domain."""
 
     product: str
     sku: str
     name: str
+    values: tuple[AttributeValueInput, ...] = field(default_factory=tuple)
+    media: tuple[MediaInput, ...] = field(default_factory=tuple)
 
 
 class CreateVariant:
     """Create a sellable variant under an existing product.
 
-    The parent product lives in another aggregate, so this use case verifies its
-    existence before persisting; it owns only the orchestration (build, verify,
+    The parent product, its product type, and the attribute definitions all live
+    in other aggregates, so this use case loads them, delegates option-value
+    conformance to the domain service (against the type's *variant* attributes),
+    then persists. It owns only the orchestration (build, verify, conform,
     persist, observe).
     """
 
@@ -398,26 +422,46 @@ class CreateVariant:
         self,
         repository: VariantRepository,
         products: ProductRepository,
+        product_types: ProductTypeRepository,
+        attributes: AttributeRepository,
         audit: AuditRecorder,
     ) -> None:
         self._repository = repository
         self._products = products
+        self._product_types = product_types
+        self._attributes = attributes
         self._audit = audit
 
     def execute(self, command: CreateVariantCommand, *, actor: str | None = None) -> ProductVariant:
-        # Build value objects first: a malformed SKU or blank name fails fast,
-        # before any I/O.
+        # Build value objects first: a malformed SKU, blank name, or duplicate
+        # value fails fast, before any I/O.
         variant = ProductVariant(
             product=ProductCode(command.product),
             sku=Sku(command.sku),
             name=command.name,
+            values=tuple(
+                AttributeValue(attribute=AttributeCode(item.attribute), value=item.value)
+                for item in command.values
+            ),
+            media=tuple(
+                MediaAsset(url=item.url, alt_text=item.alt_text) for item in command.media
+            ),
         )
         product_code = variant.product.value
         sku = variant.sku.value
 
         # The parent must exist; raise ProductNotFoundError otherwise (a 404 at the
         # transport edge). The repository defends the concurrent-deletion race too.
-        self._products.get_by_code(product_code)
+        product = self._products.get_by_code(product_code)
+
+        # Conform the option values to the product type's *variant* attributes,
+        # reusing the same domain service the product head uses for its values.
+        product_type = self._product_types.get_by_code(product.product_type.value)
+        definitions = [
+            self._attributes.get_by_code(attribute.value)
+            for attribute in product_type.variant_attributes
+        ]
+        variant.values = normalize_attribute_values(definitions, variant.values)
 
         # Pre-check for a clean error; the repository remains the source of truth
         # and will still raise on a concurrent insert.
@@ -431,6 +475,8 @@ class CreateVariant:
             variant_id=persisted.id,
             sku=sku,
             product=product_code,
+            value_count=len(persisted.values),
+            media_count=len(persisted.media),
             actor=actor,
         )
         self._audit.record(
@@ -441,6 +487,8 @@ class CreateVariant:
             changes=(
                 FieldChange(field="sku", after=sku),
                 FieldChange(field="product", after=product_code),
+                FieldChange(field="value_count", after=len(persisted.values)),
+                FieldChange(field="media_count", after=len(persisted.media)),
             ),
         )
         return persisted

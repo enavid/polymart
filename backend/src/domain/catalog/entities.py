@@ -20,6 +20,7 @@ from src.domain.catalog.exceptions import (
     DuplicateAttributeAssignmentError,
     DuplicateAttributeChoiceError,
     DuplicateAttributeValueError,
+    DuplicateMediaAssetError,
     InvalidAttributeNameError,
     InvalidProductMetadataError,
     InvalidProductNameError,
@@ -30,6 +31,7 @@ from src.domain.catalog.value_objects import (
     AttributeChoice,
     AttributeCode,
     AttributeValue,
+    MediaAsset,
     ProductCode,
     ProductTypeCode,
     Sku,
@@ -89,23 +91,31 @@ class Attribute:
 
 @dataclass
 class ProductType:
-    """A named template that assigns a set of attributes to its products.
+    """A named template that assigns attributes to its products.
 
     The product type references attributes by code (it does not own them) in a
-    stable display order, and never references the same attribute twice. Whether
-    each referenced attribute actually exists is an application-layer concern
-    (validated against the attribute repository), since the entity cannot reach
-    persistence.
+    stable display order, split across two levels: ``attributes`` are
+    product-level (shared by every variant) and ``variant_attributes`` are the
+    options that distinguish one variant from another (size, grind). A single
+    attribute is assigned at most once *across both levels* -- being product- and
+    variant-level at the same time would make a variant's value ambiguous.
+
+    Whether each referenced attribute actually exists is an application-layer
+    concern (validated against the attribute repository), since the entity cannot
+    reach persistence.
     """
 
     code: ProductTypeCode
     name: str
     attributes: tuple[AttributeCode, ...] = ()
+    variant_attributes: tuple[AttributeCode, ...] = ()
     id: int | None = field(default=None)
 
     def __post_init__(self) -> None:
         self.name = self._validated_name(self.name)
-        self.attributes = self._validated_attributes(self.attributes)
+        self.attributes = tuple(self.attributes)
+        self.variant_attributes = tuple(self.variant_attributes)
+        self._reject_duplicate_assignments()
 
     @staticmethod
     def _validated_name(raw: str) -> str:
@@ -114,17 +124,14 @@ class ProductType:
             raise InvalidProductTypeNameError(raw)
         return name
 
-    @staticmethod
-    def _validated_attributes(
-        attributes: tuple[AttributeCode, ...],
-    ) -> tuple[AttributeCode, ...]:
-        attributes = tuple(attributes)
+    def _reject_duplicate_assignments(self) -> None:
+        # Uniqueness spans both levels: no attribute may repeat within a level or
+        # appear on both, so a variant value always maps to exactly one definition.
         seen: set[str] = set()
-        for attribute in attributes:
+        for attribute in (*self.attributes, *self.variant_attributes):
             if attribute.value in seen:
                 raise DuplicateAttributeAssignmentError(attribute.value)
             seen.add(attribute.value)
-        return attributes
 
 
 @dataclass
@@ -192,20 +199,26 @@ class Product:
 class ProductVariant:
     """A sellable instance of a product, identified by a unique SKU.
 
-    A variant references its parent product by code (it does not own it) and carries
-    its own stock-keeping identity. Whether the parent product exists is an
-    application-layer concern, validated against the product repository, since the
-    entity cannot reach persistence. This entity owns only its structural rule: a
-    non-blank, bounded display name.
+    A variant references its parent product by code (it does not own it), carries
+    its own stock-keeping identity, and supplies values for the *option*
+    (variant-level) attributes of its product type. Whether the parent product
+    exists, and whether each value conforms to a declared variant attribute, are
+    application-layer concerns (the latter delegated to the conformance domain
+    service). This entity owns only structural rules: a non-blank, bounded display
+    name and at most one value per attribute.
     """
 
     product: ProductCode
     sku: Sku
     name: str
+    values: tuple[AttributeValue, ...] = ()
+    media: tuple[MediaAsset, ...] = ()
     id: int | None = field(default=None)
 
     def __post_init__(self) -> None:
         self.name = self._validated_name(self.name)
+        self.values = self._validated_values(self.values)
+        self.media = self._validated_media(self.media)
 
     @staticmethod
     def _validated_name(raw: str) -> str:
@@ -213,3 +226,26 @@ class ProductVariant:
         if not name or len(name) > _NAME_MAX_LENGTH:
             raise InvalidVariantNameError(raw)
         return name
+
+    @staticmethod
+    def _validated_values(
+        values: tuple[AttributeValue, ...],
+    ) -> tuple[AttributeValue, ...]:
+        values = tuple(values)
+        seen: set[str] = set()
+        for value in values:
+            code = value.attribute.value
+            if code in seen:
+                raise DuplicateAttributeValueError(code)
+            seen.add(code)
+        return values
+
+    @staticmethod
+    def _validated_media(media: tuple[MediaAsset, ...]) -> tuple[MediaAsset, ...]:
+        media = tuple(media)
+        seen: set[str] = set()
+        for asset in media:
+            if asset.url in seen:
+                raise DuplicateMediaAssetError(asset.url)
+            seen.add(asset.url)
+        return media

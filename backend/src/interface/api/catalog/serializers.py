@@ -45,6 +45,7 @@ class ProductTypeSerializer(serializers.Serializer):
     code = serializers.CharField()
     name = serializers.CharField()
     attributes = serializers.ListField(child=serializers.CharField())
+    variant_attributes = serializers.ListField(child=serializers.CharField())
 
 
 class CreateProductTypeSerializer(serializers.Serializer):
@@ -53,6 +54,9 @@ class CreateProductTypeSerializer(serializers.Serializer):
     code = serializers.CharField()
     name = serializers.CharField()
     attributes = serializers.ListField(
+        child=serializers.CharField(), required=False, default=list
+    )
+    variant_attributes = serializers.ListField(
         child=serializers.CharField(), required=False, default=list
     )
 
@@ -85,6 +89,13 @@ class CreateProductSerializer(serializers.Serializer):
     metadata = serializers.DictField(child=serializers.CharField(), required=False, default=dict)
 
 
+class VariantMediaSerializer(serializers.Serializer):
+    """One media asset (image) attached to a variant."""
+
+    url = serializers.CharField()
+    alt_text = serializers.CharField(required=False, default="", allow_blank=True)
+
+
 class VariantSerializer(serializers.Serializer):
     """Response projection of a product variant."""
 
@@ -92,6 +103,8 @@ class VariantSerializer(serializers.Serializer):
     product = serializers.CharField()
     sku = serializers.CharField()
     name = serializers.CharField()
+    values = AttributeValueSerializer(many=True)
+    media = VariantMediaSerializer(many=True)
 
 
 class CreateVariantSerializer(serializers.Serializer):
@@ -99,3 +112,5 @@ class CreateVariantSerializer(serializers.Serializer):
 
     sku = serializers.CharField()
     name = serializers.CharField()
+    values = AttributeValueSerializer(many=True, required=False, default=list)
+    media = VariantMediaSerializer(many=True, required=False, default=list)

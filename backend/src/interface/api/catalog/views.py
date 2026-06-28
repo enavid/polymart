@@ -23,6 +23,7 @@ from src.application.catalog.use_cases import (
     CreateProductCommand,
     CreateProductTypeCommand,
     CreateVariantCommand,
+    MediaInput,
 )
 from src.domain.catalog.entities import Attribute, Product, ProductType, ProductVariant
 from src.domain.catalog.exceptions import (
@@ -159,6 +160,9 @@ def _product_type_payload(product_type: ProductType) -> dict[str, object]:
         "code": product_type.code.value,
         "name": product_type.name,
         "attributes": [attribute.value for attribute in product_type.attributes],
+        "variant_attributes": [
+            attribute.value for attribute in product_type.variant_attributes
+        ],
     }
 
 
@@ -189,6 +193,7 @@ class ProductTypeListCreateView(APIView):
             code=data["code"],
             name=data["name"],
             attributes=tuple(data["attributes"]),
+            variant_attributes=tuple(data["variant_attributes"]),
         )
         try:
             product_type = build_create_product_type().execute(command, actor=_actor(request))
@@ -294,6 +299,11 @@ def _variant_payload(variant: ProductVariant) -> dict[str, object]:
         "product": variant.product.value,
         "sku": variant.sku.value,
         "name": variant.name,
+        "values": [
+            {"attribute": value.attribute.value, "value": value.value}
+            for value in variant.values
+        ],
+        "media": [{"url": asset.url, "alt_text": asset.alt_text} for asset in variant.media],
     }
 
 
@@ -324,7 +334,19 @@ class ProductVariantListCreateView(APIView):
         serializer = CreateVariantSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
-        command = CreateVariantCommand(product=code, sku=data["sku"], name=data["name"])
+        command = CreateVariantCommand(
+            product=code,
+            sku=data["sku"],
+            name=data["name"],
+            values=tuple(
+                AttributeValueInput(attribute=item["attribute"], value=item["value"])
+                for item in data["values"]
+            ),
+            media=tuple(
+                MediaInput(url=item["url"], alt_text=item["alt_text"])
+                for item in data["media"]
+            ),
+        )
         try:
             variant = build_create_variant().execute(command, actor=_actor(request))
         except ProductNotFoundError as exc:

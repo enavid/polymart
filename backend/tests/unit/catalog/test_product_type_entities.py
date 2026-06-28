@@ -61,3 +61,43 @@ class TestProductType:
                 name="Coffee",
                 attributes=(AttributeCode("origin"), AttributeCode("origin")),
             )
+
+
+class TestVariantAttributes:
+    """A product type distinguishes product-level attributes (shared by every
+    variant) from variant-level attributes (the options that distinguish them)."""
+
+    def test_keeps_variant_attribute_references_in_order(self) -> None:
+        product_type = ProductType(
+            code=ProductTypeCode("coffee"),
+            name="Coffee",
+            attributes=(AttributeCode("origin"),),
+            variant_attributes=(AttributeCode("weight"), AttributeCode("grind")),
+        )
+
+        assert [a.value for a in product_type.attributes] == ["origin"]
+        assert [a.value for a in product_type.variant_attributes] == ["weight", "grind"]
+
+    def test_a_type_may_declare_no_variant_attributes(self) -> None:
+        product_type = ProductType(code=ProductTypeCode("misc"), name="Misc")
+
+        assert product_type.variant_attributes == ()
+
+    def test_rejects_a_duplicate_within_variant_attributes(self) -> None:
+        with pytest.raises(DuplicateAttributeAssignmentError):
+            ProductType(
+                code=ProductTypeCode("coffee"),
+                name="Coffee",
+                variant_attributes=(AttributeCode("weight"), AttributeCode("weight")),
+            )
+
+    def test_rejects_an_attribute_assigned_to_both_levels(self) -> None:
+        # An attribute is either product-level or variant-level, never both:
+        # the same key on both would make a variant's value ambiguous.
+        with pytest.raises(DuplicateAttributeAssignmentError):
+            ProductType(
+                code=ProductTypeCode("coffee"),
+                name="Coffee",
+                attributes=(AttributeCode("origin"),),
+                variant_attributes=(AttributeCode("origin"),),
+            )

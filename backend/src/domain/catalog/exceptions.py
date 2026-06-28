@@ -234,3 +234,19 @@ class VariantAlreadyExistsError(CatalogError):
     def __init__(self, sku: str) -> None:
         super().__init__(f"variant already exists: {sku!r}")
         self.sku = sku
+
+
+class InvalidMediaAssetError(CatalogError):
+    """Raised when a media asset's URL or alt text is malformed."""
+
+    def __init__(self, detail: str) -> None:
+        super().__init__(f"invalid media asset: {detail}")
+        self.detail = detail
+
+
+class DuplicateMediaAssetError(CatalogError):
+    """Raised when a variant lists the same media URL more than once."""
+
+    def __init__(self, url: str) -> None:
+        super().__init__(f"duplicate media asset url: {url!r}")
+        self.url = url
