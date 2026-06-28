@@ -18,30 +18,39 @@ from rest_framework.views import APIView
 
 from src.application.catalog.use_cases import (
     AttributeChoiceInput,
+    AttributeValueInput,
     CreateAttributeCommand,
+    CreateProductCommand,
     CreateProductTypeCommand,
 )
-from src.domain.catalog.entities import Attribute, ProductType
+from src.domain.catalog.entities import Attribute, Product, ProductType
 from src.domain.catalog.exceptions import (
     AttributeAlreadyExistsError,
     AttributeNotFoundError,
     CatalogError,
+    ProductAlreadyExistsError,
+    ProductNotFoundError,
     ProductTypeAlreadyExistsError,
     ProductTypeNotFoundError,
 )
 from src.interface.api.access.permissions import CatalogManagePermission
 from src.interface.api.catalog.container import (
     build_create_attribute,
+    build_create_product,
     build_create_product_type,
     build_get_attribute,
+    build_get_product,
     build_get_product_type,
     build_list_attributes,
     build_list_product_types,
+    build_list_products,
 )
 from src.interface.api.catalog.serializers import (
     AttributeSerializer,
     CreateAttributeSerializer,
+    CreateProductSerializer,
     CreateProductTypeSerializer,
+    ProductSerializer,
     ProductTypeSerializer,
 )
 from src.interface.api.common import ErrorSerializer
@@ -195,3 +204,76 @@ class ProductTypeDetailView(APIView):
         except ProductTypeNotFoundError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_404_NOT_FOUND)
         return Response(_product_type_payload(product_type))
+
+
+def _product_payload(product: Product) -> dict[str, object]:
+    """Project a product entity to the response body."""
+    return {
+        "id": product.id,
+        "code": product.code.value,
+        "name": product.name,
+        "product_type": product.product_type.value,
+        "values": [
+            {"attribute": value.attribute.value, "value": value.value}
+            for value in product.values
+        ],
+        "metadata": dict(product.metadata),
+    }
+
+
+class ProductListCreateView(APIView):
+    """List products or create a new one."""
+
+    permission_classes: ClassVar = [CatalogManagePermission]
+
+    @extend_schema(responses=ProductSerializer(many=True))
+    def get(self, request: Request) -> Response:
+        products = build_list_products().execute()
+        return Response([_product_payload(product) for product in products])
+
+    @extend_schema(
+        request=CreateProductSerializer,
+        responses={
+            201: ProductSerializer,
+            400: ErrorSerializer,
+            403: ErrorSerializer,
+            409: ErrorSerializer,
+        },
+    )
+    def post(self, request: Request) -> Response:
+        serializer = CreateProductSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        command = CreateProductCommand(
+            code=data["code"],
+            name=data["name"],
+            product_type=data["product_type"],
+            values=tuple(
+                AttributeValueInput(attribute=item["attribute"], value=item["value"])
+                for item in data["values"]
+            ),
+            metadata=data["metadata"],
+        )
+        try:
+            product = build_create_product().execute(command, actor=_actor(request))
+        except ProductAlreadyExistsError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
+        except CatalogError as exc:
+            # Invalid code/name/metadata, unknown product type, or a value that
+            # does not conform to its attribute (missing/unassigned/malformed).
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(_product_payload(product), status=status.HTTP_201_CREATED)
+
+
+class ProductDetailView(APIView):
+    """Retrieve a single product by code."""
+
+    permission_classes: ClassVar = [CatalogManagePermission]
+
+    @extend_schema(responses={200: ProductSerializer, 404: ErrorSerializer})
+    def get(self, request: Request, code: str) -> Response:
+        try:
+            product = build_get_product().execute(code=code)
+        except ProductNotFoundError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_404_NOT_FOUND)
+        return Response(_product_payload(product))

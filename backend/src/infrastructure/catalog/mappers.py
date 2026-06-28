@@ -2,10 +2,16 @@
 
 from __future__ import annotations
 
-from src.domain.catalog.entities import Attribute, ProductType
+from src.domain.catalog.entities import Attribute, Product, ProductType
 from src.domain.catalog.enums import AttributeInputType
-from src.domain.catalog.value_objects import AttributeChoice, AttributeCode, ProductTypeCode
-from src.infrastructure.catalog.models import AttributeModel, ProductTypeModel
+from src.domain.catalog.value_objects import (
+    AttributeChoice,
+    AttributeCode,
+    AttributeValue,
+    ProductCode,
+    ProductTypeCode,
+)
+from src.infrastructure.catalog.models import AttributeModel, ProductModel, ProductTypeModel
 
 
 def to_domain(model: AttributeModel) -> Attribute:
@@ -58,4 +64,35 @@ def apply_product_type_scalar_fields(
     """Copy the product type's own (non-attribute) fields onto an ORM instance."""
     model.code = product_type.code.value
     model.name = product_type.name
+    return model
+
+
+def product_to_domain(model: ProductModel) -> Product:
+    """Rebuild a product from a persisted row and its ordered attribute values.
+
+    Relies on the caller having loaded ``attribute_values`` (and each value's
+    ``attribute``), ordered by position via the value model's ``Meta.ordering``.
+    """
+    return Product(
+        id=model.pk,
+        code=ProductCode(model.code),
+        name=model.name,
+        product_type=ProductTypeCode(model.product_type.code),
+        values=tuple(
+            AttributeValue(attribute=AttributeCode(value.attribute.code), value=value.value)
+            for value in model.attribute_values.all()
+        ),
+        metadata=dict(model.metadata),
+    )
+
+
+def apply_product_scalar_fields(product: Product, model: ProductModel) -> ProductModel:
+    """Copy the product's own (non-relational) fields onto an ORM instance.
+
+    The ``product_type`` foreign key is set by the repository, which resolves the
+    referenced code to a row.
+    """
+    model.code = product.code.value
+    model.name = product.name
+    model.metadata = dict(product.metadata)
     return model

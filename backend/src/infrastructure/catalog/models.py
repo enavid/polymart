@@ -123,3 +123,58 @@ class ProductTypeAttributeModel(models.Model):
 
     def __str__(self) -> str:
         return f"{self.product_type_id}:{self.attribute_id}"
+
+
+class ProductModel(models.Model):
+    """Storage representation of a product built on a product type."""
+
+    code = models.SlugField(max_length=_CODE_MAX_LENGTH, unique=True)
+    name = models.CharField(max_length=_NAME_MAX_LENGTH)
+    product_type = models.ForeignKey(
+        ProductTypeModel, related_name="products", on_delete=models.PROTECT
+    )
+    # Free-form, string-keyed extension data (JSONB in Postgres). Never used for
+    # money, which is modelled with Decimal in the pricing slice.
+    metadata = models.JSONField(default=dict)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        app_label = "catalog"
+        db_table = "catalog_product"
+        ordering = ("code",)
+        verbose_name = "product"
+        verbose_name_plural = "products"
+
+    def __str__(self) -> str:
+        return self.code
+
+
+class ProductAttributeValueModel(models.Model):
+    """A product's value for one of its product type's attributes."""
+
+    product = models.ForeignKey(
+        ProductModel, related_name="attribute_values", on_delete=models.CASCADE
+    )
+    attribute = models.ForeignKey(
+        AttributeModel, related_name="product_values", on_delete=models.PROTECT
+    )
+    # Canonical string form of the value (text, number, boolean literal, or choice
+    # slug); the domain decides conformance before it is stored here.
+    value = models.TextField()
+    position = models.PositiveSmallIntegerField(default=0)
+
+    class Meta:
+        app_label = "catalog"
+        db_table = "catalog_product_attribute_value"
+        ordering = ("position",)
+        # A product holds at most one value per attribute.
+        constraints: ClassVar[list[models.BaseConstraint]] = [
+            models.UniqueConstraint(
+                fields=["product", "attribute"],
+                name="uniq_value_per_product_attribute",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.product_id}:{self.attribute_id}"

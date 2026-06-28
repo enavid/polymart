@@ -11,22 +11,35 @@ audit-friendly event naming the actor.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 
 import structlog
 
 from src.application.audit.ports import AuditRecorder
-from src.application.catalog.ports import AttributeRepository, ProductTypeRepository
+from src.application.catalog.ports import (
+    AttributeRepository,
+    ProductRepository,
+    ProductTypeRepository,
+)
 from src.domain.audit.entities import FieldChange
-from src.domain.catalog.entities import Attribute, ProductType
+from src.domain.catalog.entities import Attribute, Product, ProductType
 from src.domain.catalog.enums import AttributeInputType
 from src.domain.catalog.exceptions import (
     AttributeAlreadyExistsError,
     InvalidAttributeInputTypeError,
+    ProductAlreadyExistsError,
     ProductTypeAlreadyExistsError,
     UnknownAttributeError,
 )
-from src.domain.catalog.value_objects import AttributeChoice, AttributeCode, ProductTypeCode
+from src.domain.catalog.services import normalize_attribute_values
+from src.domain.catalog.value_objects import (
+    AttributeChoice,
+    AttributeCode,
+    AttributeValue,
+    ProductCode,
+    ProductTypeCode,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -36,6 +49,8 @@ _RESOURCE_ATTRIBUTE = "attribute"
 _ACTION_ATTRIBUTE_CREATED = "attribute.created"
 _RESOURCE_PRODUCT_TYPE = "product_type"
 _ACTION_PRODUCT_TYPE_CREATED = "product_type.created"
+_RESOURCE_PRODUCT = "product"
+_ACTION_PRODUCT_CREATED = "product.created"
 
 
 @dataclass(frozen=True)
@@ -239,3 +254,119 @@ class ListProductTypes:
         product_types = self._repository.list_all()
         logger.debug("product_types_listed", count=len(product_types))
         return product_types
+
+
+@dataclass(frozen=True)
+class AttributeValueInput:
+    """Raw value input for one attribute. Validated/normalized by the domain."""
+
+    attribute: str
+    value: str
+
+
+@dataclass(frozen=True)
+class CreateProductCommand:
+    """Input for creating a product. Raw strings are validated by the domain."""
+
+    code: str
+    name: str
+    product_type: str
+    values: tuple[AttributeValueInput, ...] = field(default_factory=tuple)
+    metadata: Mapping[str, str] = field(default_factory=dict)
+
+
+class CreateProduct:
+    """Create a product whose attribute values conform to its product type.
+
+    The product type and the attribute definitions live in other aggregates, so
+    this use case loads them and delegates the conformance rule to the domain
+    service; it owns only the orchestration (fetch, validate, persist, observe).
+    """
+
+    def __init__(
+        self,
+        repository: ProductRepository,
+        product_types: ProductTypeRepository,
+        attributes: AttributeRepository,
+        audit: AuditRecorder,
+    ) -> None:
+        self._repository = repository
+        self._product_types = product_types
+        self._attributes = attributes
+        self._audit = audit
+
+    def execute(self, command: CreateProductCommand, *, actor: str | None = None) -> Product:
+        # Build value objects first: malformed code/name/metadata or a duplicate
+        # attribute value fails fast, before any I/O.
+        product = Product(
+            code=ProductCode(command.code),
+            name=command.name,
+            product_type=ProductTypeCode(command.product_type),
+            values=tuple(
+                AttributeValue(attribute=AttributeCode(item.attribute), value=item.value)
+                for item in command.values
+            ),
+            metadata=command.metadata,
+        )
+        code = product.code.value
+
+        # Resolve the product type and its attribute definitions (in declared
+        # order), then let the domain service decide value conformance.
+        product_type = self._product_types.get_by_code(product.product_type.value)
+        definitions = [
+            self._attributes.get_by_code(attribute.value)
+            for attribute in product_type.attributes
+        ]
+        product.values = normalize_attribute_values(definitions, product.values)
+
+        # Pre-check for a clean error; the repository remains the source of truth
+        # and will still raise on a concurrent insert.
+        if self._repository.exists_by_code(code):
+            logger.warning("product_create_rejected_duplicate", code=code, actor=actor)
+            raise ProductAlreadyExistsError(code)
+
+        persisted = self._repository.add(product)
+        logger.info(
+            "product_created",
+            product_id=persisted.id,
+            code=code,
+            product_type=product_type.code.value,
+            value_count=len(persisted.values),
+            actor=actor,
+        )
+        self._audit.record(
+            action=_ACTION_PRODUCT_CREATED,
+            resource_type=_RESOURCE_PRODUCT,
+            resource_id=str(persisted.id),
+            actor=actor,
+            changes=(
+                FieldChange(field="code", after=code),
+                FieldChange(field="product_type", after=product_type.code.value),
+                FieldChange(field="value_count", after=len(persisted.values)),
+            ),
+        )
+        return persisted
+
+
+class GetProduct:
+    """Retrieve a single product by code."""
+
+    def __init__(self, repository: ProductRepository) -> None:
+        self._repository = repository
+
+    def execute(self, *, code: str) -> Product:
+        product = self._repository.get_by_code(code)
+        logger.debug("product_retrieved", code=code)
+        return product
+
+
+class ListProducts:
+    """List every product."""
+
+    def __init__(self, repository: ProductRepository) -> None:
+        self._repository = repository
+
+    def execute(self) -> list[Product]:
+        products = self._repository.list_all()
+        logger.debug("products_listed", count=len(products))
+        return products

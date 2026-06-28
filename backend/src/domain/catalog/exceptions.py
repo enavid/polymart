@@ -129,3 +129,76 @@ class ProductTypeAlreadyExistsError(CatalogError):
     def __init__(self, code: str) -> None:
         super().__init__(f"product type already exists: {code!r}")
         self.code = code
+
+
+class InvalidProductCodeError(CatalogError):
+    """Raised when a product code is empty, too long, or not a slug."""
+
+    def __init__(self, value: str) -> None:
+        super().__init__(f"invalid product code: {value!r}")
+        self.value = value
+
+
+class InvalidProductNameError(CatalogError):
+    """Raised when a product display name is blank or exceeds the length limit."""
+
+    def __init__(self, value: str) -> None:
+        super().__init__(f"invalid product name: {value!r}")
+        self.value = value
+
+
+class InvalidProductMetadataError(CatalogError):
+    """Raised when a product metadata key or value is blank or too long."""
+
+    def __init__(self, detail: str) -> None:
+        super().__init__(f"invalid product metadata: {detail}")
+        self.detail = detail
+
+
+class DuplicateAttributeValueError(CatalogError):
+    """Raised when a product supplies more than one value for the same attribute."""
+
+    def __init__(self, code: str) -> None:
+        super().__init__(f"duplicate attribute value: {code!r}")
+        self.code = code
+
+
+class UnassignedAttributeError(CatalogError):
+    """Raised when a product values an attribute its product type does not assign."""
+
+    def __init__(self, code: str) -> None:
+        super().__init__(f"attribute not assigned to product type: {code!r}")
+        self.code = code
+
+
+class MissingRequiredAttributeError(CatalogError):
+    """Raised when a product omits a value for a required attribute of its type."""
+
+    def __init__(self, code: str) -> None:
+        super().__init__(f"missing required attribute value: {code!r}")
+        self.code = code
+
+
+class InvalidAttributeValueError(CatalogError):
+    """Raised when a value does not conform to its attribute's input type."""
+
+    def __init__(self, code: str, detail: str) -> None:
+        super().__init__(f"invalid value for attribute {code!r}: {detail}")
+        self.code = code
+        self.detail = detail
+
+
+class ProductNotFoundError(CatalogError):
+    """Raised when a product cannot be located by its code."""
+
+    def __init__(self, code: str) -> None:
+        super().__init__(f"product not found: {code!r}")
+        self.code = code
+
+
+class ProductAlreadyExistsError(CatalogError):
+    """Raised when creating a product whose code is already taken."""
+
+    def __init__(self, code: str) -> None:
+        super().__init__(f"product already exists: {code!r}")
+        self.code = code

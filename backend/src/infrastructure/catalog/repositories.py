@@ -5,24 +5,34 @@ from __future__ import annotations
 import structlog
 from django.db import IntegrityError, transaction
 
-from src.application.catalog.ports import AttributeRepository, ProductTypeRepository
-from src.domain.catalog.entities import Attribute, ProductType
+from src.application.catalog.ports import (
+    AttributeRepository,
+    ProductRepository,
+    ProductTypeRepository,
+)
+from src.domain.catalog.entities import Attribute, Product, ProductType
 from src.domain.catalog.exceptions import (
     AttributeAlreadyExistsError,
     AttributeNotFoundError,
+    ProductAlreadyExistsError,
+    ProductNotFoundError,
     ProductTypeAlreadyExistsError,
     ProductTypeNotFoundError,
     UnknownAttributeError,
 )
 from src.infrastructure.catalog.mappers import (
+    apply_product_scalar_fields,
     apply_product_type_scalar_fields,
     apply_scalar_fields,
+    product_to_domain,
     product_type_to_domain,
     to_domain,
 )
 from src.infrastructure.catalog.models import (
     AttributeChoiceModel,
     AttributeModel,
+    ProductAttributeValueModel,
+    ProductModel,
     ProductTypeAttributeModel,
     ProductTypeModel,
 )
@@ -32,6 +42,7 @@ logger = structlog.get_logger(__name__)
 # Eager-load an attribute's choices / a product type's ordered attribute links so
 # the mappers never trigger a per-row query.
 _PRODUCT_TYPE_PREFETCH = "attribute_links__attribute"
+_PRODUCT_VALUES_PREFETCH = "attribute_values__attribute"
 
 
 class DjangoAttributeRepository(AttributeRepository):
@@ -131,3 +142,78 @@ class DjangoProductTypeRepository(ProductTypeRepository):
     def list_all(self) -> list[ProductType]:
         models = ProductTypeModel.objects.prefetch_related(_PRODUCT_TYPE_PREFETCH).all()
         return [product_type_to_domain(model) for model in models]
+
+
+class DjangoProductRepository(ProductRepository):
+    """Persist products with the Django ORM, returning domain entities."""
+
+    def add(self, product: Product) -> Product:
+        try:
+            # A product and all its attribute values are one unit: persist them
+            # together so a failed value insert leaves nothing behind.
+            with transaction.atomic():
+                model = self._build_model(product)
+                model.save()
+                self._save_values(product, model)
+        except IntegrityError as exc:
+            # Unique-constraint violation on code -> domain-level conflict (a
+            # concurrent insert won the race after the use case's pre-check).
+            logger.warning("product_insert_race_lost", code=product.code.value)
+            raise ProductAlreadyExistsError(product.code.value) from exc
+        return self.get_by_code(product.code.value)
+
+    @staticmethod
+    def _build_model(product: Product) -> ProductModel:
+        code = product.product_type.value
+        try:
+            product_type = ProductTypeModel.objects.get(code=code)
+        except ProductTypeModel.DoesNotExist as exc:
+            # The use case resolved the type; reaching here means it vanished
+            # concurrently. Surface it as a domain error and roll the insert back.
+            raise ProductTypeNotFoundError(code) from exc
+        return apply_product_scalar_fields(product, ProductModel(product_type=product_type))
+
+    @staticmethod
+    def _save_values(product: Product, model: ProductModel) -> None:
+        # Resolve the referenced attribute codes to rows in one query, preserving
+        # the conformance-checked order via the value position.
+        codes = [value.attribute.value for value in product.values]
+        by_code = {a.code: a for a in AttributeModel.objects.filter(code__in=codes)}
+        rows = []
+        for position, value in enumerate(product.values):
+            attribute_model = by_code.get(value.attribute.value)
+            if attribute_model is None:
+                # The use case validated existence; reaching here means the
+                # attribute vanished concurrently. Surface it as a domain error.
+                raise UnknownAttributeError(value.attribute.value)
+            rows.append(
+                ProductAttributeValueModel(
+                    product=model,
+                    attribute=attribute_model,
+                    value=value.value,
+                    position=position,
+                )
+            )
+        ProductAttributeValueModel.objects.bulk_create(rows)
+
+    def get_by_code(self, code: str) -> Product:
+        try:
+            model = (
+                ProductModel.objects.select_related("product_type")
+                .prefetch_related(_PRODUCT_VALUES_PREFETCH)
+                .get(code=code)
+            )
+        except ProductModel.DoesNotExist as exc:
+            raise ProductNotFoundError(code) from exc
+        return product_to_domain(model)
+
+    def exists_by_code(self, code: str) -> bool:
+        return ProductModel.objects.filter(code=code).exists()
+
+    def list_all(self) -> list[Product]:
+        models = (
+            ProductModel.objects.select_related("product_type")
+            .prefetch_related(_PRODUCT_VALUES_PREFETCH)
+            .all()
+        )
+        return [product_to_domain(model) for model in models]

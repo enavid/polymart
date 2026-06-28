@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from src.domain.catalog.exceptions import (
     InvalidAttributeChoiceError,
     InvalidAttributeCodeError,
+    InvalidProductCodeError,
     InvalidProductTypeCodeError,
 )
 
@@ -53,6 +54,36 @@ class ProductTypeCode:
 
     def __str__(self) -> str:
         return self.value
+
+
+@dataclass(frozen=True)
+class ProductCode:
+    """A stable, URL-safe identifier for a product."""
+
+    value: str
+
+    def __post_init__(self) -> None:
+        normalized = self.value.strip()
+        if len(normalized) > _SLUG_MAX_LENGTH or not _SLUG_RE.match(normalized):
+            raise InvalidProductCodeError(self.value)
+        object.__setattr__(self, "value", normalized)
+
+    def __str__(self) -> str:
+        return self.value
+
+
+@dataclass(frozen=True)
+class AttributeValue:
+    """A product's value for one attribute, keyed by the attribute's code.
+
+    The ``value`` is the canonical string form (a number, a boolean literal, a
+    choice slug, or free text). Whether it conforms to the attribute's input type
+    is decided by the conformance domain service, which has the definition; the
+    value object only pairs a code with its stored string.
+    """
+
+    attribute: AttributeCode
+    value: str
 
 
 @dataclass(frozen=True)

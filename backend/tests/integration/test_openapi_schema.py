@@ -111,3 +111,19 @@ def test_get_product_type_documents_not_found() -> None:
 
     assert "200" in responses
     assert "404" in responses
+
+
+def test_create_product_documents_validation_conflict_and_forbidden() -> None:
+    responses = _responses("/api/v1/catalog/products/", "post")
+
+    assert "201" in responses
+    assert "400" in responses
+    assert "403" in responses
+    assert "409" in responses
+
+
+def test_get_product_documents_not_found() -> None:
+    responses = _responses("/api/v1/catalog/products/{code}/", "get")
+
+    assert "200" in responses
+    assert "404" in responses

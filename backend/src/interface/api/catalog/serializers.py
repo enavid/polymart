@@ -55,3 +55,31 @@ class CreateProductTypeSerializer(serializers.Serializer):
     attributes = serializers.ListField(
         child=serializers.CharField(), required=False, default=list
     )
+
+
+class AttributeValueSerializer(serializers.Serializer):
+    """One attribute value carried by a product."""
+
+    attribute = serializers.CharField()
+    value = serializers.CharField()
+
+
+class ProductSerializer(serializers.Serializer):
+    """Response projection of a product."""
+
+    id = serializers.IntegerField(read_only=True)
+    code = serializers.CharField()
+    name = serializers.CharField()
+    product_type = serializers.CharField()
+    values = AttributeValueSerializer(many=True)
+    metadata = serializers.DictField(child=serializers.CharField())
+
+
+class CreateProductSerializer(serializers.Serializer):
+    """Request body for creating a product."""
+
+    code = serializers.CharField()
+    name = serializers.CharField()
+    product_type = serializers.CharField()
+    values = AttributeValueSerializer(many=True, required=False, default=list)
+    metadata = serializers.DictField(child=serializers.CharField(), required=False, default=dict)

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from src.domain.catalog.entities import Attribute, ProductType
+from src.domain.catalog.entities import Attribute, Product, ProductType
 
 
 class AttributeRepository(ABC):
@@ -66,3 +66,31 @@ class ProductTypeRepository(ABC):
     @abstractmethod
     def list_all(self) -> list[ProductType]:
         """Return every product type, ordered by code for deterministic output."""
+
+
+class ProductRepository(ABC):
+    """Persistence boundary for the Product aggregate.
+
+    Implementations MUST translate storage-specific failures into domain
+    exceptions (``ProductNotFoundError``, ``ProductAlreadyExistsError``) so that
+    callers never see infrastructure leaks.
+    """
+
+    @abstractmethod
+    def add(self, product: Product) -> Product:
+        """Persist a new product and return it with its assigned identity.
+
+        Raises ``ProductAlreadyExistsError`` if the code is already taken.
+        """
+
+    @abstractmethod
+    def get_by_code(self, code: str) -> Product:
+        """Return the product with this code or raise ``ProductNotFoundError``."""
+
+    @abstractmethod
+    def exists_by_code(self, code: str) -> bool:
+        """Return whether a product with this code already exists."""
+
+    @abstractmethod
+    def list_all(self) -> list[Product]:
+        """Return every product, ordered by code for deterministic output."""
