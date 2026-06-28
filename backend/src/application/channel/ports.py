@@ -4,6 +4,7 @@ The application layer depends only on these abstractions. Concrete adapters
 (Django ORM, in-memory fakes) live elsewhere and are injected at the composition
 root, keeping the dependency rule pointing inward.
 """
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod

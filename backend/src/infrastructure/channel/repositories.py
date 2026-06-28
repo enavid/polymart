@@ -1,4 +1,5 @@
 """Django ORM implementation of the channel repository port."""
+
 from __future__ import annotations
 
 import structlog
@@ -49,13 +50,9 @@ class DjangoChannelRepository(ChannelRepository):
         # wallet) must follow. select_for_update() is a no-op on SQLite.
         with transaction.atomic():
             try:
-                model = ChannelModel.objects.select_for_update().get(
-                    slug=channel.slug.value
-                )
+                model = ChannelModel.objects.select_for_update().get(slug=channel.slug.value)
             except ChannelModel.DoesNotExist as exc:
                 raise ChannelNotFoundError(channel.slug.value) from exc
             apply_to_model(channel, model)
-            model.save(
-                update_fields=["name", "currency_code", "is_active", "updated_at"]
-            )
+            model.save(update_fields=["name", "currency_code", "is_active", "updated_at"])
         return to_domain(model)

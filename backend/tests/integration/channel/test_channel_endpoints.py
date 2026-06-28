@@ -3,6 +3,7 @@
 These assert the secure-by-default posture (auth required), the happy paths, and
 the mapping of domain errors to HTTP status codes.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -32,9 +33,7 @@ def auth_client(staff_user: AbstractBaseUser) -> APIClient:
 @pytest.fixture
 def member_client() -> APIClient:
     """A non-staff authenticated user: may read channels but not mutate them."""
-    user = get_user_model().objects.create_user(
-        phone_number="09120000002", password="pw"
-    )
+    user = get_user_model().objects.create_user(phone_number="09120000002", password="pw")
     client = APIClient()
     client.force_authenticate(user=user)
     return client

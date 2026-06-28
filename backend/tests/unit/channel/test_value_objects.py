@@ -4,6 +4,7 @@ These guard the domain invariants with no framework and no database. The cases
 are deliberately adversarial: currency and slug parsing is the first line of
 defence for a money-handling system, so the edges must be pinned down.
 """
+
 from __future__ import annotations
 
 import pytest

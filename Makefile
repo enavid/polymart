@@ -137,7 +137,7 @@ lint: $(STAMP) ## Lint the backend (ruff)
 	$(BACKEND) $(VBIN)/ruff check .
 
 format: $(STAMP) ## Auto-format the backend (ruff)
-	$(BACKEND) $(VBIN)/ruff format . && $(BACKEND) $(VBIN)/ruff check --fix .
+	$(BACKEND) $(VBIN)/ruff format . && $(VBIN)/ruff check --fix .
 
 type: $(STAMP) ## Type-check the backend (mypy)
 	$(BACKEND) $(VBIN)/mypy src config
@@ -154,7 +154,7 @@ test-integration: $(STAMP) ## Run integration tests
 coverage: test ## Run backend tests and enforce the coverage threshold
 
 security: $(STAMP) ## Run backend security scanners (bandit + pip-audit)
-	$(BACKEND) $(VBIN)/bandit -q -r src config && $(BACKEND) $(VBIN)/pip-audit
+	$(BACKEND) $(VBIN)/bandit -q -r src config && $(VBIN)/pip-audit
 
 check: lint type test ## Quick local quality gate (backend lint + type + test)
 

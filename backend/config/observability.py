@@ -5,6 +5,7 @@ Tracing is optional and disabled by default. Enable it by setting
 import below is guarded so the application runs unchanged when the
 ``observability`` extra is not installed.
 """
+
 from __future__ import annotations
 
 import os

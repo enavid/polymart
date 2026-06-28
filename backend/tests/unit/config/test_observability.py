@@ -1,4 +1,5 @@
 """Unit tests for the OpenTelemetry tracing toggle."""
+
 from __future__ import annotations
 
 import pytest
@@ -36,9 +37,7 @@ class TestConfigureTracing:
 
         assert observability._CONFIGURED is False
 
-    def test_is_a_noop_when_already_configured(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_is_a_noop_when_already_configured(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("OTEL_ENABLED", "true")
         monkeypatch.setattr(observability, "_CONFIGURED", True)
         # Guard: if the early-return failed, this sentinel would be called.

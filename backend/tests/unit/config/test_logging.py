@@ -1,4 +1,5 @@
 """Unit tests for the structured logging configuration."""
+
 from __future__ import annotations
 
 import structlog
@@ -38,8 +39,9 @@ class TestBuildLoggingConfig:
 
         assert json_config["root"]["level"] == "WARNING"
         # Both variants are valid dict configs; the renderer differs internally.
-        assert json_config["formatters"]["structured"]["()"] is (
-            console_config["formatters"]["structured"]["()"]
+        assert (
+            json_config["formatters"]["structured"]["()"]
+            is (console_config["formatters"]["structured"]["()"])
         )
 
 

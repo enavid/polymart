@@ -4,6 +4,7 @@ Pure-Python exceptions with no framework coupling. The interface layer maps them
 to transport-level responses; the infrastructure layer may raise them from the
 user manager when normalizing input.
 """
+
 from __future__ import annotations
 
 

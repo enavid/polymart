@@ -1,4 +1,5 @@
 """Base Django settings shared across environments."""
+
 from __future__ import annotations
 
 from datetime import timedelta

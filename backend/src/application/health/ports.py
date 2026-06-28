@@ -1,4 +1,5 @@
 """Ports (interfaces) for the health use cases."""
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod

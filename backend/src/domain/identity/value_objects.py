@@ -5,6 +5,7 @@ invalid state. ``PhoneNumber`` accepts the many spellings an Iranian user might
 type and stores a single canonical E.164 form, so equality and lookups are
 unambiguous everywhere downstream.
 """
+
 from __future__ import annotations
 
 import re

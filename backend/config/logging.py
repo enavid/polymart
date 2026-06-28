@@ -5,6 +5,7 @@ development. Every log line carries contextual fields bound via
 ``structlog.contextvars`` (e.g. ``request_id``) and, when a trace is active, the
 OpenTelemetry ``trace_id`` / ``span_id`` for log-to-trace correlation.
 """
+
 from __future__ import annotations
 
 from typing import Any

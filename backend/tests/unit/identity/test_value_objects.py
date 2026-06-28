@@ -4,6 +4,7 @@ The ``PhoneNumber`` value object owns the Iranian-mobile rule: many input
 spellings, one canonical E.164 form. It is pure Python (no Django), so it is
 testable in isolation and reusable by the user model's manager.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -42,11 +43,11 @@ class TestPhoneNumberValidation:
         [
             "",
             "   ",
-            "08123456789",      # not a mobile prefix (must start with 9)
-            "0912345678",       # too short
-            "091234567890",     # too long
+            "08123456789",  # not a mobile prefix (must start with 9)
+            "0912345678",  # too short
+            "091234567890",  # too long
             "+1 202 555 0173",  # non-Iranian country code
-            "9123456789a",      # contains letters
+            "9123456789a",  # contains letters
             "not-a-number",
         ],
     )

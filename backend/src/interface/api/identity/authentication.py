@@ -5,6 +5,7 @@ We instead carry it in an HttpOnly cookie so client-side JavaScript can never
 read it, which removes the usual XSS token-theft vector. The header path is kept
 as a fallback for non-browser API clients and tooling.
 """
+
 from __future__ import annotations
 
 from typing import Any, cast

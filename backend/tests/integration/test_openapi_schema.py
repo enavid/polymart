@@ -3,6 +3,7 @@
 A typed client is only as honest as the schema: if 400/404/409/503 are missing,
 consumers cannot model failure. These tests pin the documented status codes.
 """
+
 from __future__ import annotations
 
 from drf_spectacular.generators import SchemaGenerator

@@ -4,6 +4,7 @@ Format validation (slug/currency rules) is owned by the domain, so these
 serializers stay deliberately thin: presence/type checks on input, field
 projection on output.
 """
+
 from __future__ import annotations
 
 from rest_framework import serializers

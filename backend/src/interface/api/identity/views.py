@@ -9,6 +9,7 @@ Auth failures return a uniform 401 regardless of cause (unknown user, wrong
 password, malformed phone) so the endpoint does not leak whether an account
 exists.
 """
+
 from __future__ import annotations
 
 from typing import ClassVar, cast
@@ -77,17 +78,13 @@ class LoginView(APIView):
 
         refresh = RefreshToken.for_user(user)
         response = Response(_user_payload(user), status=status.HTTP_200_OK)
-        set_auth_cookies(
-            response, access=str(refresh.access_token), refresh=str(refresh)
-        )
+        set_auth_cookies(response, access=str(refresh.access_token), refresh=str(refresh))
         logger.info("login_succeeded", user_id=user.id)
         return response
 
     @staticmethod
     def _rejected() -> Response:
-        return Response(
-            {"detail": _INVALID_CREDENTIALS}, status=status.HTTP_401_UNAUTHORIZED
-        )
+        return Response({"detail": _INVALID_CREDENTIALS}, status=status.HTTP_401_UNAUTHORIZED)
 
 
 class RefreshView(APIView):
@@ -108,15 +105,11 @@ class RefreshView(APIView):
     def post(self, request: Request) -> Response:
         raw_refresh = request.COOKIES.get(settings.AUTH_COOKIE_REFRESH)
         if not raw_refresh:
-            return Response(
-                {"detail": _INVALID_CREDENTIALS}, status=status.HTTP_401_UNAUTHORIZED
-            )
+            return Response({"detail": _INVALID_CREDENTIALS}, status=status.HTTP_401_UNAUTHORIZED)
         try:
             refresh = RefreshToken(raw_refresh)
         except TokenError:
-            return Response(
-                {"detail": _INVALID_CREDENTIALS}, status=status.HTTP_401_UNAUTHORIZED
-            )
+            return Response({"detail": _INVALID_CREDENTIALS}, status=status.HTTP_401_UNAUTHORIZED)
 
         response = Response(status=status.HTTP_200_OK)
         set_auth_cookies(response, access=str(refresh.access_token))

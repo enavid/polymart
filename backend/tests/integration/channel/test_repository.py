@@ -3,6 +3,7 @@
 These verify the infrastructure adapter honours the port contract, including the
 translation of ORM failures into domain exceptions.
 """
+
 from __future__ import annotations
 
 import pytest

@@ -5,6 +5,7 @@ The user is a framework concern (Django requires ``AUTH_USER_MODEL`` to be an
 business rule -- what a valid phone number is -- is delegated to the domain
 ``PhoneNumber`` value object, keeping the rule in one pure-Python place.
 """
+
 from __future__ import annotations
 
 from typing import Any, ClassVar

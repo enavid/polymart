@@ -3,6 +3,7 @@
 These are pure-Python exceptions with no framework coupling. The interface layer
 is responsible for translating them into transport-level responses (HTTP codes).
 """
+
 from __future__ import annotations
 
 

@@ -1,4 +1,5 @@
 """Integration tests for the health endpoint (full request path + database)."""
+
 from __future__ import annotations
 
 import pytest

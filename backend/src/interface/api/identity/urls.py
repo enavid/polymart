@@ -1,4 +1,5 @@
 """URL patterns for the identity/auth slice."""
+
 from __future__ import annotations
 
 from django.urls import path

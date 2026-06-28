@@ -1,4 +1,5 @@
 """Test settings: fast and deterministic."""
+
 from __future__ import annotations
 
 from config.settings.base import *  # noqa: F403
@@ -13,9 +14,7 @@ CELERY_TASK_EAGER_PROPAGATES = True
 # Default to an isolated in-memory SQLite; CI sets TEST_DATABASE_URL to run the
 # suite against PostgreSQL.
 DATABASES = {
-    "default": env.db(
-        "TEST_DATABASE_URL", default="sqlite://:memory:"
-    ),
+    "default": env.db("TEST_DATABASE_URL", default="sqlite://:memory:"),
 }
 
 # Use a local-memory cache so tests do not require a running Redis instance.

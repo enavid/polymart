@@ -1,4 +1,5 @@
 """Shared transport-layer serializers used across API contexts."""
+
 from __future__ import annotations
 
 from rest_framework import serializers

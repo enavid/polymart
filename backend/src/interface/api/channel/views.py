@@ -4,6 +4,7 @@ Views parse input, delegate to a use case, and serialize the result. They hold
 no business logic. Domain exceptions are translated to HTTP status codes here --
 the one place where the domain meets the transport.
 """
+
 from __future__ import annotations
 
 import structlog

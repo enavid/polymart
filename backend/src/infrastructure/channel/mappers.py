@@ -1,4 +1,5 @@
 """Mapping between the Channel domain entity and its ORM representation."""
+
 from __future__ import annotations
 
 from src.domain.channel.entities import Channel

@@ -7,6 +7,7 @@ rules live in the domain, and side effects (logging) are observable.
 Channels gate currency and pricing for everything downstream, so every mutation
 emits a structured, audit-friendly event.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -37,9 +38,7 @@ class CreateChannel:
     def __init__(self, repository: ChannelRepository) -> None:
         self._repository = repository
 
-    def execute(
-        self, command: CreateChannelCommand, *, actor: str | None = None
-    ) -> Channel:
+    def execute(self, command: CreateChannelCommand, *, actor: str | None = None) -> Channel:
         # Build value objects first: invalid input fails fast, before any I/O.
         channel = Channel(
             slug=ChannelSlug(command.slug),
@@ -77,9 +76,7 @@ class SetChannelStatus:
         channel = self._repository.get_by_slug(slug)
         changed = channel.set_active(active=active)
         if not changed:
-            logger.info(
-                "channel_status_unchanged", slug=slug, is_active=active, actor=actor
-            )
+            logger.info("channel_status_unchanged", slug=slug, is_active=active, actor=actor)
             return channel
 
         updated = self._repository.update(channel)

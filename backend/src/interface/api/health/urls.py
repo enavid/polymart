@@ -1,4 +1,5 @@
 """URL patterns for the health slice."""
+
 from __future__ import annotations
 
 from django.urls import path

@@ -4,6 +4,7 @@ Production must never boot with the insecure development SECRET_KEY. Because the
 settings module makes that decision at import time, these tests import it in a
 fresh subprocess with a controlled environment and assert on the exit code.
 """
+
 from __future__ import annotations
 
 import subprocess

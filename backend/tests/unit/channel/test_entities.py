@@ -1,4 +1,5 @@
 """Unit tests for the Channel aggregate root."""
+
 from __future__ import annotations
 
 import pytest

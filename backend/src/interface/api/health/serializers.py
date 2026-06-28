@@ -1,4 +1,5 @@
 """Serializers for the health endpoint (response shaping only)."""
+
 from __future__ import annotations
 
 from rest_framework import serializers

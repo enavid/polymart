@@ -6,6 +6,7 @@ from another on the same installation. Everything downstream is scoped to it.
 
 This is pure Python -- no Django, no DRF, no ORM.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field

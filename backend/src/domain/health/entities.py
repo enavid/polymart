@@ -4,6 +4,7 @@ This is the walking-skeleton domain slice: it demonstrates the dependency rule
 (pure Python, zero framework imports) and is exercised end to end by the test
 suite, Docker, and CI.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass

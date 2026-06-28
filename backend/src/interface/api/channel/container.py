@@ -3,6 +3,7 @@
 The only place that wires concrete infrastructure adapters into the use cases.
 Views depend on these factories, never on the infrastructure layer directly.
 """
+
 from __future__ import annotations
 
 from src.application.channel.use_cases import (

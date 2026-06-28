@@ -3,6 +3,7 @@
 These run against fake probes with no database or framework, demonstrating the
 payoff of clean architecture: business logic is testable in isolation.
 """
+
 from __future__ import annotations
 
 from src.application.health.ports import HealthProbe

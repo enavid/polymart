@@ -4,6 +4,7 @@ These pin the security posture: tokens are delivered as HttpOnly cookies (not
 readable by JS, not echoed in the body), credentials are never logged, and the
 cookie carries the session so a follow-up request is authenticated.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -19,9 +20,7 @@ PASSWORD = "s3cret-pw"
 
 @pytest.fixture
 def user() -> object:
-    return get_user_model().objects.create_user(
-        phone_number="09123456789", password=PASSWORD
-    )
+    return get_user_model().objects.create_user(phone_number="09123456789", password=PASSWORD)
 
 
 @pytest.fixture
@@ -91,9 +90,7 @@ class TestLogin:
 
         assert response.status_code == 401
 
-    def test_malformed_phone_is_rejected_as_invalid_credentials(
-        self, client: APIClient
-    ) -> None:
+    def test_malformed_phone_is_rejected_as_invalid_credentials(self, client: APIClient) -> None:
         response = client.post(
             "/api/v1/auth/login/",
             {"phone_number": "not-a-phone", "password": PASSWORD},
@@ -193,9 +190,7 @@ class TestRefresh:
 
 
 class TestLogout:
-    def test_logout_clears_the_token_cookies(
-        self, client: APIClient, user: object
-    ) -> None:
+    def test_logout_clears_the_token_cookies(self, client: APIClient, user: object) -> None:
         client.post(
             "/api/v1/auth/login/",
             {"phone_number": "09123456789", "password": PASSWORD},

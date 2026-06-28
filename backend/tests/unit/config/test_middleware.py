@@ -1,4 +1,5 @@
 """Unit tests for RequestIDMiddleware (request correlation)."""
+
 from __future__ import annotations
 
 import contextlib

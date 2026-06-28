@@ -4,6 +4,7 @@ This is an infrastructure detail, intentionally separate from the domain
 ``Channel`` entity. The repository maps between the two so the domain never
 depends on the ORM.
 """
+
 from __future__ import annotations
 
 from django.db import models

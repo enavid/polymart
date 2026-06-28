@@ -4,6 +4,7 @@ The use cases are exercised against an in-memory fake repository: no Django, no
 database. This is the payoff of the dependency rule -- business orchestration is
 testable in isolation and at speed.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -108,9 +109,7 @@ class TestCreateChannel:
 
         assert channel.is_active is False
 
-    def test_records_the_acting_user_in_the_audit_event(
-        self, repo: FakeChannelRepository
-    ) -> None:
+    def test_records_the_acting_user_in_the_audit_event(self, repo: FakeChannelRepository) -> None:
         # Channel mutations gate currency/pricing; the audit trail must say who
         # made the change, not just that it happened.
         with capture_logs() as logs:
@@ -148,9 +147,7 @@ class TestSetChannelStatus:
         with pytest.raises(ChannelNotFoundError):
             SetChannelStatus(repo).execute(slug="ghost", active=False)
 
-    def test_records_the_acting_user_in_the_audit_event(
-        self, repo: FakeChannelRepository
-    ) -> None:
+    def test_records_the_acting_user_in_the_audit_event(self, repo: FakeChannelRepository) -> None:
         CreateChannel(repo).execute(
             CreateChannelCommand(name="Coffee", slug="coffee", currency="IRR")
         )

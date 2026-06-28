@@ -3,6 +3,7 @@
 Centralized so every endpoint sets identical, secure cookie attributes (HttpOnly,
 SameSite, Secure-in-prod) instead of repeating them per view.
 """
+
 from __future__ import annotations
 
 from django.conf import settings

@@ -1,4 +1,5 @@
 """Serializers for the identity/auth endpoints (transport shaping only)."""
+
 from __future__ import annotations
 
 from rest_framework import serializers
