@@ -17,6 +17,7 @@ nav:
       - Record architecture decisions: adr/0001-record-architecture-decisions.md
       - Clean Architecture layering: adr/0002-clean-architecture-layering.md
       - Observability stack: adr/0003-observability-stack.md
+      - Channel as a first-class context: adr/0004-channel-as-first-class-context.md
 
 markdown_extensions:
   - admonition

@@ -1,0 +1,103 @@
+"""Channel endpoints (thin transport adapters).
+
+Views parse input, delegate to a use case, and serialize the result. They hold
+no business logic. Domain exceptions are translated to HTTP status codes here --
+the one place where the domain meets the transport.
+"""
+from __future__ import annotations
+
+import structlog
+from drf_spectacular.utils import extend_schema
+from rest_framework import status
+from rest_framework.request import Request
+from rest_framework.response import Response
+from rest_framework.views import APIView
+
+from src.application.channel.use_cases import CreateChannelCommand
+from src.domain.channel.entities import Channel
+from src.domain.channel.exceptions import (
+    ChannelAlreadyExistsError,
+    ChannelError,
+    ChannelNotFoundError,
+)
+from src.interface.api.channel.container import (
+    build_create_channel,
+    build_get_channel,
+    build_list_channels,
+    build_set_channel_status,
+)
+from src.interface.api.channel.serializers import (
+    ChannelSerializer,
+    CreateChannelSerializer,
+    SetChannelStatusSerializer,
+)
+
+logger = structlog.get_logger(__name__)
+
+
+def _payload(channel: Channel) -> dict[str, object]:
+    return {
+        "id": channel.id,
+        "slug": channel.slug.value,
+        "name": channel.name,
+        "currency": channel.currency.code,
+        "is_active": channel.is_active,
+    }
+
+
+class ChannelListCreateView(APIView):
+    """List channels or create a new one."""
+
+    @extend_schema(responses=ChannelSerializer(many=True))
+    def get(self, request: Request) -> Response:
+        only_active = request.query_params.get("active") == "true"
+        channels = build_list_channels().execute(only_active=only_active)
+        data = [_payload(channel) for channel in channels]
+        return Response(ChannelSerializer(data, many=True).data)
+
+    @extend_schema(request=CreateChannelSerializer, responses=ChannelSerializer)
+    def post(self, request: Request) -> Response:
+        serializer = CreateChannelSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        command = CreateChannelCommand(
+            name=data["name"],
+            slug=data["slug"],
+            currency=data["currency"],
+            is_active=data["is_active"],
+        )
+        try:
+            channel = build_create_channel().execute(command)
+        except ChannelAlreadyExistsError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
+        except ChannelError as exc:
+            # Invalid slug/currency/name surfaced from the domain.
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(
+            ChannelSerializer(_payload(channel)).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class ChannelDetailView(APIView):
+    """Retrieve a channel or change its active status."""
+
+    @extend_schema(responses=ChannelSerializer)
+    def get(self, request: Request, slug: str) -> Response:
+        try:
+            channel = build_get_channel().execute(slug=slug)
+        except ChannelNotFoundError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_404_NOT_FOUND)
+        return Response(ChannelSerializer(_payload(channel)).data)
+
+    @extend_schema(request=SetChannelStatusSerializer, responses=ChannelSerializer)
+    def patch(self, request: Request, slug: str) -> Response:
+        serializer = SetChannelStatusSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            channel = build_set_channel_status().execute(
+                slug=slug, active=serializer.validated_data["is_active"]
+            )
+        except ChannelNotFoundError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_404_NOT_FOUND)
+        return Response(ChannelSerializer(_payload(channel)).data)

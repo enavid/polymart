@@ -46,6 +46,8 @@
 ## فاز ۱ — هویت، کاربران و RBAC (Identity & Access)
 
 > هدف: پاسخ به خواستهٔ «کاربرها با سطح دسترسی‌های مختلف».
+>
+> **وضعیت:** در حال انجام (slice به slice). پیشرفت در پایین این بخش ثبت می‌شود.
 
 - مدل کاربر سفارشی (هویت مبتنی بر موبایل/ایمیل)، احراز هویت (JWT در HttpOnly cookie یا session).
 - ثبت‌نام/ورود/بازیابی، تأیید OTP موبایل (نیاز بومی ایران).
@@ -57,6 +59,27 @@
 - مدل اولیه‌ی **Channel** (موجودیت درجه‌یک) که از اینجا به بعد همه‌چیز به آن وابسته است.
 
 **خروجی فاز ۱:** ورود کاربر با نقش‌های مختلف؛ اندپوینت‌ها بر اساس permission محافظت‌شده.
+
+### پیشرفت فاز ۱
+
+- [x] **Channel (موجودیت درجه‌یک)** — اسلایس کامل Clean Architecture با TDD:
+  - دامنه: aggregate `Channel` + value objectهای `Currency` (ISO 4217) و `ChannelSlug`
+    (خودـاعتبارسنج، immutable) + استثناهای دامنه.
+  - application: پورت `ChannelRepository` + use caseها (`CreateChannel`,
+    `SetChannelStatus`, `GetChannel`, `ListChannels`) با تزریق وابستگی و لاگ
+    ساختاریافتهٔ مناسب حسابرسی روی هر تغییر وضعیت.
+  - infrastructure: اپ Django (`label="channel"`)، مدل ORM، mapper، و
+    `DjangoChannelRepository` که خطاهای ORM را به استثناهای دامنه ترجمه می‌کند.
+  - interface: اندپوینت‌های DRF روی `channels/` (secure-by-default)، نگاشت استثناها
+    به ۴۰۴/۴۰۹/۴۰۰.
+  - تست: ۵۲ unit (دامنه/use-case با fake repo، بدون DB) + integration
+    (repository با DB و کل مسیر HTTP)؛ پوشش ۱۰۰٪. مهاجرت اولیه ساخته شد.
+  - مستند: `docs/adr/0004-channel-as-first-class-context.md`.
+- [ ] مدل کاربر سفارشی + احراز هویت (JWT در کوکی).
+- [ ] ثبت‌نام/ورود/بازیابی + OTP موبایل.
+- [ ] RBAC دولایه (Group/permission + scope سطح‌شیء با guardian) + رجیستری permission.
+- [ ] audit log پایه.
+- [ ] اتصال scope دسترسی به Channel/انبار.
 
 ---
 

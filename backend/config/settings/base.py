@@ -24,6 +24,8 @@ INSTALLED_APPS = [
     "rest_framework",
     "drf_spectacular",
     "guardian",
+    # Local bounded contexts (infrastructure adapters owning the ORM models).
+    "src.infrastructure.channel.apps.ChannelConfig",
 ]
 
 MIDDLEWARE = [
