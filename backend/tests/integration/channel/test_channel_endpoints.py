@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import pytest
 from django.contrib.auth import get_user_model
+from django.contrib.auth.models import AbstractBaseUser
 from rest_framework.test import APIClient
 from structlog.testing import capture_logs
 
@@ -14,20 +15,26 @@ pytestmark = [pytest.mark.django_db, pytest.mark.integration]
 
 
 @pytest.fixture
-def auth_client() -> APIClient:
+def staff_user() -> AbstractBaseUser:
     """A staff user: allowed to perform channel writes (admin-only operations)."""
-    user = get_user_model().objects.create_user(
-        username="operator", password="pw", is_staff=True
+    return get_user_model().objects.create_user(
+        phone_number="09120000001", password="pw", is_staff=True
     )
+
+
+@pytest.fixture
+def auth_client(staff_user: AbstractBaseUser) -> APIClient:
     client = APIClient()
-    client.force_authenticate(user=user)
+    client.force_authenticate(user=staff_user)
     return client
 
 
 @pytest.fixture
 def member_client() -> APIClient:
     """A non-staff authenticated user: may read channels but not mutate them."""
-    user = get_user_model().objects.create_user(username="member", password="pw")
+    user = get_user_model().objects.create_user(
+        phone_number="09120000002", password="pw"
+    )
     client = APIClient()
     client.force_authenticate(user=user)
     return client
@@ -117,7 +124,9 @@ class TestCreate:
         assert response.data["is_active"] is True
         assert response.data["id"] is not None
 
-    def test_audit_event_records_the_authenticated_actor(self, auth_client: APIClient) -> None:
+    def test_audit_event_records_the_authenticated_actor(
+        self, auth_client: APIClient, staff_user: AbstractBaseUser
+    ) -> None:
         with capture_logs() as logs:
             auth_client.post(
                 "/api/v1/channels/",
@@ -126,7 +135,8 @@ class TestCreate:
             )
 
         events = [entry for entry in logs if entry["event"] == "channel_created"]
-        assert events and events[0]["actor"] == "operator"
+        # The audit trail records the stable user id, not the phone number (PII).
+        assert events and events[0]["actor"] == str(staff_user.pk)
 
     def test_duplicate_slug_returns_409(self, auth_client: APIClient) -> None:
         body = {"slug": "coffee", "name": "Coffee", "currency": "IRR"}

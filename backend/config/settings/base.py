@@ -1,6 +1,7 @@
 """Base Django settings shared across environments."""
 from __future__ import annotations
 
+from datetime import timedelta
 from pathlib import Path
 
 import environ
@@ -28,8 +29,12 @@ INSTALLED_APPS = [
     "drf_spectacular",
     "guardian",
     # Local bounded contexts (infrastructure adapters owning the ORM models).
+    "src.infrastructure.identity.apps.IdentityConfig",
     "src.infrastructure.channel.apps.ChannelConfig",
 ]
+
+# Phone-first custom user (see src/infrastructure/identity/models.py).
+AUTH_USER_MODEL = "identity.User"
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
@@ -95,13 +100,32 @@ AUTHENTICATION_BACKENDS = [
 # --- DRF (secure-by-default) ------------------------------------------------
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [
-        "rest_framework_simplejwt.authentication.JWTAuthentication",
+        # Tokens are carried in HttpOnly cookies, not the Authorization header,
+        # so JavaScript cannot read them (XSS-resistant). See identity slice.
+        "src.interface.api.identity.authentication.CookieJWTAuthentication",
     ],
     "DEFAULT_PERMISSION_CLASSES": [
         "rest_framework.permissions.IsAuthenticated",
     ],
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
 }
+
+# --- JWT auth (tokens delivered as HttpOnly cookies) ------------------------
+SIMPLE_JWT = {
+    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=15),
+    "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
+}
+
+# Cookie attributes for the access/refresh tokens. Secure is forced off only in
+# DEBUG so local HTTP works; production (DEBUG=False) always sets Secure. The
+# tokens are HttpOnly (no JS access) and SameSite=Lax (CSRF-resistant for the
+# top-level navigations a storefront performs).
+AUTH_COOKIE_ACCESS = "access_token"
+AUTH_COOKIE_REFRESH = "refresh_token"
+AUTH_COOKIE_SECURE = not DEBUG
+AUTH_COOKIE_HTTPONLY = True
+AUTH_COOKIE_SAMESITE = "Lax"
+AUTH_COOKIE_PATH = "/"
 
 SPECTACULAR_SETTINGS = {
     "TITLE": "Polymart API",

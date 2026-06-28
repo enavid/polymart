@@ -6,6 +6,7 @@ from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
 
 api_v1_patterns = [
     path("", include("src.interface.api.health.urls")),
+    path("", include("src.interface.api.identity.urls")),
     path("", include("src.interface.api.channel.urls")),
 ]
 

@@ -47,9 +47,13 @@ def _query_flag(raw: str | None) -> bool:
 
 
 def _actor(request: Request) -> str | None:
-    """Identify the authenticated user behind a mutation for the audit trail."""
+    """Identify the authenticated user behind a mutation for the audit trail.
+
+    Uses the stable primary key, not the username: the username is the phone
+    number (PII), which must never reach the logs.
+    """
     user = request.user
-    return user.get_username() if user.is_authenticated else None
+    return str(user.pk) if user.is_authenticated else None
 
 
 class _AdminWriteMixin:

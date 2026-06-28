@@ -41,3 +41,17 @@ def test_health_documents_service_unavailable() -> None:
 
     assert "200" in responses
     assert "503" in responses
+
+
+def test_login_documents_validation_and_rejection() -> None:
+    responses = _responses("/api/v1/auth/login/", "post")
+
+    assert "200" in responses
+    assert "400" in responses
+    assert "401" in responses
+
+
+def test_cookie_auth_is_a_documented_security_scheme() -> None:
+    schema = SchemaGenerator().get_schema(request=None, public=True)
+
+    assert "cookieAuth" in schema["components"]["securitySchemes"]

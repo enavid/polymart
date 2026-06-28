@@ -49,6 +49,8 @@ make docker-migrate
 ```
 
 - Backend health: <http://localhost:8000/api/v1/health/>
+- Auth (phone + password, tokens in HttpOnly cookies):
+  `POST /api/v1/auth/login/`, `/auth/refresh/`, `/auth/logout/`, `GET /auth/me/`
 - API docs (Swagger): <http://localhost:8000/api/docs/>
 - Frontend: <http://localhost:3000>
 
@@ -75,4 +77,6 @@ contributor must follow live in [`CLAUDE.md`](CLAUDE.md).
 
 Phase 0 (foundation) complete: monorepo scaffold, Clean Architecture skeleton,
 Docker, Makefile, CI/CD, observability, and a tested walking skeleton (`health`).
+Phase 1 (identity & access) in progress: the **Channel** bounded context and a
+phone-first **custom user model with cookie-based JWT auth** are delivered.
 Next: see [`docs/03-roadmap.md`](docs/03-roadmap.md).
