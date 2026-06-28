@@ -7,10 +7,11 @@ the one place where the domain meets the transport.
 
 from __future__ import annotations
 
+from typing import ClassVar
+
 import structlog
 from drf_spectacular.utils import extend_schema
 from rest_framework import status
-from rest_framework.permissions import SAFE_METHODS, BasePermission, IsAdminUser, IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -21,6 +22,10 @@ from src.domain.channel.exceptions import (
     ChannelAlreadyExistsError,
     ChannelError,
     ChannelNotFoundError,
+)
+from src.interface.api.access.permissions import (
+    GlobalChannelManagePermission,
+    ScopedChannelManagePermission,
 )
 from src.interface.api.channel.container import (
     build_create_channel,
@@ -57,24 +62,6 @@ def _actor(request: Request) -> str | None:
     return str(user.pk) if user.is_authenticated else None
 
 
-class _AdminWriteMixin:
-    """Reads need authentication; writes need staff (admin) privileges.
-
-    Channels are platform-level configuration: deactivating one takes a storefront
-    offline. The project-wide RBAC layer (identity slice) will supersede this with
-    fine-grained, channel-scoped permissions; until then mutations are limited to
-    staff while reads stay open to any authenticated user.
-    """
-
-    # Provided by APIView at runtime; declared here for the type checker.
-    request: Request
-
-    def get_permissions(self) -> list[BasePermission]:
-        if self.request.method in SAFE_METHODS:
-            return [IsAuthenticated()]
-        return [IsAdminUser()]
-
-
 def _payload(channel: Channel) -> dict[str, object]:
     """Project a domain entity to the response body.
 
@@ -91,8 +78,10 @@ def _payload(channel: Channel) -> dict[str, object]:
     }
 
 
-class ChannelListCreateView(_AdminWriteMixin, APIView):
+class ChannelListCreateView(APIView):
     """List channels or create a new one."""
+
+    permission_classes: ClassVar = [GlobalChannelManagePermission]
 
     @extend_schema(responses=ChannelSerializer(many=True))
     def get(self, request: Request) -> Response:
@@ -105,6 +94,7 @@ class ChannelListCreateView(_AdminWriteMixin, APIView):
         responses={
             201: ChannelSerializer,
             400: ErrorSerializer,
+            403: ErrorSerializer,
             409: ErrorSerializer,
         },
     )
@@ -128,8 +118,10 @@ class ChannelListCreateView(_AdminWriteMixin, APIView):
         return Response(_payload(channel), status=status.HTTP_201_CREATED)
 
 
-class ChannelDetailView(_AdminWriteMixin, APIView):
+class ChannelDetailView(APIView):
     """Retrieve a channel or change its active status."""
+
+    permission_classes: ClassVar = [ScopedChannelManagePermission]
 
     @extend_schema(responses={200: ChannelSerializer, 404: ErrorSerializer})
     def get(self, request: Request, slug: str) -> Response:
@@ -144,18 +136,25 @@ class ChannelDetailView(_AdminWriteMixin, APIView):
         responses={
             200: ChannelSerializer,
             400: ErrorSerializer,
+            403: ErrorSerializer,
             404: ErrorSerializer,
         },
     )
     def patch(self, request: Request, slug: str) -> Response:
         serializer = SetChannelStatusSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        # Resolve the target first so a missing channel is a 404 (not a 403), then
+        # enforce object-level scope: a per-channel manager may mutate only this
+        # channel, while a global manager may mutate any.
         try:
-            channel = build_set_channel_status().execute(
-                slug=slug,
-                active=serializer.validated_data["is_active"],
-                actor=_actor(request),
-            )
+            channel = build_get_channel().execute(slug=slug)
         except ChannelNotFoundError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_404_NOT_FOUND)
-        return Response(_payload(channel))
+        self.check_object_permissions(request, channel)
+
+        updated = build_set_channel_status().execute(
+            slug=slug,
+            active=serializer.validated_data["is_active"],
+            actor=_actor(request),
+        )
+        return Response(_payload(updated))

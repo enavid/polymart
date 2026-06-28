@@ -14,11 +14,12 @@ def _responses(path: str, method: str) -> dict:
     return schema["paths"][path][method]["responses"]
 
 
-def test_create_channel_documents_validation_and_conflict() -> None:
+def test_create_channel_documents_validation_conflict_and_forbidden() -> None:
     responses = _responses("/api/v1/channels/", "post")
 
     assert "201" in responses
     assert "400" in responses
+    assert "403" in responses
     assert "409" in responses
 
 
@@ -29,11 +30,12 @@ def test_get_channel_documents_not_found() -> None:
     assert "404" in responses
 
 
-def test_patch_channel_documents_validation_and_not_found() -> None:
+def test_patch_channel_documents_validation_forbidden_and_not_found() -> None:
     responses = _responses("/api/v1/channels/{slug}/", "patch")
 
     assert "200" in responses
     assert "400" in responses
+    assert "403" in responses
     assert "404" in responses
 
 

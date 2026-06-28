@@ -12,27 +12,32 @@ from django.contrib.auth.models import AbstractBaseUser
 from rest_framework.test import APIClient
 from structlog.testing import capture_logs
 
+from src.application.access.use_cases import AssignRole, GrantChannelManagement
+from src.domain.access.registry import CHANNEL_ADMIN_ROLE
+from src.infrastructure.access.gateway import GuardianAccessControl
+from src.infrastructure.channel.repositories import DjangoChannelRepository
+
 pytestmark = [pytest.mark.django_db, pytest.mark.integration]
 
 
 @pytest.fixture
-def staff_user() -> AbstractBaseUser:
-    """A staff user: allowed to perform channel writes (admin-only operations)."""
-    return get_user_model().objects.create_user(
-        phone_number="09120000001", password="pw", is_staff=True
-    )
+def admin_user() -> AbstractBaseUser:
+    """A global channel manager (channel_admin role): may manage every channel."""
+    user = get_user_model().objects.create_user(phone_number="09120000001", password="pw")
+    AssignRole(GuardianAccessControl()).execute(user_id=user.pk, role_name=CHANNEL_ADMIN_ROLE)
+    return user
 
 
 @pytest.fixture
-def auth_client(staff_user: AbstractBaseUser) -> APIClient:
+def auth_client(admin_user: AbstractBaseUser) -> APIClient:
     client = APIClient()
-    client.force_authenticate(user=staff_user)
+    client.force_authenticate(user=admin_user)
     return client
 
 
 @pytest.fixture
 def member_client() -> APIClient:
-    """A non-staff authenticated user: may read channels but not mutate them."""
+    """A plain authenticated user: may read channels but not mutate them."""
     user = get_user_model().objects.create_user(phone_number="09120000002", password="pw")
     client = APIClient()
     client.force_authenticate(user=user)
@@ -64,14 +69,30 @@ class TestSecurity:
 
 
 class TestAuthorization:
-    """Writes are admin-only; reads are open to any authenticated user."""
+    """Two-layer RBAC: reads need only authentication; writes need the
+    ``manage_channel`` permission, globally (role) or per-channel (guardian)."""
 
-    def test_non_staff_user_can_list_channels(self, member_client: APIClient) -> None:
+    def test_member_can_list_channels(self, member_client: APIClient) -> None:
         response = member_client.get("/api/v1/channels/")
 
         assert response.status_code == 200
 
-    def test_non_staff_user_cannot_create_a_channel(self, member_client: APIClient) -> None:
+    def test_member_can_retrieve_a_channel(
+        self, member_client: APIClient, auth_client: APIClient
+    ) -> None:
+        auth_client.post(
+            "/api/v1/channels/",
+            {"slug": "coffee", "name": "Coffee", "currency": "IRR"},
+            format="json",
+        )
+
+        response = member_client.get("/api/v1/channels/coffee/")
+
+        assert response.status_code == 200
+
+    def test_member_without_permission_cannot_create_a_channel(
+        self, member_client: APIClient
+    ) -> None:
         response = member_client.post(
             "/api/v1/channels/",
             {"slug": "coffee", "name": "Coffee", "currency": "IRR"},
@@ -80,7 +101,7 @@ class TestAuthorization:
 
         assert response.status_code == 403
 
-    def test_non_staff_user_cannot_change_status(
+    def test_member_without_permission_cannot_change_status(
         self, member_client: APIClient, auth_client: APIClient
     ) -> None:
         auth_client.post(
@@ -95,18 +116,63 @@ class TestAuthorization:
 
         assert response.status_code == 403
 
-    def test_non_staff_user_can_retrieve_a_channel(
-        self, member_client: APIClient, auth_client: APIClient
+    def test_object_scoped_manager_can_change_its_own_channel(
+        self, auth_client: APIClient
     ) -> None:
+        # An admin creates two channels; a fresh user is scoped to only one.
+        for slug, name in (("coffee", "Coffee"), ("tea", "Tea")):
+            auth_client.post(
+                "/api/v1/channels/",
+                {"slug": slug, "name": name, "currency": "IRR"},
+                format="json",
+            )
+        scoped_user = get_user_model().objects.create_user(
+            phone_number="09120000003", password="pw"
+        )
+        GrantChannelManagement(GuardianAccessControl(), DjangoChannelRepository()).execute(
+            user_id=scoped_user.pk, channel_slug="coffee"
+        )
+        scoped_client = APIClient()
+        scoped_client.force_authenticate(user=scoped_user)
+
+        granted = scoped_client.patch(
+            "/api/v1/channels/coffee/", {"is_active": False}, format="json"
+        )
+        # The same scope must NOT extend to a channel it was not granted.
+        denied = scoped_client.patch(
+            "/api/v1/channels/tea/", {"is_active": False}, format="json"
+        )
+
+        assert granted.status_code == 200
+        assert granted.data["is_active"] is False
+        assert denied.status_code == 403
+
+    def test_object_scoped_manager_still_cannot_create_channels(
+        self, auth_client: APIClient
+    ) -> None:
+        # Creating a channel is a platform-global action: object scope does not
+        # confer it, even for a user who manages an existing channel.
         auth_client.post(
             "/api/v1/channels/",
             {"slug": "coffee", "name": "Coffee", "currency": "IRR"},
             format="json",
         )
+        scoped_user = get_user_model().objects.create_user(
+            phone_number="09120000004", password="pw"
+        )
+        GrantChannelManagement(GuardianAccessControl(), DjangoChannelRepository()).execute(
+            user_id=scoped_user.pk, channel_slug="coffee"
+        )
+        scoped_client = APIClient()
+        scoped_client.force_authenticate(user=scoped_user)
 
-        response = member_client.get("/api/v1/channels/coffee/")
+        response = scoped_client.post(
+            "/api/v1/channels/",
+            {"slug": "tea", "name": "Tea", "currency": "IRR"},
+            format="json",
+        )
 
-        assert response.status_code == 200
+        assert response.status_code == 403
 
 
 class TestCreate:
@@ -124,7 +190,7 @@ class TestCreate:
         assert response.data["id"] is not None
 
     def test_audit_event_records_the_authenticated_actor(
-        self, auth_client: APIClient, staff_user: AbstractBaseUser
+        self, auth_client: APIClient, admin_user: AbstractBaseUser
     ) -> None:
         with capture_logs() as logs:
             auth_client.post(
@@ -135,7 +201,7 @@ class TestCreate:
 
         events = [entry for entry in logs if entry["event"] == "channel_created"]
         # The audit trail records the stable user id, not the phone number (PII).
-        assert events and events[0]["actor"] == str(staff_user.pk)
+        assert events and events[0]["actor"] == str(admin_user.pk)
 
     def test_duplicate_slug_returns_409(self, auth_client: APIClient) -> None:
         body = {"slug": "coffee", "name": "Coffee", "currency": "IRR"}

@@ -7,6 +7,8 @@ depends on the ORM.
 
 from __future__ import annotations
 
+from typing import ClassVar
+
 from django.db import models
 
 
@@ -26,6 +28,12 @@ class ChannelModel(models.Model):
         ordering = ("slug",)
         verbose_name = "channel"
         verbose_name_plural = "channels"
+        # Object-capable RBAC permission. Granted globally via the channel_admin
+        # role or per-channel via django-guardian (object scope). The codename
+        # mirrors src.domain.channel.permissions.MANAGE_CHANNEL.
+        permissions: ClassVar[list[tuple[str, str]]] = [  # type: ignore[assignment]
+            ("manage_channel", "Can manage channels (create, activate, deactivate)"),
+        ]
 
     def __str__(self) -> str:
         return self.slug

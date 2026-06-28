@@ -51,6 +51,8 @@ make docker-migrate
 - Backend health: <http://localhost:8000/api/v1/health/>
 - Auth (phone + password, tokens in HttpOnly cookies):
   `POST /api/v1/auth/login/`, `/auth/refresh/`, `/auth/logout/`, `GET /auth/me/`
+- Onboarding & recovery (mobile OTP): `POST /api/v1/auth/otp/request/`,
+  `/auth/register/`, `/auth/password-reset/`
 - API docs (Swagger): <http://localhost:8000/api/docs/>
 - Frontend: <http://localhost:3000>
 

@@ -32,6 +32,7 @@ INSTALLED_APPS = [
     # Local bounded contexts (infrastructure adapters owning the ORM models).
     "src.infrastructure.identity.apps.IdentityConfig",
     "src.infrastructure.channel.apps.ChannelConfig",
+    "src.infrastructure.access.apps.AccessConfig",
 ]
 
 # Phone-first custom user (see src/infrastructure/identity/models.py).
@@ -97,6 +98,12 @@ AUTHENTICATION_BACKENDS = [
     "django.contrib.auth.backends.ModelBackend",
     "guardian.backends.ObjectPermissionBackend",
 ]
+
+# The API is authenticated-only (anonymous requests get 401 before any object
+# check), so guardian's database-backed anonymous user is unnecessary -- and it
+# would not fit our phone-first custom user. Disabling it avoids creating a
+# synthetic "AnonymousUser" account at migrate time.
+ANONYMOUS_USER_NAME = None
 
 # --- DRF (secure-by-default) ------------------------------------------------
 REST_FRAMEWORK = {
