@@ -3,6 +3,11 @@ COMPOSE := docker compose
 BACKEND := cd backend &&
 FRONTEND := cd frontend &&
 
+# Load backend/.env (if present) so Compose variable interpolation
+# (${POSTGRES_PORT}, ${POSTGRES_USER}, ...) matches what the natively-running app
+# reads. This keeps a single source of truth for ports/credentials.
+ENVLOAD := set -a; [ -f backend/.env ] && . ./backend/.env; set +a;
+
 # --- Native (no-Docker) toolchain -------------------------------------------
 # Backend runs in a project-local virtualenv so `make` works without any global
 # Python packages. `uv` is used when available (much faster), else stdlib venv.
@@ -53,10 +58,10 @@ setup: install env ## One-time local setup: virtualenv + .env
 # --- Infrastructure (Docker, infra only) ------------------------------------
 .PHONY: infra-up infra-down
 infra-up: ## Start ONLY Postgres + Redis in Docker (waits until healthy)
-	$(COMPOSE) up -d --wait db redis
+	@$(ENVLOAD) $(COMPOSE) up -d --wait db redis
 
 infra-down: ## Stop the infra containers (keeps the data volume)
-	$(COMPOSE) stop db redis
+	@$(ENVLOAD) $(COMPOSE) stop db redis
 
 # --- Run the app natively ----------------------------------------------------
 .PHONY: up down restart logs ps
@@ -83,7 +88,9 @@ down: ## Stop the native app processes and the infra containers
 	-@for f in $(RUN)/*.pid; do \
 		[ -f "$$f" ] || continue; \
 		pid=$$(cat "$$f"); \
-		if kill "$$pid" 2>/dev/null; then echo "stopped $$(basename $$f .pid) (pid $$pid)"; fi; \
+		pkill -TERM -P "$$pid" 2>/dev/null || true; \
+		if kill -TERM "$$pid" 2>/dev/null; then echo "stopped $$(basename $$f .pid) (pid $$pid)"; \
+		else echo "$$(basename $$f .pid): already stopped"; fi; \
 		rm -f "$$f"; \
 	done
 	@$(MAKE) --no-print-directory infra-down
@@ -148,21 +155,21 @@ check: lint type test ## Quick local quality gate (backend lint + type + test)
 # ===========================================================================
 .PHONY: docker-build docker-up docker-down docker-restart docker-logs docker-ps
 docker-build: ## Build all Docker images
-	$(COMPOSE) build
+	@$(ENVLOAD) $(COMPOSE) build
 
 docker-up: ## Start the full dev stack in Docker
-	$(COMPOSE) up -d
+	@$(ENVLOAD) $(COMPOSE) up -d
 
 docker-down: ## Stop and remove all containers
-	$(COMPOSE) down
+	@$(ENVLOAD) $(COMPOSE) down
 
 docker-restart: docker-down docker-up ## Restart the full Docker stack
 
 docker-logs: ## Tail Docker service logs
-	$(COMPOSE) logs -f
+	@$(ENVLOAD) $(COMPOSE) logs -f
 
 docker-ps: ## List running Docker services
-	$(COMPOSE) ps
+	@$(ENVLOAD) $(COMPOSE) ps
 
 .PHONY: docker-shell docker-bash docker-migrate docker-makemigrations docker-superuser
 docker-shell: ## Open a Django shell in the backend container

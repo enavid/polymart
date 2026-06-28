@@ -48,13 +48,30 @@ TEMPLATES = [
 ]
 
 # --- Database / cache / broker ---------------------------------------------
-DATABASES = {
-    "default": env.db(
-        "DATABASE_URL", default=f"sqlite:///{BASE_DIR / 'db.sqlite3'}"
-    ),
-}
+# A full DATABASE_URL wins (prod/CI set it explicitly). Otherwise the connection
+# is assembled from discrete POSTGRES_* parts so a single POSTGRES_PORT change in
+# backend/.env drives both Django and the Docker port mapping (see Makefile).
+if env("DATABASE_URL", default=""):
+    DATABASES = {"default": env.db("DATABASE_URL")}
+else:
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.postgresql",
+            "HOST": env("POSTGRES_HOST", default="localhost"),
+            "PORT": env("POSTGRES_PORT", default="5432"),
+            "NAME": env("POSTGRES_DB", default="polymart"),
+            "USER": env("POSTGRES_USER", default="polymart"),
+            "PASSWORD": env("POSTGRES_PASSWORD", default="polymart"),
+        }
+    }
 
-REDIS_URL = env("REDIS_URL", default="redis://localhost:6379/0")
+REDIS_URL = env(
+    "REDIS_URL",
+    default="redis://{host}:{port}/0".format(
+        host=env("REDIS_HOST", default="localhost"),
+        port=env("REDIS_PORT", default="6379"),
+    ),
+)
 CACHES = {
     "default": {
         "BACKEND": "django.core.cache.backends.redis.RedisCache",
