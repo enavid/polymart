@@ -83,3 +83,19 @@ class CreateProductSerializer(serializers.Serializer):
     product_type = serializers.CharField()
     values = AttributeValueSerializer(many=True, required=False, default=list)
     metadata = serializers.DictField(child=serializers.CharField(), required=False, default=dict)
+
+
+class VariantSerializer(serializers.Serializer):
+    """Response projection of a product variant."""
+
+    id = serializers.IntegerField(read_only=True)
+    product = serializers.CharField()
+    sku = serializers.CharField()
+    name = serializers.CharField()
+
+
+class CreateVariantSerializer(serializers.Serializer):
+    """Request body for creating a variant (the parent product comes from the URL)."""
+
+    sku = serializers.CharField()
+    name = serializers.CharField()

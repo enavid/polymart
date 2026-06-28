@@ -10,17 +10,21 @@ from src.application.catalog.use_cases import (
     CreateAttribute,
     CreateProduct,
     CreateProductType,
+    CreateVariant,
     GetAttribute,
     GetProduct,
     GetProductType,
+    GetVariant,
     ListAttributes,
     ListProducts,
     ListProductTypes,
+    ListProductVariants,
 )
 from src.infrastructure.catalog.repositories import (
     DjangoAttributeRepository,
     DjangoProductRepository,
     DjangoProductTypeRepository,
+    DjangoVariantRepository,
 )
 from src.interface.api.audit.container import build_audit_recorder
 
@@ -66,3 +70,17 @@ def build_get_product() -> GetProduct:
 
 def build_list_products() -> ListProducts:
     return ListProducts(DjangoProductRepository())
+
+
+def build_create_variant() -> CreateVariant:
+    return CreateVariant(
+        DjangoVariantRepository(), DjangoProductRepository(), build_audit_recorder()
+    )
+
+
+def build_get_variant() -> GetVariant:
+    return GetVariant(DjangoVariantRepository())
+
+
+def build_list_product_variants() -> ListProductVariants:
+    return ListProductVariants(DjangoVariantRepository(), DjangoProductRepository())

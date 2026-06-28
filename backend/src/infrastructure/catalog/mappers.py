@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from src.domain.catalog.entities import Attribute, Product, ProductType
+from src.domain.catalog.entities import Attribute, Product, ProductType, ProductVariant
 from src.domain.catalog.enums import AttributeInputType
 from src.domain.catalog.value_objects import (
     AttributeChoice,
@@ -10,8 +10,14 @@ from src.domain.catalog.value_objects import (
     AttributeValue,
     ProductCode,
     ProductTypeCode,
+    Sku,
 )
-from src.infrastructure.catalog.models import AttributeModel, ProductModel, ProductTypeModel
+from src.infrastructure.catalog.models import (
+    AttributeModel,
+    ProductModel,
+    ProductTypeModel,
+    ProductVariantModel,
+)
 
 
 def to_domain(model: AttributeModel) -> Attribute:
@@ -95,4 +101,31 @@ def apply_product_scalar_fields(product: Product, model: ProductModel) -> Produc
     model.code = product.code.value
     model.name = product.name
     model.metadata = dict(product.metadata)
+    return model
+
+
+def variant_to_domain(model: ProductVariantModel) -> ProductVariant:
+    """Rebuild a variant from a persisted row.
+
+    Relies on the caller having loaded the related ``product`` (via
+    ``select_related``) so reading the parent code triggers no extra query.
+    """
+    return ProductVariant(
+        id=model.pk,
+        product=ProductCode(model.product.code),
+        sku=Sku(model.sku),
+        name=model.name,
+    )
+
+
+def apply_variant_scalar_fields(
+    variant: ProductVariant, model: ProductVariantModel
+) -> ProductVariantModel:
+    """Copy the variant's own (non-relational) fields onto an ORM instance.
+
+    The ``product`` foreign key is set by the repository, which resolves the
+    referenced code to a row.
+    """
+    model.sku = variant.sku.value
+    model.name = variant.name
     return model

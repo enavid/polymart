@@ -9,8 +9,9 @@ from src.application.catalog.ports import (
     AttributeRepository,
     ProductRepository,
     ProductTypeRepository,
+    VariantRepository,
 )
-from src.domain.catalog.entities import Attribute, Product, ProductType
+from src.domain.catalog.entities import Attribute, Product, ProductType, ProductVariant
 from src.domain.catalog.exceptions import (
     AttributeAlreadyExistsError,
     AttributeNotFoundError,
@@ -19,14 +20,18 @@ from src.domain.catalog.exceptions import (
     ProductTypeAlreadyExistsError,
     ProductTypeNotFoundError,
     UnknownAttributeError,
+    VariantAlreadyExistsError,
+    VariantNotFoundError,
 )
 from src.infrastructure.catalog.mappers import (
     apply_product_scalar_fields,
     apply_product_type_scalar_fields,
     apply_scalar_fields,
+    apply_variant_scalar_fields,
     product_to_domain,
     product_type_to_domain,
     to_domain,
+    variant_to_domain,
 )
 from src.infrastructure.catalog.models import (
     AttributeChoiceModel,
@@ -35,6 +40,7 @@ from src.infrastructure.catalog.models import (
     ProductModel,
     ProductTypeAttributeModel,
     ProductTypeModel,
+    ProductVariantModel,
 )
 
 logger = structlog.get_logger(__name__)
@@ -217,3 +223,45 @@ class DjangoProductRepository(ProductRepository):
             .all()
         )
         return [product_to_domain(model) for model in models]
+
+
+class DjangoVariantRepository(VariantRepository):
+    """Persist product variants with the Django ORM, returning domain entities."""
+
+    def add(self, variant: ProductVariant) -> ProductVariant:
+        model = self._build_model(variant)
+        try:
+            model.save()
+        except IntegrityError as exc:
+            # Unique-constraint violation on SKU -> domain-level conflict (a
+            # concurrent insert won the race after the use case's pre-check).
+            logger.warning("variant_insert_race_lost", sku=variant.sku.value)
+            raise VariantAlreadyExistsError(variant.sku.value) from exc
+        return self.get_by_sku(variant.sku.value)
+
+    @staticmethod
+    def _build_model(variant: ProductVariant) -> ProductVariantModel:
+        code = variant.product.value
+        try:
+            product = ProductModel.objects.get(code=code)
+        except ProductModel.DoesNotExist as exc:
+            # The use case resolved the product; reaching here means it vanished
+            # concurrently. Surface it as a domain error (no row is written).
+            raise ProductNotFoundError(code) from exc
+        return apply_variant_scalar_fields(variant, ProductVariantModel(product=product))
+
+    def get_by_sku(self, sku: str) -> ProductVariant:
+        try:
+            model = ProductVariantModel.objects.select_related("product").get(sku=sku)
+        except ProductVariantModel.DoesNotExist as exc:
+            raise VariantNotFoundError(sku) from exc
+        return variant_to_domain(model)
+
+    def exists_by_sku(self, sku: str) -> bool:
+        return ProductVariantModel.objects.filter(sku=sku).exists()
+
+    def list_for_product(self, product_code: str) -> list[ProductVariant]:
+        models = ProductVariantModel.objects.select_related("product").filter(
+            product__code=product_code
+        )
+        return [variant_to_domain(model) for model in models]

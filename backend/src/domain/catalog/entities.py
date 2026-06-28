@@ -24,6 +24,7 @@ from src.domain.catalog.exceptions import (
     InvalidProductMetadataError,
     InvalidProductNameError,
     InvalidProductTypeNameError,
+    InvalidVariantNameError,
 )
 from src.domain.catalog.value_objects import (
     AttributeChoice,
@@ -31,6 +32,7 @@ from src.domain.catalog.value_objects import (
     AttributeValue,
     ProductCode,
     ProductTypeCode,
+    Sku,
 )
 
 _NAME_MAX_LENGTH = 255
@@ -184,3 +186,30 @@ class Product:
                 raise InvalidProductMetadataError(f"value for key {stripped_key!r}")
             validated[stripped_key] = value
         return validated
+
+
+@dataclass
+class ProductVariant:
+    """A sellable instance of a product, identified by a unique SKU.
+
+    A variant references its parent product by code (it does not own it) and carries
+    its own stock-keeping identity. Whether the parent product exists is an
+    application-layer concern, validated against the product repository, since the
+    entity cannot reach persistence. This entity owns only its structural rule: a
+    non-blank, bounded display name.
+    """
+
+    product: ProductCode
+    sku: Sku
+    name: str
+    id: int | None = field(default=None)
+
+    def __post_init__(self) -> None:
+        self.name = self._validated_name(self.name)
+
+    @staticmethod
+    def _validated_name(raw: str) -> str:
+        name = raw.strip()
+        if not name or len(name) > _NAME_MAX_LENGTH:
+            raise InvalidVariantNameError(raw)
+        return name

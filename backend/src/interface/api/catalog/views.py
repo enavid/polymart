@@ -22,8 +22,9 @@ from src.application.catalog.use_cases import (
     CreateAttributeCommand,
     CreateProductCommand,
     CreateProductTypeCommand,
+    CreateVariantCommand,
 )
-from src.domain.catalog.entities import Attribute, Product, ProductType
+from src.domain.catalog.entities import Attribute, Product, ProductType, ProductVariant
 from src.domain.catalog.exceptions import (
     AttributeAlreadyExistsError,
     AttributeNotFoundError,
@@ -32,17 +33,22 @@ from src.domain.catalog.exceptions import (
     ProductNotFoundError,
     ProductTypeAlreadyExistsError,
     ProductTypeNotFoundError,
+    VariantAlreadyExistsError,
+    VariantNotFoundError,
 )
 from src.interface.api.access.permissions import CatalogManagePermission
 from src.interface.api.catalog.container import (
     build_create_attribute,
     build_create_product,
     build_create_product_type,
+    build_create_variant,
     build_get_attribute,
     build_get_product,
     build_get_product_type,
+    build_get_variant,
     build_list_attributes,
     build_list_product_types,
+    build_list_product_variants,
     build_list_products,
 )
 from src.interface.api.catalog.serializers import (
@@ -50,8 +56,10 @@ from src.interface.api.catalog.serializers import (
     CreateAttributeSerializer,
     CreateProductSerializer,
     CreateProductTypeSerializer,
+    CreateVariantSerializer,
     ProductSerializer,
     ProductTypeSerializer,
+    VariantSerializer,
 )
 from src.interface.api.common import ErrorSerializer
 
@@ -277,3 +285,67 @@ class ProductDetailView(APIView):
         except ProductNotFoundError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_404_NOT_FOUND)
         return Response(_product_payload(product))
+
+
+def _variant_payload(variant: ProductVariant) -> dict[str, object]:
+    """Project a variant entity to the response body."""
+    return {
+        "id": variant.id,
+        "product": variant.product.value,
+        "sku": variant.sku.value,
+        "name": variant.name,
+    }
+
+
+class ProductVariantListCreateView(APIView):
+    """List the variants of a product or create a new one (nested under the product)."""
+
+    permission_classes: ClassVar = [CatalogManagePermission]
+
+    @extend_schema(responses={200: VariantSerializer(many=True), 404: ErrorSerializer})
+    def get(self, request: Request, code: str) -> Response:
+        try:
+            variants = build_list_product_variants().execute(product_code=code)
+        except ProductNotFoundError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_404_NOT_FOUND)
+        return Response([_variant_payload(variant) for variant in variants])
+
+    @extend_schema(
+        request=CreateVariantSerializer,
+        responses={
+            201: VariantSerializer,
+            400: ErrorSerializer,
+            403: ErrorSerializer,
+            404: ErrorSerializer,
+            409: ErrorSerializer,
+        },
+    )
+    def post(self, request: Request, code: str) -> Response:
+        serializer = CreateVariantSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        command = CreateVariantCommand(product=code, sku=data["sku"], name=data["name"])
+        try:
+            variant = build_create_variant().execute(command, actor=_actor(request))
+        except ProductNotFoundError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_404_NOT_FOUND)
+        except VariantAlreadyExistsError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
+        except CatalogError as exc:
+            # Invalid SKU or blank name surfaced from the domain.
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(_variant_payload(variant), status=status.HTTP_201_CREATED)
+
+
+class VariantDetailView(APIView):
+    """Retrieve a single variant by SKU."""
+
+    permission_classes: ClassVar = [CatalogManagePermission]
+
+    @extend_schema(responses={200: VariantSerializer, 404: ErrorSerializer})
+    def get(self, request: Request, sku: str) -> Response:
+        try:
+            variant = build_get_variant().execute(sku=sku)
+        except VariantNotFoundError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_404_NOT_FOUND)
+        return Response(_variant_payload(variant))

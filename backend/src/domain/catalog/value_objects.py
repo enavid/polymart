@@ -14,12 +14,17 @@ from src.domain.catalog.exceptions import (
     InvalidAttributeCodeError,
     InvalidProductCodeError,
     InvalidProductTypeCodeError,
+    InvalidSkuError,
 )
 
 # URL-safe kebab-case: lower-case alphanumerics in hyphen-separated groups. Codes
 # are stable machine keys (e.g. "roast-level"), so the format is intentionally
 # strict and shared by attribute codes and choice values.
 _SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+# SKUs follow the same shape but are upper-cased: a stock-keeping unit is conventionally
+# written in upper case, and a single canonical form keeps one physical item from being
+# split across "abc-1" and "ABC-1".
+_SKU_RE = re.compile(r"^[A-Z0-9]+(?:-[A-Z0-9]+)*$")
 _SLUG_MAX_LENGTH = 64
 _LABEL_MAX_LENGTH = 255
 
@@ -66,6 +71,26 @@ class ProductCode:
         normalized = self.value.strip()
         if len(normalized) > _SLUG_MAX_LENGTH or not _SLUG_RE.match(normalized):
             raise InvalidProductCodeError(self.value)
+        object.__setattr__(self, "value", normalized)
+
+    def __str__(self) -> str:
+        return self.value
+
+
+@dataclass(frozen=True)
+class Sku:
+    """A stock-keeping unit: the unique, stable identifier of a sellable variant.
+
+    Canonicalized to upper case so the same physical item is never recorded under
+    two casings.
+    """
+
+    value: str
+
+    def __post_init__(self) -> None:
+        normalized = self.value.strip().upper()
+        if len(normalized) > _SLUG_MAX_LENGTH or not _SKU_RE.match(normalized):
+            raise InvalidSkuError(self.value)
         object.__setattr__(self, "value", normalized)
 
     def __str__(self) -> str:

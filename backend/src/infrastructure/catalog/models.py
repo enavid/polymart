@@ -178,3 +178,27 @@ class ProductAttributeValueModel(models.Model):
 
     def __str__(self) -> str:
         return f"{self.product_id}:{self.attribute_id}"
+
+
+class ProductVariantModel(models.Model):
+    """A sellable variant of a product, identified by a globally unique SKU."""
+
+    product = models.ForeignKey(
+        ProductModel, related_name="variants", on_delete=models.CASCADE
+    )
+    # The SKU is the variant's stock-keeping identity; unique across the catalogue
+    # so it can address one physical item unambiguously.
+    sku = models.CharField(max_length=_CODE_MAX_LENGTH, unique=True)
+    name = models.CharField(max_length=_NAME_MAX_LENGTH)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        app_label = "catalog"
+        db_table = "catalog_product_variant"
+        ordering = ("sku",)
+        verbose_name = "product variant"
+        verbose_name_plural = "product variants"
+
+    def __str__(self) -> str:
+        return self.sku

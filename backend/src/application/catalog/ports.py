@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from src.domain.catalog.entities import Attribute, Product, ProductType
+from src.domain.catalog.entities import Attribute, Product, ProductType, ProductVariant
 
 
 class AttributeRepository(ABC):
@@ -94,3 +94,33 @@ class ProductRepository(ABC):
     @abstractmethod
     def list_all(self) -> list[Product]:
         """Return every product, ordered by code for deterministic output."""
+
+
+class VariantRepository(ABC):
+    """Persistence boundary for the ProductVariant aggregate.
+
+    Implementations MUST translate storage-specific failures into domain
+    exceptions (``VariantNotFoundError``, ``VariantAlreadyExistsError``,
+    ``ProductNotFoundError`` for a missing parent) so callers never see
+    infrastructure leaks.
+    """
+
+    @abstractmethod
+    def add(self, variant: ProductVariant) -> ProductVariant:
+        """Persist a new variant and return it with its assigned identity.
+
+        Raises ``VariantAlreadyExistsError`` if the SKU is already taken, and
+        ``ProductNotFoundError`` if the parent product does not exist.
+        """
+
+    @abstractmethod
+    def get_by_sku(self, sku: str) -> ProductVariant:
+        """Return the variant with this SKU or raise ``VariantNotFoundError``."""
+
+    @abstractmethod
+    def exists_by_sku(self, sku: str) -> bool:
+        """Return whether a variant with this SKU already exists."""
+
+    @abstractmethod
+    def list_for_product(self, product_code: str) -> list[ProductVariant]:
+        """Return the variants of one product, ordered by SKU for deterministic output."""

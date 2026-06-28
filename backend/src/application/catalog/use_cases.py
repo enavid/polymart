@@ -21,9 +21,10 @@ from src.application.catalog.ports import (
     AttributeRepository,
     ProductRepository,
     ProductTypeRepository,
+    VariantRepository,
 )
 from src.domain.audit.entities import FieldChange
-from src.domain.catalog.entities import Attribute, Product, ProductType
+from src.domain.catalog.entities import Attribute, Product, ProductType, ProductVariant
 from src.domain.catalog.enums import AttributeInputType
 from src.domain.catalog.exceptions import (
     AttributeAlreadyExistsError,
@@ -31,6 +32,7 @@ from src.domain.catalog.exceptions import (
     ProductAlreadyExistsError,
     ProductTypeAlreadyExistsError,
     UnknownAttributeError,
+    VariantAlreadyExistsError,
 )
 from src.domain.catalog.services import normalize_attribute_values
 from src.domain.catalog.value_objects import (
@@ -39,6 +41,7 @@ from src.domain.catalog.value_objects import (
     AttributeValue,
     ProductCode,
     ProductTypeCode,
+    Sku,
 )
 
 logger = structlog.get_logger(__name__)
@@ -51,6 +54,8 @@ _RESOURCE_PRODUCT_TYPE = "product_type"
 _ACTION_PRODUCT_TYPE_CREATED = "product_type.created"
 _RESOURCE_PRODUCT = "product"
 _ACTION_PRODUCT_CREATED = "product.created"
+_RESOURCE_VARIANT = "variant"
+_ACTION_VARIANT_CREATED = "variant.created"
 
 
 @dataclass(frozen=True)
@@ -370,3 +375,99 @@ class ListProducts:
         products = self._repository.list_all()
         logger.debug("products_listed", count=len(products))
         return products
+
+
+@dataclass(frozen=True)
+class CreateVariantCommand:
+    """Input for creating a variant. Raw strings are validated by the domain."""
+
+    product: str
+    sku: str
+    name: str
+
+
+class CreateVariant:
+    """Create a sellable variant under an existing product.
+
+    The parent product lives in another aggregate, so this use case verifies its
+    existence before persisting; it owns only the orchestration (build, verify,
+    persist, observe).
+    """
+
+    def __init__(
+        self,
+        repository: VariantRepository,
+        products: ProductRepository,
+        audit: AuditRecorder,
+    ) -> None:
+        self._repository = repository
+        self._products = products
+        self._audit = audit
+
+    def execute(self, command: CreateVariantCommand, *, actor: str | None = None) -> ProductVariant:
+        # Build value objects first: a malformed SKU or blank name fails fast,
+        # before any I/O.
+        variant = ProductVariant(
+            product=ProductCode(command.product),
+            sku=Sku(command.sku),
+            name=command.name,
+        )
+        product_code = variant.product.value
+        sku = variant.sku.value
+
+        # The parent must exist; raise ProductNotFoundError otherwise (a 404 at the
+        # transport edge). The repository defends the concurrent-deletion race too.
+        self._products.get_by_code(product_code)
+
+        # Pre-check for a clean error; the repository remains the source of truth
+        # and will still raise on a concurrent insert.
+        if self._repository.exists_by_sku(sku):
+            logger.warning("variant_create_rejected_duplicate", sku=sku, actor=actor)
+            raise VariantAlreadyExistsError(sku)
+
+        persisted = self._repository.add(variant)
+        logger.info(
+            "variant_created",
+            variant_id=persisted.id,
+            sku=sku,
+            product=product_code,
+            actor=actor,
+        )
+        self._audit.record(
+            action=_ACTION_VARIANT_CREATED,
+            resource_type=_RESOURCE_VARIANT,
+            resource_id=str(persisted.id),
+            actor=actor,
+            changes=(
+                FieldChange(field="sku", after=sku),
+                FieldChange(field="product", after=product_code),
+            ),
+        )
+        return persisted
+
+
+class GetVariant:
+    """Retrieve a single variant by SKU."""
+
+    def __init__(self, repository: VariantRepository) -> None:
+        self._repository = repository
+
+    def execute(self, *, sku: str) -> ProductVariant:
+        variant = self._repository.get_by_sku(sku)
+        logger.debug("variant_retrieved", sku=sku)
+        return variant
+
+
+class ListProductVariants:
+    """List the variants of one product (404 if the product does not exist)."""
+
+    def __init__(self, repository: VariantRepository, products: ProductRepository) -> None:
+        self._repository = repository
+        self._products = products
+
+    def execute(self, *, product_code: str) -> list[ProductVariant]:
+        # Confirm the parent exists so an unknown product is a 404, not an empty list.
+        self._products.get_by_code(product_code)
+        variants = self._repository.list_for_product(product_code)
+        logger.debug("product_variants_listed", product=product_code, count=len(variants))
+        return variants

@@ -202,3 +202,35 @@ class ProductAlreadyExistsError(CatalogError):
     def __init__(self, code: str) -> None:
         super().__init__(f"product already exists: {code!r}")
         self.code = code
+
+
+class InvalidSkuError(CatalogError):
+    """Raised when a SKU is empty, too long, or not a stock-keeping code."""
+
+    def __init__(self, value: str) -> None:
+        super().__init__(f"invalid sku: {value!r}")
+        self.value = value
+
+
+class InvalidVariantNameError(CatalogError):
+    """Raised when a variant display name is blank or exceeds the length limit."""
+
+    def __init__(self, value: str) -> None:
+        super().__init__(f"invalid variant name: {value!r}")
+        self.value = value
+
+
+class VariantNotFoundError(CatalogError):
+    """Raised when a variant cannot be located by its SKU."""
+
+    def __init__(self, sku: str) -> None:
+        super().__init__(f"variant not found: {sku!r}")
+        self.sku = sku
+
+
+class VariantAlreadyExistsError(CatalogError):
+    """Raised when creating a variant whose SKU is already taken."""
+
+    def __init__(self, sku: str) -> None:
+        super().__init__(f"variant already exists: {sku!r}")
+        self.sku = sku
