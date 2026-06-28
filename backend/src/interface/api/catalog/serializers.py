@@ -36,3 +36,22 @@ class CreateAttributeSerializer(serializers.Serializer):
     input_type = serializers.CharField()
     required = serializers.BooleanField(required=False, default=False)
     choices = AttributeChoiceSerializer(many=True, required=False, default=list)
+
+
+class ProductTypeSerializer(serializers.Serializer):
+    """Response projection of a product type."""
+
+    id = serializers.IntegerField(read_only=True)
+    code = serializers.CharField()
+    name = serializers.CharField()
+    attributes = serializers.ListField(child=serializers.CharField())
+
+
+class CreateProductTypeSerializer(serializers.Serializer):
+    """Request body for creating a product type."""
+
+    code = serializers.CharField()
+    name = serializers.CharField()
+    attributes = serializers.ListField(
+        child=serializers.CharField(), required=False, default=list
+    )

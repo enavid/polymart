@@ -16,22 +16,33 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from src.application.catalog.use_cases import AttributeChoiceInput, CreateAttributeCommand
-from src.domain.catalog.entities import Attribute
+from src.application.catalog.use_cases import (
+    AttributeChoiceInput,
+    CreateAttributeCommand,
+    CreateProductTypeCommand,
+)
+from src.domain.catalog.entities import Attribute, ProductType
 from src.domain.catalog.exceptions import (
     AttributeAlreadyExistsError,
     AttributeNotFoundError,
     CatalogError,
+    ProductTypeAlreadyExistsError,
+    ProductTypeNotFoundError,
 )
 from src.interface.api.access.permissions import CatalogManagePermission
 from src.interface.api.catalog.container import (
     build_create_attribute,
+    build_create_product_type,
     build_get_attribute,
+    build_get_product_type,
     build_list_attributes,
+    build_list_product_types,
 )
 from src.interface.api.catalog.serializers import (
     AttributeSerializer,
     CreateAttributeSerializer,
+    CreateProductTypeSerializer,
+    ProductTypeSerializer,
 )
 from src.interface.api.common import ErrorSerializer
 
@@ -122,3 +133,65 @@ class AttributeDetailView(APIView):
         except AttributeNotFoundError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_404_NOT_FOUND)
         return Response(_payload(attribute))
+
+
+def _product_type_payload(product_type: ProductType) -> dict[str, object]:
+    """Project a product-type entity to the response body."""
+    return {
+        "id": product_type.id,
+        "code": product_type.code.value,
+        "name": product_type.name,
+        "attributes": [attribute.value for attribute in product_type.attributes],
+    }
+
+
+class ProductTypeListCreateView(APIView):
+    """List product types or create a new one."""
+
+    permission_classes: ClassVar = [CatalogManagePermission]
+
+    @extend_schema(responses=ProductTypeSerializer(many=True))
+    def get(self, request: Request) -> Response:
+        product_types = build_list_product_types().execute()
+        return Response([_product_type_payload(pt) for pt in product_types])
+
+    @extend_schema(
+        request=CreateProductTypeSerializer,
+        responses={
+            201: ProductTypeSerializer,
+            400: ErrorSerializer,
+            403: ErrorSerializer,
+            409: ErrorSerializer,
+        },
+    )
+    def post(self, request: Request) -> Response:
+        serializer = CreateProductTypeSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        command = CreateProductTypeCommand(
+            code=data["code"],
+            name=data["name"],
+            attributes=tuple(data["attributes"]),
+        )
+        try:
+            product_type = build_create_product_type().execute(command, actor=_actor(request))
+        except ProductTypeAlreadyExistsError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
+        except CatalogError as exc:
+            # Invalid code/name, duplicate or unknown attribute reference.
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(_product_type_payload(product_type), status=status.HTTP_201_CREATED)
+
+
+class ProductTypeDetailView(APIView):
+    """Retrieve a single product type by code."""
+
+    permission_classes: ClassVar = [CatalogManagePermission]
+
+    @extend_schema(responses={200: ProductTypeSerializer, 404: ErrorSerializer})
+    def get(self, request: Request, code: str) -> Response:
+        try:
+            product_type = build_get_product_type().execute(code=code)
+        except ProductTypeNotFoundError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_404_NOT_FOUND)
+        return Response(_product_type_payload(product_type))

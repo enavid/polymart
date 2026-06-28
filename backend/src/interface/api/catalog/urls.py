@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from django.urls import path
 
-from src.interface.api.catalog.views import AttributeDetailView, AttributeListCreateView
+from src.interface.api.catalog.views import (
+    AttributeDetailView,
+    AttributeListCreateView,
+    ProductTypeDetailView,
+    ProductTypeListCreateView,
+)
 
 urlpatterns = [
     path("catalog/attributes/", AttributeListCreateView.as_view(), name="attribute-list"),
@@ -12,5 +17,15 @@ urlpatterns = [
         "catalog/attributes/<slug:code>/",
         AttributeDetailView.as_view(),
         name="attribute-detail",
+    ),
+    path(
+        "catalog/product-types/",
+        ProductTypeListCreateView.as_view(),
+        name="product-type-list",
+    ),
+    path(
+        "catalog/product-types/<slug:code>/",
+        ProductTypeDetailView.as_view(),
+        name="product-type-detail",
     ),
 ]

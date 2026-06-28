@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from src.domain.catalog.exceptions import (
     InvalidAttributeChoiceError,
     InvalidAttributeCodeError,
+    InvalidProductTypeCodeError,
 )
 
 # URL-safe kebab-case: lower-case alphanumerics in hyphen-separated groups. Codes
@@ -32,6 +33,22 @@ class AttributeCode:
         normalized = self.value.strip()
         if len(normalized) > _SLUG_MAX_LENGTH or not _SLUG_RE.match(normalized):
             raise InvalidAttributeCodeError(self.value)
+        object.__setattr__(self, "value", normalized)
+
+    def __str__(self) -> str:
+        return self.value
+
+
+@dataclass(frozen=True)
+class ProductTypeCode:
+    """A stable, URL-safe identifier for a product type."""
+
+    value: str
+
+    def __post_init__(self) -> None:
+        normalized = self.value.strip()
+        if len(normalized) > _SLUG_MAX_LENGTH or not _SLUG_RE.match(normalized):
+            raise InvalidProductTypeCodeError(self.value)
         object.__setattr__(self, "value", normalized)
 
     def __str__(self) -> str:

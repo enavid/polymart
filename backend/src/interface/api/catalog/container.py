@@ -8,10 +8,16 @@ from __future__ import annotations
 
 from src.application.catalog.use_cases import (
     CreateAttribute,
+    CreateProductType,
     GetAttribute,
+    GetProductType,
     ListAttributes,
+    ListProductTypes,
 )
-from src.infrastructure.catalog.repositories import DjangoAttributeRepository
+from src.infrastructure.catalog.repositories import (
+    DjangoAttributeRepository,
+    DjangoProductTypeRepository,
+)
 from src.interface.api.audit.container import build_audit_recorder
 
 
@@ -25,3 +31,17 @@ def build_get_attribute() -> GetAttribute:
 
 def build_list_attributes() -> ListAttributes:
     return ListAttributes(DjangoAttributeRepository())
+
+
+def build_create_product_type() -> CreateProductType:
+    return CreateProductType(
+        DjangoProductTypeRepository(), DjangoAttributeRepository(), build_audit_recorder()
+    )
+
+
+def build_get_product_type() -> GetProductType:
+    return GetProductType(DjangoProductTypeRepository())
+
+
+def build_list_product_types() -> ListProductTypes:
+    return ListProductTypes(DjangoProductTypeRepository())

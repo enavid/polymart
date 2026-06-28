@@ -67,6 +67,38 @@ class DuplicateAttributeChoiceError(CatalogError):
         self.value = value
 
 
+class InvalidProductTypeCodeError(CatalogError):
+    """Raised when a product-type code is empty, too long, or not a slug."""
+
+    def __init__(self, value: str) -> None:
+        super().__init__(f"invalid product type code: {value!r}")
+        self.value = value
+
+
+class InvalidProductTypeNameError(CatalogError):
+    """Raised when a product-type display name is blank or exceeds the length limit."""
+
+    def __init__(self, value: str) -> None:
+        super().__init__(f"invalid product type name: {value!r}")
+        self.value = value
+
+
+class DuplicateAttributeAssignmentError(CatalogError):
+    """Raised when a product type references the same attribute more than once."""
+
+    def __init__(self, code: str) -> None:
+        super().__init__(f"duplicate attribute assignment: {code!r}")
+        self.code = code
+
+
+class UnknownAttributeError(CatalogError):
+    """Raised when a product type references an attribute that does not exist."""
+
+    def __init__(self, code: str) -> None:
+        super().__init__(f"unknown attribute: {code!r}")
+        self.code = code
+
+
 class AttributeNotFoundError(CatalogError):
     """Raised when an attribute cannot be located by its code."""
 
@@ -80,4 +112,20 @@ class AttributeAlreadyExistsError(CatalogError):
 
     def __init__(self, code: str) -> None:
         super().__init__(f"attribute already exists: {code!r}")
+        self.code = code
+
+
+class ProductTypeNotFoundError(CatalogError):
+    """Raised when a product type cannot be located by its code."""
+
+    def __init__(self, code: str) -> None:
+        super().__init__(f"product type not found: {code!r}")
+        self.code = code
+
+
+class ProductTypeAlreadyExistsError(CatalogError):
+    """Raised when creating a product type whose code is already taken."""
+
+    def __init__(self, code: str) -> None:
+        super().__init__(f"product type already exists: {code!r}")
         self.code = code

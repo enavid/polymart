@@ -73,3 +73,53 @@ class AttributeChoiceModel(models.Model):
 
     def __str__(self) -> str:
         return f"{self.attribute_id}:{self.value}"
+
+
+class ProductTypeModel(models.Model):
+    """Storage representation of a product type (a named attribute template)."""
+
+    code = models.SlugField(max_length=_CODE_MAX_LENGTH, unique=True)
+    name = models.CharField(max_length=_NAME_MAX_LENGTH)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    # Attributes are reached through the ordered ``attribute_links`` relation
+    # (the ProductTypeAttributeModel through table); no plain M2M descriptor is
+    # exposed since every read must respect the assignment order.
+
+    class Meta:
+        app_label = "catalog"
+        db_table = "catalog_product_type"
+        ordering = ("code",)
+        verbose_name = "product type"
+        verbose_name_plural = "product types"
+
+    def __str__(self) -> str:
+        return self.code
+
+
+class ProductTypeAttributeModel(models.Model):
+    """Ordered assignment of an attribute to a product type (M2M through row)."""
+
+    product_type = models.ForeignKey(
+        ProductTypeModel, related_name="attribute_links", on_delete=models.CASCADE
+    )
+    attribute = models.ForeignKey(
+        AttributeModel, related_name="product_type_links", on_delete=models.PROTECT
+    )
+    position = models.PositiveSmallIntegerField(default=0)
+
+    class Meta:
+        app_label = "catalog"
+        db_table = "catalog_product_type_attribute"
+        ordering = ("position",)
+        # An attribute is assigned to a product type at most once.
+        constraints: ClassVar[list[models.BaseConstraint]] = [
+            models.UniqueConstraint(
+                fields=["product_type", "attribute"],
+                name="uniq_attribute_per_product_type",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.product_type_id}:{self.attribute_id}"
