@@ -7,6 +7,7 @@ testable in isolation and at speed.
 from __future__ import annotations
 
 import pytest
+from structlog.testing import capture_logs
 
 from src.application.channel.ports import ChannelRepository
 from src.application.channel.use_cases import (
@@ -107,6 +108,20 @@ class TestCreateChannel:
 
         assert channel.is_active is False
 
+    def test_records_the_acting_user_in_the_audit_event(
+        self, repo: FakeChannelRepository
+    ) -> None:
+        # Channel mutations gate currency/pricing; the audit trail must say who
+        # made the change, not just that it happened.
+        with capture_logs() as logs:
+            CreateChannel(repo).execute(
+                CreateChannelCommand(name="Coffee", slug="coffee", currency="IRR"),
+                actor="operator",
+            )
+
+        events = [entry for entry in logs if entry["event"] == "channel_created"]
+        assert events and events[0]["actor"] == "operator"
+
 
 class TestSetChannelStatus:
     def test_deactivates_an_existing_channel(self, repo: FakeChannelRepository) -> None:
@@ -132,6 +147,19 @@ class TestSetChannelStatus:
     def test_raises_when_the_channel_is_unknown(self, repo: FakeChannelRepository) -> None:
         with pytest.raises(ChannelNotFoundError):
             SetChannelStatus(repo).execute(slug="ghost", active=False)
+
+    def test_records_the_acting_user_in_the_audit_event(
+        self, repo: FakeChannelRepository
+    ) -> None:
+        CreateChannel(repo).execute(
+            CreateChannelCommand(name="Coffee", slug="coffee", currency="IRR")
+        )
+
+        with capture_logs() as logs:
+            SetChannelStatus(repo).execute(slug="coffee", active=False, actor="operator")
+
+        events = [entry for entry in logs if entry["event"] == "channel_status_changed"]
+        assert events and events[0]["actor"] == "operator"
 
 
 class TestGetChannel:

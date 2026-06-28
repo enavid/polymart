@@ -36,6 +36,21 @@ from src.interface.api.common import ErrorSerializer
 
 logger = structlog.get_logger(__name__)
 
+# Query-string flags arrive as strings; accept the conventional truthy spellings
+# rather than only the literal "true".
+_TRUTHY_QUERY_VALUES = frozenset({"true", "1", "yes", "on"})
+
+
+def _query_flag(raw: str | None) -> bool:
+    """Interpret a query-string flag value as a boolean."""
+    return raw is not None and raw.strip().lower() in _TRUTHY_QUERY_VALUES
+
+
+def _actor(request: Request) -> str | None:
+    """Identify the authenticated user behind a mutation for the audit trail."""
+    user = request.user
+    return user.get_username() if user.is_authenticated else None
+
 
 class _AdminWriteMixin:
     """Reads need authentication; writes need staff (admin) privileges.
@@ -76,7 +91,7 @@ class ChannelListCreateView(_AdminWriteMixin, APIView):
 
     @extend_schema(responses=ChannelSerializer(many=True))
     def get(self, request: Request) -> Response:
-        only_active = request.query_params.get("active") == "true"
+        only_active = _query_flag(request.query_params.get("active"))
         channels = build_list_channels().execute(only_active=only_active)
         return Response([_payload(channel) for channel in channels])
 
@@ -99,7 +114,7 @@ class ChannelListCreateView(_AdminWriteMixin, APIView):
             is_active=data["is_active"],
         )
         try:
-            channel = build_create_channel().execute(command)
+            channel = build_create_channel().execute(command, actor=_actor(request))
         except ChannelAlreadyExistsError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
         except ChannelError as exc:
@@ -132,7 +147,9 @@ class ChannelDetailView(_AdminWriteMixin, APIView):
         serializer.is_valid(raise_exception=True)
         try:
             channel = build_set_channel_status().execute(
-                slug=slug, active=serializer.validated_data["is_active"]
+                slug=slug,
+                active=serializer.validated_data["is_active"],
+                actor=_actor(request),
             )
         except ChannelNotFoundError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_404_NOT_FOUND)

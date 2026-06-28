@@ -1,6 +1,7 @@
 """Django ORM implementation of the channel repository port."""
 from __future__ import annotations
 
+import structlog
 from django.db import IntegrityError, transaction
 
 from src.application.channel.ports import ChannelRepository
@@ -8,6 +9,8 @@ from src.domain.channel.entities import Channel
 from src.domain.channel.exceptions import ChannelAlreadyExistsError, ChannelNotFoundError
 from src.infrastructure.channel.mappers import apply_to_model, to_domain
 from src.infrastructure.channel.models import ChannelModel
+
+logger = structlog.get_logger(__name__)
 
 
 class DjangoChannelRepository(ChannelRepository):
@@ -19,7 +22,10 @@ class DjangoChannelRepository(ChannelRepository):
             with transaction.atomic():
                 model.save()
         except IntegrityError as exc:
-            # Unique-constraint violation on slug -> domain-level conflict.
+            # Unique-constraint violation on slug -> domain-level conflict. Reaching
+            # here means a concurrent insert won the race after the use case's
+            # pre-check passed, so it is worth an audit trail.
+            logger.warning("channel_insert_race_lost", slug=channel.slug.value)
             raise ChannelAlreadyExistsError(channel.slug.value) from exc
         return to_domain(model)
 

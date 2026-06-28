@@ -37,7 +37,9 @@ class CreateChannel:
     def __init__(self, repository: ChannelRepository) -> None:
         self._repository = repository
 
-    def execute(self, command: CreateChannelCommand) -> Channel:
+    def execute(
+        self, command: CreateChannelCommand, *, actor: str | None = None
+    ) -> Channel:
         # Build value objects first: invalid input fails fast, before any I/O.
         channel = Channel(
             slug=ChannelSlug(command.slug),
@@ -50,7 +52,7 @@ class CreateChannel:
         # Pre-check for a clean error; the repository remains the source of
         # truth and will still raise on a concurrent insert.
         if self._repository.exists_by_slug(slug):
-            logger.warning("channel_create_rejected_duplicate", slug=slug)
+            logger.warning("channel_create_rejected_duplicate", slug=slug, actor=actor)
             raise ChannelAlreadyExistsError(slug)
 
         persisted = self._repository.add(channel)
@@ -60,6 +62,7 @@ class CreateChannel:
             slug=slug,
             currency=persisted.currency.code,
             is_active=persisted.is_active,
+            actor=actor,
         )
         return persisted
 
@@ -70,11 +73,13 @@ class SetChannelStatus:
     def __init__(self, repository: ChannelRepository) -> None:
         self._repository = repository
 
-    def execute(self, *, slug: str, active: bool) -> Channel:
+    def execute(self, *, slug: str, active: bool, actor: str | None = None) -> Channel:
         channel = self._repository.get_by_slug(slug)
         changed = channel.set_active(active=active)
         if not changed:
-            logger.info("channel_status_unchanged", slug=slug, is_active=active)
+            logger.info(
+                "channel_status_unchanged", slug=slug, is_active=active, actor=actor
+            )
             return channel
 
         updated = self._repository.update(channel)
@@ -83,6 +88,7 @@ class SetChannelStatus:
             channel_id=updated.id,
             slug=slug,
             is_active=updated.is_active,
+            actor=actor,
         )
         return updated
 

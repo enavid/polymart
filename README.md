@@ -53,7 +53,8 @@ make docker-migrate
 - Frontend: <http://localhost:3000>
 
 > Native infra uses host ports 5432/6379. If they are taken, free them or set
-> `POSTGRES_PORT` / `REDIS_PORT` (and match `DATABASE_URL` in `backend/.env`).
+> `POSTGRES_PORT` / `REDIS_PORT` in `backend/.env`; the native DB/cache settings
+> are derived from those parts. A `DATABASE_URL`, if set, overrides `POSTGRES_*`.
 
 ## Common commands
 

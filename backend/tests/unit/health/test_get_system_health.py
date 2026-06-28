@@ -6,7 +6,7 @@ payoff of clean architecture: business logic is testable in isolation.
 from __future__ import annotations
 
 from src.application.health.ports import HealthProbe
-from src.application.health.use_cases import GetSystemHealth
+from src.application.health.use_cases import PROBE_FAILURE_DETAIL, GetSystemHealth
 from src.domain.health.entities import ComponentHealth, HealthState
 
 
@@ -78,4 +78,15 @@ def test_a_raising_probe_is_reported_as_unhealthy() -> None:
     report = use_case.execute()
 
     assert report.state is HealthState.UNHEALTHY
-    assert report.components[0].detail == "connection refused"
+
+
+def test_a_failing_probe_does_not_leak_internal_error_text() -> None:
+    # The endpoint is public (AllowAny). A raw exception message can carry
+    # connection strings, hostnames, or driver internals, so it must never reach
+    # the report body; the client only learns the component is unavailable.
+    use_case = GetSystemHealth(probes=[_ExplodingProbe()])
+
+    report = use_case.execute()
+
+    assert "connection refused" not in report.components[0].detail
+    assert report.components[0].detail == PROBE_FAILURE_DETAIL

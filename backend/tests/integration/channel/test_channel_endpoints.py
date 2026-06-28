@@ -8,6 +8,7 @@ from __future__ import annotations
 import pytest
 from django.contrib.auth import get_user_model
 from rest_framework.test import APIClient
+from structlog.testing import capture_logs
 
 pytestmark = [pytest.mark.django_db, pytest.mark.integration]
 
@@ -116,6 +117,17 @@ class TestCreate:
         assert response.data["is_active"] is True
         assert response.data["id"] is not None
 
+    def test_audit_event_records_the_authenticated_actor(self, auth_client: APIClient) -> None:
+        with capture_logs() as logs:
+            auth_client.post(
+                "/api/v1/channels/",
+                {"slug": "coffee", "name": "Coffee", "currency": "IRR"},
+                format="json",
+            )
+
+        events = [entry for entry in logs if entry["event"] == "channel_created"]
+        assert events and events[0]["actor"] == "operator"
+
     def test_duplicate_slug_returns_409(self, auth_client: APIClient) -> None:
         body = {"slug": "coffee", "name": "Coffee", "currency": "IRR"}
         auth_client.post("/api/v1/channels/", body, format="json")
@@ -179,6 +191,25 @@ class TestListAndRetrieve:
         )
 
         response = auth_client.get("/api/v1/channels/?active=true")
+
+        assert {c["slug"] for c in response.data} == {"live"}
+
+    @pytest.mark.parametrize("truthy", ["true", "True", "1", "yes", "on"])
+    def test_active_filter_accepts_common_truthy_tokens(
+        self, auth_client: APIClient, truthy: str
+    ) -> None:
+        auth_client.post(
+            "/api/v1/channels/",
+            {"slug": "draft", "name": "Draft", "currency": "IRR", "is_active": False},
+            format="json",
+        )
+        auth_client.post(
+            "/api/v1/channels/",
+            {"slug": "live", "name": "Live", "currency": "IRR"},
+            format="json",
+        )
+
+        response = auth_client.get(f"/api/v1/channels/?active={truthy}")
 
         assert {c["slug"] for c in response.data} == {"live"}
 

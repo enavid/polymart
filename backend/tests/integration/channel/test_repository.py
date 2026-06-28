@@ -6,6 +6,7 @@ translation of ORM failures into domain exceptions.
 from __future__ import annotations
 
 import pytest
+from structlog.testing import capture_logs
 
 from src.application.channel.use_cases import CreateChannel, CreateChannelCommand
 from src.domain.channel.entities import Channel
@@ -42,6 +43,20 @@ def test_add_translates_unique_violation_into_domain_error() -> None:
 
     with pytest.raises(ChannelAlreadyExistsError):
         repo.add(_entity())
+
+
+def test_add_logs_the_lost_insert_race() -> None:
+    # The unique-violation path is how a concurrent insert is detected once the
+    # use case's pre-check has been overtaken; it must leave an audit trail.
+    repo = DjangoChannelRepository()
+    repo.add(_entity())
+
+    with capture_logs() as logs, pytest.raises(ChannelAlreadyExistsError):
+        repo.add(_entity())
+
+    events = [entry for entry in logs if entry["event"] == "channel_insert_race_lost"]
+    assert events, "expected the lost-race to be logged"
+    assert events[0]["slug"] == "coffee"
 
 
 def test_get_by_slug_round_trips_the_entity() -> None:

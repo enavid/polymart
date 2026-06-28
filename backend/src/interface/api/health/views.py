@@ -45,5 +45,8 @@ class HealthView(APIView):
             if report.state is HealthState.UNHEALTHY
             else status.HTTP_200_OK
         )
-        logger.info("health_check", state=report.state.value, status=http_status)
+        # Probes poll this endpoint continuously, so a healthy result is logged at
+        # debug to avoid flooding the logs; an unhealthy one is worth a warning.
+        log = logger.warning if report.state is HealthState.UNHEALTHY else logger.debug
+        log("health_check", state=report.state.value, status=http_status)
         return Response(serializer.data, status=http_status)

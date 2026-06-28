@@ -49,6 +49,17 @@ class TestCurrency:
         with pytest.raises(InvalidCurrencyCodeError):
             Currency(raw)
 
+    @pytest.mark.parametrize("raw", ["ZZZ", "ABC", "XXX", "AAA", "QQQ"])
+    def test_rejects_well_formed_but_unknown_codes(self, raw: str) -> None:
+        # Three upper-case letters is not enough: the code must be a real ISO 4217
+        # currency, or a typo could silently price a storefront in a fake currency.
+        with pytest.raises(InvalidCurrencyCodeError):
+            Currency(raw)
+
+    @pytest.mark.parametrize("raw", ["IRR", "USD", "EUR", "AED", "GBP", "TRY"])
+    def test_accepts_known_iso_4217_codes(self, raw: str) -> None:
+        assert Currency(raw).code == raw
+
 
 class TestChannelSlug:
     @pytest.mark.parametrize(
