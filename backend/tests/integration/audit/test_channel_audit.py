@@ -13,10 +13,9 @@ from django.contrib.auth import get_user_model
 from django.contrib.auth.models import AbstractBaseUser
 from rest_framework.test import APIClient
 
-from src.application.access.use_cases import AssignRole
 from src.domain.access.registry import CHANNEL_ADMIN_ROLE
-from src.infrastructure.access.gateway import GuardianAccessControl
 from src.infrastructure.audit.models import AuditLogModel
+from src.interface.api.access.container import build_assign_role
 
 pytestmark = [pytest.mark.django_db, pytest.mark.integration]
 
@@ -24,7 +23,7 @@ pytestmark = [pytest.mark.django_db, pytest.mark.integration]
 @pytest.fixture
 def admin_user() -> AbstractBaseUser:
     user = get_user_model().objects.create_user(phone_number="09120000001", password="pw")
-    AssignRole(GuardianAccessControl()).execute(user_id=user.pk, role_name=CHANNEL_ADMIN_ROLE)
+    build_assign_role().execute(user_id=user.pk, role_name=CHANNEL_ADMIN_ROLE)
     return user
 
 

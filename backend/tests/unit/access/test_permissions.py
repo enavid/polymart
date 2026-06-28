@@ -14,6 +14,7 @@ from src.domain.channel.entities import Channel
 from src.domain.channel.value_objects import ChannelSlug, Currency
 from src.interface.api.access import permissions as perms
 from src.interface.api.access.permissions import (
+    AccessAdminPermission,
     GlobalChannelManagePermission,
     ScopedChannelManagePermission,
 )
@@ -62,6 +63,20 @@ class TestGlobalChannelManagePermission:
 
         assert GlobalChannelManagePermission().has_permission(with_perm, None) is True
         assert GlobalChannelManagePermission().has_permission(without_perm, None) is False
+
+
+class TestAccessAdminPermission:
+    def test_rejects_an_unauthenticated_request(self) -> None:
+        request = FakeRequest("POST", FakeUser(authenticated=False, granted=True))
+
+        assert AccessAdminPermission().has_permission(request, None) is False
+
+    def test_requires_the_global_manage_access_permission(self) -> None:
+        with_perm = FakeRequest("POST", FakeUser(granted=True))
+        without_perm = FakeRequest("POST", FakeUser(granted=False))
+
+        assert AccessAdminPermission().has_permission(with_perm, None) is True
+        assert AccessAdminPermission().has_permission(without_perm, None) is False
 
 
 class TestScopedChannelManagePermission:

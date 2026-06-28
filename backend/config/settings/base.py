@@ -29,6 +29,8 @@ INSTALLED_APPS = [
     "rest_framework",
     "drf_spectacular",
     "guardian",
+    # Tracks issued refresh tokens so they can be revoked (logout, password reset).
+    "rest_framework_simplejwt.token_blacklist",
     # Local bounded contexts (infrastructure adapters owning the ORM models).
     "src.infrastructure.identity.apps.IdentityConfig",
     "src.infrastructure.channel.apps.ChannelConfig",

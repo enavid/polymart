@@ -20,6 +20,7 @@ from src.application.identity.ports import (
     CodeHasher,
     OtpRepository,
     SmsSender,
+    TokenRevoker,
     UserDirectory,
 )
 from src.application.identity.use_cases import (
@@ -88,6 +89,16 @@ class FakeUserDirectory(UserDirectory):
             raise UserNotFoundError(phone_number)
         self._passwords[phone_number] = new_password
         return self._ids[phone_number]
+
+
+class RecordingTokenRevoker(TokenRevoker):
+    """Captures which users had their tokens revoked."""
+
+    def __init__(self) -> None:
+        self.revoked: list[int] = []
+
+    def revoke_all(self, user_id: int) -> None:
+        self.revoked.append(user_id)
 
 
 class StubCodeGenerator(CodeGenerator):
@@ -198,8 +209,15 @@ def register(verifier: OtpVerifier, users: FakeUserDirectory) -> RegisterUser:
 
 
 @pytest.fixture
-def reset(verifier: OtpVerifier, users: FakeUserDirectory) -> ResetPassword:
-    return ResetPassword(verifier=verifier, users=users)
+def tokens() -> RecordingTokenRevoker:
+    return RecordingTokenRevoker()
+
+
+@pytest.fixture
+def reset(
+    verifier: OtpVerifier, users: FakeUserDirectory, tokens: RecordingTokenRevoker
+) -> ResetPassword:
+    return ResetPassword(verifier=verifier, users=users, tokens=tokens)
 
 
 def _issue(request_otp: RequestOtp, purpose: OtpPurpose, phone: str = _PHONE) -> None:
@@ -411,11 +429,11 @@ class TestRegisterUser:
 
 
 class TestResetPassword:
-    def _register(self, request_otp: RequestOtp, register: RegisterUser) -> None:
+    def _register(self, request_otp: RequestOtp, register: RegisterUser) -> int:
         _issue(request_otp, OtpPurpose.REGISTRATION)
-        register.execute(
+        return register.execute(
             phone_number_raw=_PHONE, code=_CODE, password=_PASSWORD, full_name="", email=""
-        )
+        ).id
 
     def test_sets_a_new_password_after_a_correct_code(
         self,
@@ -430,6 +448,36 @@ class TestResetPassword:
         reset.execute(phone_number_raw=_PHONE, code=_CODE, new_password="brand-new-pass")
 
         assert users.exists(_CANONICAL)
+
+    def test_revokes_existing_tokens_after_a_successful_reset(
+        self,
+        request_otp: RequestOtp,
+        register: RegisterUser,
+        reset: ResetPassword,
+        tokens: RecordingTokenRevoker,
+    ) -> None:
+        # A reset must invalidate sessions opened with the old password.
+        user_id = self._register(request_otp, register)
+        _issue(request_otp, OtpPurpose.PASSWORD_RESET)
+
+        reset.execute(phone_number_raw=_PHONE, code=_CODE, new_password="brand-new-pass")
+
+        assert tokens.revoked == [user_id]
+
+    def test_does_not_revoke_tokens_when_the_code_is_wrong(
+        self,
+        request_otp: RequestOtp,
+        register: RegisterUser,
+        reset: ResetPassword,
+        tokens: RecordingTokenRevoker,
+    ) -> None:
+        self._register(request_otp, register)
+        _issue(request_otp, OtpPurpose.PASSWORD_RESET)
+
+        with pytest.raises(InvalidOtpError):
+            reset.execute(phone_number_raw=_PHONE, code="000000", new_password="brand-new-pass")
+
+        assert tokens.revoked == []
 
     def test_rejects_a_wrong_reset_code(
         self, request_otp: RequestOtp, register: RegisterUser, reset: ResetPassword

@@ -71,6 +71,12 @@ class User(AbstractBaseUser, PermissionsMixin):
         db_table = "identity_user"
         verbose_name = "user"
         verbose_name_plural = "users"
+        # Global RBAC permission for access administration. The codename mirrors
+        # src.domain.identity.permissions.MANAGE_ACCESS; the access registry
+        # bundles it into the access_admin role.
+        permissions: ClassVar[list[tuple[str, str]]] = [  # type: ignore[assignment]
+            ("manage_access", "Can administer access (assign roles and channel scope)"),
+        ]
 
     def __str__(self) -> str:
         return self.phone_number

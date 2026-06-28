@@ -12,17 +12,19 @@ from src.domain.access.permissions import (
     RoleDefinition,
 )
 from src.domain.channel.permissions import CHANNEL_PERMISSIONS, MANAGE_CHANNEL
+from src.domain.identity.permissions import IDENTITY_PERMISSIONS, MANAGE_ACCESS
 
 # Role names are stable identifiers (used as Django Group names); keep them in
 # one place so the sync layer and any future assignment UI agree.
 CHANNEL_ADMIN_ROLE = "channel_admin"
+ACCESS_ADMIN_ROLE = "access_admin"
 
 
 def build_default_registry() -> PermissionRegistry:
     """Build the registry with every context's permissions and the base roles."""
     registry = PermissionRegistry()
 
-    for permission in CHANNEL_PERMISSIONS:
+    for permission in (*CHANNEL_PERMISSIONS, *IDENTITY_PERMISSIONS):
         registry.register_permission(permission)
 
     # The global "manage all channels" role. Object-scoped channel managers are
@@ -31,6 +33,13 @@ def build_default_registry() -> PermissionRegistry:
         RoleDefinition(
             name=CHANNEL_ADMIN_ROLE,
             permissions=frozenset({MANAGE_CHANNEL.codename}),
+        )
+    )
+    # The access-administration role: assign roles and grant per-channel scope.
+    registry.register_role(
+        RoleDefinition(
+            name=ACCESS_ADMIN_ROLE,
+            permissions=frozenset({MANAGE_ACCESS.codename}),
         )
     )
 

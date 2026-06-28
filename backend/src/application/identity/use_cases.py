@@ -23,6 +23,7 @@ from src.application.identity.ports import (
     CodeHasher,
     OtpRepository,
     SmsSender,
+    TokenRevoker,
     UserDirectory,
 )
 from src.domain.identity.entities import OtpChallenge
@@ -171,15 +172,23 @@ class RegisterUser:
 
 
 class ResetPassword:
-    """Replace an account's password once a reset code is verified."""
+    """Replace an account's password once a reset code is verified.
 
-    def __init__(self, *, verifier: OtpVerifier, users: UserDirectory) -> None:
+    A successful reset also revokes the account's outstanding tokens, so any
+    session opened with the old password (or a leaked token) cannot survive it.
+    """
+
+    def __init__(
+        self, *, verifier: OtpVerifier, users: UserDirectory, tokens: TokenRevoker
+    ) -> None:
         self._verifier = verifier
         self._users = users
+        self._tokens = tokens
 
     def execute(self, *, phone_number_raw: str, code: str, new_password: str) -> None:
         phone = PhoneNumber(phone_number_raw).value
         challenge = self._verifier.verify(phone, OtpPurpose.PASSWORD_RESET, code)
         user_id = self._users.set_password(phone, new_password)
         self._verifier.consume(challenge)
+        self._tokens.revoke_all(user_id)
         logger.info("password_reset_succeeded", user_id=user_id)

@@ -37,3 +37,19 @@ class UnknownPermissionError(AccessError):
     def __init__(self, codename: str) -> None:
         super().__init__(f"unknown permission: {codename!r}")
         self.codename = codename
+
+
+class RoleNotFoundError(AccessError):
+    """Raised when a role assignment targets a role that does not exist."""
+
+    def __init__(self, role_name: str) -> None:
+        super().__init__(f"unknown role: {role_name!r}")
+        self.role_name = role_name
+
+
+class SubjectNotFoundError(AccessError):
+    """Raised when an assignment targets a user id that does not exist."""
+
+    def __init__(self, user_id: int) -> None:
+        super().__init__(f"unknown user: {user_id!r}")
+        self.user_id = user_id

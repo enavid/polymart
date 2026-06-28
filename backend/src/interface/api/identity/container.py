@@ -20,6 +20,7 @@ from src.infrastructure.identity.services import (
     SecretsCodeGenerator,
     SystemClock,
 )
+from src.infrastructure.identity.token_revoker import SimpleJwtTokenRevoker
 from src.infrastructure.identity.user_directory import DjangoUserDirectory
 
 
@@ -43,4 +44,8 @@ def build_register_user() -> RegisterUser:
 
 
 def build_reset_password() -> ResetPassword:
-    return ResetPassword(verifier=_verifier(), users=DjangoUserDirectory())
+    return ResetPassword(
+        verifier=_verifier(),
+        users=DjangoUserDirectory(),
+        tokens=SimpleJwtTokenRevoker(),
+    )

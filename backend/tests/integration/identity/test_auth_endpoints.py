@@ -202,3 +202,22 @@ class TestLogout:
         assert response.status_code == 200
         # A cleared cookie is sent back with an immediate expiry.
         assert response.cookies[settings.AUTH_COOKIE_ACCESS]["max-age"] == 0
+
+    def test_logout_without_a_session_still_succeeds(self, client: APIClient) -> None:
+        # No refresh cookie to revoke; logout must still clear cookies and 200.
+        assert client.post("/api/v1/auth/logout/").status_code == 200
+
+    def test_logout_blacklists_the_refresh_token(self, client: APIClient, user: object) -> None:
+        # After logout the refresh token is revoked: presenting it again must not
+        # mint a new access token, even though the raw token is still well-formed.
+        login = client.post(
+            "/api/v1/auth/login/",
+            {"phone_number": "09123456789", "password": PASSWORD},
+            format="json",
+        )
+        stale_refresh = login.cookies[settings.AUTH_COOKIE_REFRESH].value
+
+        client.post("/api/v1/auth/logout/")
+
+        client.cookies[settings.AUTH_COOKIE_REFRESH] = stale_refresh
+        assert client.post("/api/v1/auth/refresh/").status_code == 401

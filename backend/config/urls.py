@@ -9,6 +9,8 @@ api_v1_patterns = [
     path("", include("src.interface.api.health.urls")),
     path("", include("src.interface.api.identity.urls")),
     path("", include("src.interface.api.channel.urls")),
+    path("", include("src.interface.api.access.urls")),
+    path("", include("src.interface.api.audit.urls")),
 ]
 
 urlpatterns = [

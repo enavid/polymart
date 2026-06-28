@@ -22,11 +22,25 @@ from rest_framework.request import Request
 
 from src.domain.channel.entities import Channel
 from src.domain.channel.permissions import MANAGE_CHANNEL
+from src.domain.identity.permissions import MANAGE_ACCESS
 from src.interface.api.access.container import build_access_gateway
 
 
 def _is_authenticated(request: Request) -> bool:
     return bool(request.user and request.user.is_authenticated)
+
+
+class AccessAdminPermission(BasePermission):
+    """Gate the access-administration API: requires the global manage_access perm.
+
+    Administering roles/scope is itself a privileged, platform-global action, so
+    it is never object-scoped -- a global permission (or superuser) is required.
+    """
+
+    def has_permission(self, request: Request, view: Any) -> bool:
+        if not _is_authenticated(request):
+            return False
+        return bool(request.user.has_perm(MANAGE_ACCESS.full_name))
 
 
 class GlobalChannelManagePermission(BasePermission):

@@ -12,6 +12,7 @@ exists.
 
 from __future__ import annotations
 
+import contextlib
 from typing import ClassVar, cast
 
 import structlog
@@ -160,7 +161,7 @@ class RefreshView(APIView):
 
 
 class LogoutView(APIView):
-    """Clear the token cookies."""
+    """Blacklist the refresh token and clear the token cookies."""
 
     permission_classes: ClassVar[list[type[BasePermission]]] = [AllowAny]
     # Logout just clears cookies; never reject it over a stale/invalid token.
@@ -171,6 +172,12 @@ class LogoutView(APIView):
         responses={200: OpenApiResponse(description="The token cookies are cleared.")},
     )
     def post(self, request: Request) -> Response:
+        # Best-effort revocation: a missing or already-invalid refresh token must
+        # not fail logout -- the cookies are cleared regardless.
+        raw_refresh = request.COOKIES.get(settings.AUTH_COOKIE_REFRESH)
+        if raw_refresh:
+            with contextlib.suppress(TokenError):
+                RefreshToken(raw_refresh).blacklist()
         response = Response(status=status.HTTP_200_OK)
         clear_auth_cookies(response)
         return response

@@ -17,6 +17,7 @@ from datetime import UTC, datetime, timedelta
 from unittest import mock
 
 import pytest
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from rest_framework.response import Response
 from rest_framework.test import APIClient
@@ -307,6 +308,28 @@ class TestPasswordReset:
             ).status_code
             == 401
         )
+
+    def test_reset_revokes_existing_refresh_tokens(
+        self, client: APIClient, fixed_code: None, captured_sms: mock.Mock
+    ) -> None:
+        # A reset must invalidate sessions opened before it: a refresh token minted
+        # under the old password can no longer mint new access tokens afterwards.
+        _make_user()
+        login = client.post(
+            _LOGIN_URL, {"phone_number": _PHONE, "password": _PASSWORD}, format="json"
+        )
+        stale_refresh = login.cookies[settings.AUTH_COOKIE_REFRESH].value
+
+        _request_otp(client, OtpPurpose.PASSWORD_RESET)
+        reset = client.post(
+            _RESET_URL,
+            {"phone_number": _PHONE, "code": _CODE, "new_password": _NEW_PASSWORD},
+            format="json",
+        )
+        assert reset.status_code == 200
+
+        client.cookies[settings.AUTH_COOKIE_REFRESH] = stale_refresh
+        assert client.post("/api/v1/auth/refresh/").status_code == 401
 
     def test_reset_for_an_unknown_phone_sends_nothing_and_cannot_complete(
         self, client: APIClient, fixed_code: None, captured_sms: mock.Mock

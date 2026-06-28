@@ -30,6 +30,25 @@ class AuditTrail(ABC):
         """Durably append one entry. Never updates or deletes."""
 
 
+class AuditQuery(ABC):
+    """Read boundary for the audit trail (separate from the write port).
+
+    Splitting read from write keeps the append-only writer free of query concerns
+    and lets the reader evolve (pagination, projections) independently.
+    """
+
+    @abstractmethod
+    def list_recent(
+        self,
+        *,
+        resource_type: str | None = None,
+        resource_id: str | None = None,
+        action: str | None = None,
+        limit: int,
+    ) -> Sequence[AuditEntry]:
+        """Return the most recent entries (newest first), optionally filtered."""
+
+
 class Clock(ABC):
     """Source of the current time, injected so timestamps are testable.
 

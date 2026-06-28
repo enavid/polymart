@@ -89,3 +89,15 @@ class UserDirectory(ABC):
 
         Raises ``UserNotFoundError`` if no account exists for the phone number.
         """
+
+
+class TokenRevoker(ABC):
+    """Boundary for revoking a user's issued auth tokens.
+
+    Used to invalidate existing sessions after a security-sensitive change such
+    as a password reset, so a leaked token cannot outlive the credential.
+    """
+
+    @abstractmethod
+    def revoke_all(self, user_id: int) -> None:
+        """Invalidate every outstanding token for the user (idempotent)."""

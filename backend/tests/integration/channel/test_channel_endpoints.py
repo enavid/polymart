@@ -12,10 +12,11 @@ from django.contrib.auth.models import AbstractBaseUser
 from rest_framework.test import APIClient
 from structlog.testing import capture_logs
 
-from src.application.access.use_cases import AssignRole, GrantChannelManagement
 from src.domain.access.registry import CHANNEL_ADMIN_ROLE
-from src.infrastructure.access.gateway import GuardianAccessControl
-from src.infrastructure.channel.repositories import DjangoChannelRepository
+from src.interface.api.access.container import (
+    build_assign_role,
+    build_grant_channel_management,
+)
 
 pytestmark = [pytest.mark.django_db, pytest.mark.integration]
 
@@ -24,7 +25,7 @@ pytestmark = [pytest.mark.django_db, pytest.mark.integration]
 def admin_user() -> AbstractBaseUser:
     """A global channel manager (channel_admin role): may manage every channel."""
     user = get_user_model().objects.create_user(phone_number="09120000001", password="pw")
-    AssignRole(GuardianAccessControl()).execute(user_id=user.pk, role_name=CHANNEL_ADMIN_ROLE)
+    build_assign_role().execute(user_id=user.pk, role_name=CHANNEL_ADMIN_ROLE)
     return user
 
 
@@ -127,9 +128,7 @@ class TestAuthorization:
         scoped_user = get_user_model().objects.create_user(
             phone_number="09120000003", password="pw"
         )
-        GrantChannelManagement(GuardianAccessControl(), DjangoChannelRepository()).execute(
-            user_id=scoped_user.pk, channel_slug="coffee"
-        )
+        build_grant_channel_management().execute(user_id=scoped_user.pk, channel_slug="coffee")
         scoped_client = APIClient()
         scoped_client.force_authenticate(user=scoped_user)
 
@@ -156,9 +155,7 @@ class TestAuthorization:
         scoped_user = get_user_model().objects.create_user(
             phone_number="09120000004", password="pw"
         )
-        GrantChannelManagement(GuardianAccessControl(), DjangoChannelRepository()).execute(
-            user_id=scoped_user.pk, channel_slug="coffee"
-        )
+        build_grant_channel_management().execute(user_id=scoped_user.pk, channel_slug="coffee")
         scoped_client = APIClient()
         scoped_client.force_authenticate(user=scoped_user)
 

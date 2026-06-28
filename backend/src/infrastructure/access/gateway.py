@@ -7,11 +7,14 @@ layer. Works in plain ids; the ORM/guardian stay contained here.
 
 from __future__ import annotations
 
+from typing import Any
+
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group
 from guardian.shortcuts import assign_perm
 
 from src.application.access.ports import AccessControlGateway
+from src.domain.access.exceptions import RoleNotFoundError, SubjectNotFoundError
 from src.domain.channel.permissions import MANAGE_CHANNEL
 from src.infrastructure.channel.models import ChannelModel
 
@@ -19,15 +22,22 @@ _User = get_user_model()
 
 
 class GuardianAccessControl(AccessControlGateway):
-    """Role assignment via Groups; channel scope via guardian object permissions."""
+    """Role assignment via Groups; channel scope via guardian object permissions.
+
+    Translates ORM "does not exist" failures into access domain exceptions so the
+    application/interface layers never see Django's ``DoesNotExist``.
+    """
 
     def assign_role(self, user_id: int, role_name: str) -> None:
-        user = _User.objects.get(pk=user_id)
-        group = Group.objects.get(name=role_name)
+        user = self._require_user(user_id)
+        try:
+            group = Group.objects.get(name=role_name)
+        except Group.DoesNotExist:
+            raise RoleNotFoundError(role_name) from None
         user.groups.add(group)
 
     def grant_channel_management(self, user_id: int, channel_id: int) -> None:
-        user = _User.objects.get(pk=user_id)
+        user = self._require_user(user_id)
         channel = ChannelModel.objects.get(pk=channel_id)
         assign_perm(MANAGE_CHANNEL.full_name, user, channel)
 
@@ -39,3 +49,10 @@ class GuardianAccessControl(AccessControlGateway):
             return True
         channel = ChannelModel.objects.get(pk=channel_id)
         return user.has_perm(MANAGE_CHANNEL.full_name, channel)
+
+    @staticmethod
+    def _require_user(user_id: int) -> Any:
+        try:
+            return _User.objects.get(pk=user_id)
+        except _User.DoesNotExist:
+            raise SubjectNotFoundError(user_id) from None
