@@ -59,9 +59,17 @@ setup: install env ## One-time local setup: virtualenv + .env
 .PHONY: infra-up infra-down
 infra-up: ## Start ONLY Postgres + Redis in Docker (waits until healthy)
 	@$(ENVLOAD) $(COMPOSE) up -d --wait db redis
+	@$(ENVLOAD) published=$$($(COMPOSE) port db 5432 2>/dev/null); \
+	if [ -z "$$published" ]; then \
+		echo "ERROR: Postgres has no published host port. Port $${POSTGRES_PORT:-5432}"; \
+		echo "       is likely taken by another container/service. Set POSTGRES_PORT"; \
+		echo "       (and REDIS_PORT) to free ports in backend/.env, then 'make down && make up'."; \
+		exit 1; \
+	fi; \
+	echo "infra ready: db at $$published"
 
-infra-down: ## Stop the infra containers (keeps the data volume)
-	@$(ENVLOAD) $(COMPOSE) stop db redis
+infra-down: ## Stop and remove the infra containers + network (keeps the data volume)
+	@$(ENVLOAD) $(COMPOSE) down
 
 # --- Run the app natively ----------------------------------------------------
 .PHONY: up down restart logs ps
