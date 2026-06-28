@@ -79,11 +79,21 @@ DJANGO_SETTINGS_MODULE = "config.settings.test"
 pythonpath = ["."]
 python_files = ["test_*.py"]
 testpaths = ["tests"]
-addopts = "--strict-markers --cov=src --cov-report=term-missing --cov-fail-under=90"
+addopts = "--strict-markers --cov=src --cov=config --cov-report=term-missing --cov-fail-under=90"
 markers = [
     "integration: tests that require a database or external service",
 ]
 
 [tool.coverage.run]
 branch = true
-omit = ["*/migrations/*", "*/tests/*"]
+omit = [
+    "*/migrations/*",
+    "*/tests/*",
+    # Settings and process entry points are configuration/bootstrap, not logic:
+    # they are validated by smoke imports and the prod-settings guard tests, not
+    # by line coverage.
+    "config/settings/*",
+    "config/wsgi.py",
+    "config/asgi.py",
+    "config/celery.py",
+]

@@ -13,7 +13,10 @@ env = environ.Env()
 environ.Env.read_env(BASE_DIR / ".env")
 
 # --- Core -------------------------------------------------------------------
-SECRET_KEY = env("DJANGO_SECRET_KEY", default="insecure-dev-key-change-me")
+# Well-known placeholder used only for local dev/CI. prod.py rejects it so a
+# missing DJANGO_SECRET_KEY can never silently ship a publicly known key.
+INSECURE_SECRET_KEY_SENTINEL = "insecure-dev-key-change-me"  # nosec B105 - not a real secret; prod.py rejects this placeholder
+SECRET_KEY = env("DJANGO_SECRET_KEY", default=INSECURE_SECRET_KEY_SENTINEL)
 DEBUG = env.bool("DJANGO_DEBUG", default=False)
 ALLOWED_HOSTS = env.list("DJANGO_ALLOWED_HOSTS", default=["*"])
 

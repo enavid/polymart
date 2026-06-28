@@ -221,7 +221,10 @@ e2e: ## Run end-to-end tests (playwright)
 # Aggregate / docs
 # ===========================================================================
 .PHONY: ci docs
-ci: lint type coverage fe-lint fe-type fe-test ## Full quality gate (backend + frontend)
+# Mirrors the GitHub Actions jobs: backend (lint+type+test), backend-security
+# (bandit+pip-audit), and frontend (lint+type+test+build). e2e is intentionally
+# excluded here because CI does not run it either.
+ci: lint type coverage security fe-lint fe-type fe-test fe-build ## Full quality gate (mirrors CI jobs)
 
 docs: ## Serve project documentation
 	mkdocs serve

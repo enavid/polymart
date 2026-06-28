@@ -9,6 +9,7 @@ from __future__ import annotations
 import structlog
 from drf_spectacular.utils import extend_schema
 from rest_framework import status
+from rest_framework.permissions import SAFE_METHODS, BasePermission, IsAdminUser, IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -31,11 +32,36 @@ from src.interface.api.channel.serializers import (
     CreateChannelSerializer,
     SetChannelStatusSerializer,
 )
+from src.interface.api.common import ErrorSerializer
 
 logger = structlog.get_logger(__name__)
 
 
+class _AdminWriteMixin:
+    """Reads need authentication; writes need staff (admin) privileges.
+
+    Channels are platform-level configuration: deactivating one takes a storefront
+    offline. The project-wide RBAC layer (identity slice) will supersede this with
+    fine-grained, channel-scoped permissions; until then mutations are limited to
+    staff while reads stay open to any authenticated user.
+    """
+
+    # Provided by APIView at runtime; declared here for the type checker.
+    request: Request
+
+    def get_permissions(self) -> list[BasePermission]:
+        if self.request.method in SAFE_METHODS:
+            return [IsAuthenticated()]
+        return [IsAdminUser()]
+
+
 def _payload(channel: Channel) -> dict[str, object]:
+    """Project a domain entity to the response body.
+
+    This is the single source of the response shape; ``ChannelSerializer`` exists
+    only to document that shape in the OpenAPI schema (the domain entity, with its
+    value objects, cannot be fed to a serializer directly).
+    """
     return {
         "id": channel.id,
         "slug": channel.slug.value,
@@ -45,17 +71,23 @@ def _payload(channel: Channel) -> dict[str, object]:
     }
 
 
-class ChannelListCreateView(APIView):
+class ChannelListCreateView(_AdminWriteMixin, APIView):
     """List channels or create a new one."""
 
     @extend_schema(responses=ChannelSerializer(many=True))
     def get(self, request: Request) -> Response:
         only_active = request.query_params.get("active") == "true"
         channels = build_list_channels().execute(only_active=only_active)
-        data = [_payload(channel) for channel in channels]
-        return Response(ChannelSerializer(data, many=True).data)
+        return Response([_payload(channel) for channel in channels])
 
-    @extend_schema(request=CreateChannelSerializer, responses=ChannelSerializer)
+    @extend_schema(
+        request=CreateChannelSerializer,
+        responses={
+            201: ChannelSerializer,
+            400: ErrorSerializer,
+            409: ErrorSerializer,
+        },
+    )
     def post(self, request: Request) -> Response:
         serializer = CreateChannelSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -73,24 +105,28 @@ class ChannelListCreateView(APIView):
         except ChannelError as exc:
             # Invalid slug/currency/name surfaced from the domain.
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
-        return Response(
-            ChannelSerializer(_payload(channel)).data,
-            status=status.HTTP_201_CREATED,
-        )
+        return Response(_payload(channel), status=status.HTTP_201_CREATED)
 
 
-class ChannelDetailView(APIView):
+class ChannelDetailView(_AdminWriteMixin, APIView):
     """Retrieve a channel or change its active status."""
 
-    @extend_schema(responses=ChannelSerializer)
+    @extend_schema(responses={200: ChannelSerializer, 404: ErrorSerializer})
     def get(self, request: Request, slug: str) -> Response:
         try:
             channel = build_get_channel().execute(slug=slug)
         except ChannelNotFoundError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_404_NOT_FOUND)
-        return Response(ChannelSerializer(_payload(channel)).data)
+        return Response(_payload(channel))
 
-    @extend_schema(request=SetChannelStatusSerializer, responses=ChannelSerializer)
+    @extend_schema(
+        request=SetChannelStatusSerializer,
+        responses={
+            200: ChannelSerializer,
+            400: ErrorSerializer,
+            404: ErrorSerializer,
+        },
+    )
     def patch(self, request: Request, slug: str) -> Response:
         serializer = SetChannelStatusSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -100,4 +136,4 @@ class ChannelDetailView(APIView):
             )
         except ChannelNotFoundError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_404_NOT_FOUND)
-        return Response(ChannelSerializer(_payload(channel)).data)
+        return Response(_payload(channel))

@@ -24,7 +24,12 @@ class HealthView(APIView):
     permission_classes: ClassVar = [AllowAny]
     authentication_classes: ClassVar[list] = []
 
-    @extend_schema(responses=HealthReportSerializer)
+    @extend_schema(
+        responses={
+            200: HealthReportSerializer,
+            503: HealthReportSerializer,
+        }
+    )
     def get(self, request: Request) -> Response:
         report = build_get_system_health().execute()
         payload = {

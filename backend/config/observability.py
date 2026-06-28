@@ -21,7 +21,11 @@ def configure_tracing() -> None:
     global _CONFIGURED
     if _CONFIGURED or not _is_enabled():
         return
+    _CONFIGURED = _setup_tracer_provider()  # pragma: no cover - needs otel + enabled
 
+
+def _setup_tracer_provider() -> bool:  # pragma: no cover - exercised only with otel installed
+    """Wire the OTLP exporter and auto-instrumentation. Returns success."""
     try:
         from opentelemetry import trace
         from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import (
@@ -30,8 +34,8 @@ def configure_tracing() -> None:
         from opentelemetry.sdk.resources import Resource
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import BatchSpanProcessor
-    except Exception:  # pragma: no cover - otel is optional
-        return
+    except Exception:
+        return False
 
     resource = Resource.create(
         {"service.name": os.environ.get("OTEL_SERVICE_NAME", "polymart-backend")}
@@ -43,7 +47,7 @@ def configure_tracing() -> None:
     trace.set_tracer_provider(provider)
 
     _instrument()
-    _CONFIGURED = True
+    return True
 
 
 def _instrument() -> None:  # pragma: no cover - exercised only when otel installed

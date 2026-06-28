@@ -12,6 +12,9 @@ from enum import StrEnum
 
 class HealthState(StrEnum):
     HEALTHY = "healthy"
+    # Reserved for probes that report partial availability (e.g. a slow cache or a
+    # read-replica lag). No current probe emits it; the aggregation rule below
+    # already handles it so adding such a probe needs no change here.
     DEGRADED = "degraded"
     UNHEALTHY = "unhealthy"
 

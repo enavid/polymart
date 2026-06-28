@@ -14,7 +14,19 @@ pytestmark = [pytest.mark.django_db, pytest.mark.integration]
 
 @pytest.fixture
 def auth_client() -> APIClient:
-    user = get_user_model().objects.create_user(username="operator", password="pw")
+    """A staff user: allowed to perform channel writes (admin-only operations)."""
+    user = get_user_model().objects.create_user(
+        username="operator", password="pw", is_staff=True
+    )
+    client = APIClient()
+    client.force_authenticate(user=user)
+    return client
+
+
+@pytest.fixture
+def member_client() -> APIClient:
+    """A non-staff authenticated user: may read channels but not mutate them."""
+    user = get_user_model().objects.create_user(username="member", password="pw")
     client = APIClient()
     client.force_authenticate(user=user)
     return client
@@ -30,6 +42,64 @@ class TestSecurity:
         response = APIClient().post("/api/v1/channels/", {}, format="json")
 
         assert response.status_code == 401
+
+    def test_retrieving_requires_authentication(self) -> None:
+        response = APIClient().get("/api/v1/channels/coffee/")
+
+        assert response.status_code == 401
+
+    def test_status_change_requires_authentication(self) -> None:
+        response = APIClient().patch(
+            "/api/v1/channels/coffee/", {"is_active": False}, format="json"
+        )
+
+        assert response.status_code == 401
+
+
+class TestAuthorization:
+    """Writes are admin-only; reads are open to any authenticated user."""
+
+    def test_non_staff_user_can_list_channels(self, member_client: APIClient) -> None:
+        response = member_client.get("/api/v1/channels/")
+
+        assert response.status_code == 200
+
+    def test_non_staff_user_cannot_create_a_channel(self, member_client: APIClient) -> None:
+        response = member_client.post(
+            "/api/v1/channels/",
+            {"slug": "coffee", "name": "Coffee", "currency": "IRR"},
+            format="json",
+        )
+
+        assert response.status_code == 403
+
+    def test_non_staff_user_cannot_change_status(
+        self, member_client: APIClient, auth_client: APIClient
+    ) -> None:
+        auth_client.post(
+            "/api/v1/channels/",
+            {"slug": "coffee", "name": "Coffee", "currency": "IRR"},
+            format="json",
+        )
+
+        response = member_client.patch(
+            "/api/v1/channels/coffee/", {"is_active": False}, format="json"
+        )
+
+        assert response.status_code == 403
+
+    def test_non_staff_user_can_retrieve_a_channel(
+        self, member_client: APIClient, auth_client: APIClient
+    ) -> None:
+        auth_client.post(
+            "/api/v1/channels/",
+            {"slug": "coffee", "name": "Coffee", "currency": "IRR"},
+            format="json",
+        )
+
+        response = member_client.get("/api/v1/channels/coffee/")
+
+        assert response.status_code == 200
 
 
 class TestCreate:

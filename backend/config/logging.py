@@ -15,18 +15,29 @@ import structlog
 def _add_otel_context(
     _logger: Any, _method_name: str, event_dict: dict[str, Any]
 ) -> dict[str, Any]:
-    """Attach the active OpenTelemetry trace/span ids to the log event."""
+    """Attach the active OpenTelemetry trace/span ids to the log event.
+
+    Returns the event unchanged when tracing is not installed or no span is
+    active, so logs work identically with or without the observability extra.
+    """
+    ids = _active_trace_ids()
+    if ids is not None:  # pragma: no cover - only when an otel span is active
+        event_dict["trace_id"], event_dict["span_id"] = ids
+    return event_dict
+
+
+def _active_trace_ids() -> tuple[str, str] | None:
+    """Return ``(trace_id, span_id)`` for the active span, or None."""
     try:
         from opentelemetry import trace
-    except Exception:  # pragma: no cover - otel is optional
-        return event_dict
+    except Exception:  # pragma: no cover - otel is an optional extra
+        return None
 
     span = trace.get_current_span()
     ctx = span.get_span_context() if span else None
-    if ctx is not None and ctx.is_valid:
-        event_dict["trace_id"] = format(ctx.trace_id, "032x")
-        event_dict["span_id"] = format(ctx.span_id, "016x")
-    return event_dict
+    if ctx is None or not ctx.is_valid:
+        return None
+    return format(ctx.trace_id, "032x"), format(ctx.span_id, "016x")  # pragma: no cover
 
 
 SHARED_PROCESSORS: list[Any] = [

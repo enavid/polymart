@@ -45,6 +45,8 @@ services:
       <<: *app-environment
     volumes:
       - ./backend:/app
+      # Shared with nginx so collected static files are served by the proxy.
+      - backend_static:/app/staticfiles
     depends_on:
       db:
         condition: service_healthy
@@ -93,5 +95,19 @@ services:
     ports:
       - "3000:3000"
 
+  # Reverse proxy: routes /api -> backend, everything else -> frontend, and
+  # serves collected static files. Single public entrypoint for the stack.
+  nginx:
+    image: nginx:1.27-alpine
+    volumes:
+      - ./infra/nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - backend_static:/app/staticfiles:ro
+    depends_on:
+      - backend
+      - frontend
+    ports:
+      - "${NGINX_PORT:-80}:80"
+
 volumes:
   postgres_data:
+  backend_static:

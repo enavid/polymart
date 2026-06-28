@@ -37,10 +37,19 @@ class DjangoChannelRepository(ChannelRepository):
         return [to_domain(model) for model in ChannelModel.objects.all()]
 
     def update(self, channel: Channel) -> Channel:
-        try:
-            model = ChannelModel.objects.get(slug=channel.slug.value)
-        except ChannelModel.DoesNotExist as exc:
-            raise ChannelNotFoundError(channel.slug.value) from exc
-        apply_to_model(channel, model)
-        model.save(update_fields=["name", "currency_code", "is_active", "updated_at"])
+        # Lock the row for the read-modify-write so concurrent updates serialize
+        # instead of racing (last-write-wins). Harmless for the current boolean
+        # flag, but this is the pattern future numeric aggregates (inventory,
+        # wallet) must follow. select_for_update() is a no-op on SQLite.
+        with transaction.atomic():
+            try:
+                model = ChannelModel.objects.select_for_update().get(
+                    slug=channel.slug.value
+                )
+            except ChannelModel.DoesNotExist as exc:
+                raise ChannelNotFoundError(channel.slug.value) from exc
+            apply_to_model(channel, model)
+            model.save(
+                update_fields=["name", "currency_code", "is_active", "updated_at"]
+            )
         return to_domain(model)
