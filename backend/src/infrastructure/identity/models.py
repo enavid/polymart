@@ -13,10 +13,13 @@ from typing import Any, ClassVar
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
 from django.db import models
 
+from src.domain.identity.enums import OtpPurpose
 from src.domain.identity.value_objects import PhoneNumber
 
 # E.164 for an Iranian mobile is 13 characters: "+98" + 10 national digits.
 _PHONE_MAX_LENGTH = 16
+# A hex SHA-256 digest is 64 chars; leave headroom for an algorithm prefix.
+_CODE_HASH_MAX_LENGTH = 128
 
 
 class UserManager(BaseUserManager["User"]):
@@ -71,3 +74,36 @@ class User(AbstractBaseUser, PermissionsMixin):
 
     def __str__(self) -> str:
         return self.phone_number
+
+
+class OtpChallengeModel(models.Model):
+    """Storage representation of a one-time-code challenge.
+
+    Holds only the code's hash, never the code. ``created_at`` is written from the
+    application clock (not ``auto_now_add``) so issuance time stays consistent
+    with the domain's view of "now".
+    """
+
+    _PURPOSE_CHOICES: ClassVar[list[tuple[str, str]]] = [
+        (purpose.value, purpose.value) for purpose in OtpPurpose
+    ]
+
+    phone_number = models.CharField(max_length=_PHONE_MAX_LENGTH)
+    purpose = models.CharField(max_length=32, choices=_PURPOSE_CHOICES)
+    code_hash = models.CharField(max_length=_CODE_HASH_MAX_LENGTH)
+    expires_at = models.DateTimeField()
+    max_attempts = models.PositiveSmallIntegerField()
+    attempts = models.PositiveSmallIntegerField(default=0)
+    consumed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField()
+
+    class Meta:
+        app_label = "identity"
+        db_table = "identity_otp_challenge"
+        ordering = ("-created_at",)
+        indexes: ClassVar[list[models.Index]] = [
+            models.Index(fields=["phone_number", "purpose", "-created_at"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"otp:{self.purpose}:{self.pk}"

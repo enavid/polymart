@@ -56,3 +56,24 @@ def test_cookie_auth_is_a_documented_security_scheme() -> None:
     schema = SchemaGenerator().get_schema(request=None, public=True)
 
     assert "cookieAuth" in schema["components"]["securitySchemes"]
+
+
+def test_request_otp_documents_acceptance_and_validation() -> None:
+    responses = _responses("/api/v1/auth/otp/request/", "post")
+
+    assert "202" in responses
+    assert "400" in responses
+
+
+def test_register_documents_creation_and_validation() -> None:
+    responses = _responses("/api/v1/auth/register/", "post")
+
+    assert "201" in responses
+    assert "400" in responses
+
+
+def test_password_reset_documents_success_and_validation() -> None:
+    responses = _responses("/api/v1/auth/password-reset/", "post")
+
+    assert "200" in responses
+    assert "400" in responses

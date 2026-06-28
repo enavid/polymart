@@ -26,16 +26,59 @@ from rest_framework.views import APIView
 from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from src.domain.identity.exceptions import InvalidPhoneNumberError
+from src.application.identity.use_cases import RegisteredUser
+from src.domain.identity.enums import OtpPurpose
+from src.domain.identity.exceptions import (
+    InvalidOtpError,
+    InvalidPhoneNumberError,
+    OtpError,
+    OtpExpiredError,
+    OtpMaxAttemptsError,
+    UserAlreadyExistsError,
+    UserNotFoundError,
+)
 from src.domain.identity.value_objects import PhoneNumber
 from src.infrastructure.identity.models import User
 from src.interface.api.common import ErrorSerializer
+from src.interface.api.identity.container import (
+    build_register_user,
+    build_request_otp,
+    build_reset_password,
+)
 from src.interface.api.identity.cookies import clear_auth_cookies, set_auth_cookies
-from src.interface.api.identity.serializers import LoginSerializer, UserSerializer
+from src.interface.api.identity.serializers import (
+    LoginSerializer,
+    PasswordResetSerializer,
+    RegisterSerializer,
+    RequestOtpSerializer,
+    UserSerializer,
+)
 
 logger = structlog.get_logger(__name__)
 
 _INVALID_CREDENTIALS = "invalid credentials"
+_INVALID_PHONE = "invalid phone number"
+_OTP_REQUESTED = "if the phone number is eligible, a verification code has been sent"
+_PASSWORD_RESET_DONE = "if the code was valid, the password has been reset"  # nosec B105 - a user-facing message, not a credential
+_REGISTRATION_FAILED = "registration could not be completed"
+_RESET_FAILED = "password reset could not be completed"
+
+# OTP verification failures map to a 400 with a specific-but-safe message: the
+# caller already holds a code, so distinguishing wrong/expired/locked leaks no
+# account-existence information.
+_OTP_ERROR_MESSAGES: dict[type[OtpError], str] = {
+    InvalidOtpError: "invalid verification code",
+    OtpExpiredError: "the verification code has expired",
+    OtpMaxAttemptsError: "too many incorrect attempts; request a new code",
+}
+
+
+def _bad_request(detail: str) -> Response:
+    return Response({"detail": detail}, status=status.HTTP_400_BAD_REQUEST)
+
+
+def _otp_error_response(exc: OtpError) -> Response:
+    return _bad_request(_OTP_ERROR_MESSAGES[type(exc)])
 
 
 def _user_payload(user: User) -> dict[str, object]:
@@ -141,3 +184,109 @@ class MeView(APIView):
     @extend_schema(responses={200: UserSerializer, 401: ErrorSerializer})
     def get(self, request: Request) -> Response:
         return Response(_user_payload(cast(User, request.user)))
+
+
+class RequestOtpView(APIView):
+    """Request a one-time code for registration or password reset.
+
+    The response is uniform (``202`` with a generic message) whether or not a
+    code was actually sent, so the endpoint never reveals which phone numbers
+    have accounts.
+    """
+
+    permission_classes: ClassVar[list[type[BasePermission]]] = [AllowAny]
+    authentication_classes: ClassVar[list] = []
+
+    @extend_schema(
+        request=RequestOtpSerializer,
+        responses={
+            202: OpenApiResponse(description=_OTP_REQUESTED),
+            400: ErrorSerializer,
+        },
+    )
+    def post(self, request: Request) -> Response:
+        serializer = RequestOtpSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        purpose = OtpPurpose(serializer.validated_data["purpose"])
+        try:
+            build_request_otp().execute(
+                phone_number_raw=serializer.validated_data["phone_number"], purpose=purpose
+            )
+        except InvalidPhoneNumberError:
+            return _bad_request(_INVALID_PHONE)
+        return Response({"detail": _OTP_REQUESTED}, status=status.HTTP_202_ACCEPTED)
+
+
+class RegisterView(APIView):
+    """Create an account after verifying a registration code."""
+
+    permission_classes: ClassVar[list[type[BasePermission]]] = [AllowAny]
+    authentication_classes: ClassVar[list] = []
+
+    @extend_schema(
+        request=RegisterSerializer,
+        responses={201: UserSerializer, 400: ErrorSerializer},
+    )
+    def post(self, request: Request) -> Response:
+        serializer = RegisterSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        try:
+            registered = build_register_user().execute(
+                phone_number_raw=data["phone_number"],
+                code=data["code"],
+                password=data["password"],
+                full_name=data["full_name"],
+                email=data["email"],
+            )
+        except InvalidPhoneNumberError:
+            return _bad_request(_INVALID_PHONE)
+        except OtpError as exc:
+            return _otp_error_response(exc)
+        except UserAlreadyExistsError:
+            logger.info("registration_rejected", reason="already_exists")
+            return _bad_request(_REGISTRATION_FAILED)
+        return Response(_registered_payload(registered), status=status.HTTP_201_CREATED)
+
+
+class PasswordResetView(APIView):
+    """Set a new password after verifying a reset code."""
+
+    permission_classes: ClassVar[list[type[BasePermission]]] = [AllowAny]
+    authentication_classes: ClassVar[list] = []
+
+    @extend_schema(
+        request=PasswordResetSerializer,
+        responses={
+            200: OpenApiResponse(description=_PASSWORD_RESET_DONE),
+            400: ErrorSerializer,
+        },
+    )
+    def post(self, request: Request) -> Response:
+        serializer = PasswordResetSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        try:
+            build_reset_password().execute(
+                phone_number_raw=data["phone_number"],
+                code=data["code"],
+                new_password=data["new_password"],
+            )
+        except InvalidPhoneNumberError:
+            return _bad_request(_INVALID_PHONE)
+        except OtpError as exc:
+            return _otp_error_response(exc)
+        except UserNotFoundError:
+            logger.info("password_reset_rejected", reason="unknown_user")
+            return _bad_request(_RESET_FAILED)
+        return Response({"detail": _PASSWORD_RESET_DONE}, status=status.HTTP_200_OK)
+
+
+def _registered_payload(registered: RegisteredUser) -> dict[str, object]:
+    return {
+        "id": registered.id,
+        "phone_number": registered.phone_number,
+        "email": registered.email,
+        "full_name": registered.full_name,
+        "is_staff": False,
+    }
