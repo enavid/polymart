@@ -20,6 +20,7 @@ from typing import Any
 from rest_framework.permissions import SAFE_METHODS, BasePermission
 from rest_framework.request import Request
 
+from src.domain.catalog.permissions import MANAGE_CATALOG
 from src.domain.channel.entities import Channel
 from src.domain.channel.permissions import MANAGE_CHANNEL
 from src.domain.identity.permissions import MANAGE_ACCESS
@@ -53,6 +54,22 @@ class GlobalChannelManagePermission(BasePermission):
             return True
         # Creating a channel cannot be object-scoped: require the global perm.
         return bool(request.user.has_perm(MANAGE_CHANNEL.full_name))
+
+
+class CatalogManagePermission(BasePermission):
+    """List/create gate for catalog config: reads need auth; writes the global perm.
+
+    Catalog definitions (attributes, product types, products) are platform-global
+    configuration, so management is never object-scoped -- a global permission
+    (or superuser) is required.
+    """
+
+    def has_permission(self, request: Request, view: Any) -> bool:
+        if not _is_authenticated(request):
+            return False
+        if request.method in SAFE_METHODS:
+            return True
+        return bool(request.user.has_perm(MANAGE_CATALOG.full_name))
 
 
 class ScopedChannelManagePermission(BasePermission):

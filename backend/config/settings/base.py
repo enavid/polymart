@@ -36,6 +36,7 @@ INSTALLED_APPS = [
     "src.infrastructure.channel.apps.ChannelConfig",
     "src.infrastructure.access.apps.AccessConfig",
     "src.infrastructure.audit.apps.AuditConfig",
+    "src.infrastructure.catalog.apps.CatalogConfig",
 ]
 
 # Phone-first custom user (see src/infrastructure/identity/models.py).

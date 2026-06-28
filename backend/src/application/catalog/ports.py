@@ -1,0 +1,40 @@
+"""Ports (interfaces) for the catalog use cases.
+
+The application layer depends only on these abstractions. Concrete adapters
+(Django ORM, in-memory fakes) live elsewhere and are injected at the composition
+root, keeping the dependency rule pointing inward.
+"""
+
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
+
+from src.domain.catalog.entities import Attribute
+
+
+class AttributeRepository(ABC):
+    """Persistence boundary for the Attribute aggregate.
+
+    Implementations MUST translate storage-specific failures into domain
+    exceptions (``AttributeNotFoundError``, ``AttributeAlreadyExistsError``) so
+    that callers never see infrastructure leaks.
+    """
+
+    @abstractmethod
+    def add(self, attribute: Attribute) -> Attribute:
+        """Persist a new attribute and return it with its assigned identity.
+
+        Raises ``AttributeAlreadyExistsError`` if the code is already taken.
+        """
+
+    @abstractmethod
+    def get_by_code(self, code: str) -> Attribute:
+        """Return the attribute with this code or raise ``AttributeNotFoundError``."""
+
+    @abstractmethod
+    def exists_by_code(self, code: str) -> bool:
+        """Return whether an attribute with this code already exists."""
+
+    @abstractmethod
+    def list_all(self) -> list[Attribute]:
+        """Return every attribute, ordered by code for deterministic output."""
