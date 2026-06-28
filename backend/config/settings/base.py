@@ -33,6 +33,7 @@ INSTALLED_APPS = [
     "src.infrastructure.identity.apps.IdentityConfig",
     "src.infrastructure.channel.apps.ChannelConfig",
     "src.infrastructure.access.apps.AccessConfig",
+    "src.infrastructure.audit.apps.AuditConfig",
 ]
 
 # Phone-first custom user (see src/infrastructure/identity/models.py).

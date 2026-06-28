@@ -9,12 +9,13 @@ from __future__ import annotations
 import pytest
 from structlog.testing import capture_logs
 
-from src.application.channel.use_cases import CreateChannel, CreateChannelCommand
+from src.application.channel.use_cases import CreateChannelCommand
 from src.domain.channel.entities import Channel
 from src.domain.channel.exceptions import ChannelAlreadyExistsError, ChannelNotFoundError
 from src.domain.channel.value_objects import ChannelSlug, Currency
 from src.infrastructure.channel.models import ChannelModel
 from src.infrastructure.channel.repositories import DjangoChannelRepository
+from src.interface.api.channel.container import build_create_channel
 
 pytestmark = [pytest.mark.django_db, pytest.mark.integration]
 
@@ -112,7 +113,9 @@ def test_update_raises_for_unknown_channel() -> None:
 
 
 def test_create_channel_use_case_with_real_repository() -> None:
-    use_case = CreateChannel(DjangoChannelRepository())
+    # Built through the composition root so the real repository and audit
+    # recorder are wired exactly as the endpoint wires them.
+    use_case = build_create_channel()
 
     channel = use_case.execute(CreateChannelCommand(name="Coffee", slug="coffee", currency="IRR"))
 

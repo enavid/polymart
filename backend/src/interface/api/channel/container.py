@@ -13,14 +13,15 @@ from src.application.channel.use_cases import (
     SetChannelStatus,
 )
 from src.infrastructure.channel.repositories import DjangoChannelRepository
+from src.interface.api.audit.container import build_audit_recorder
 
 
 def build_create_channel() -> CreateChannel:
-    return CreateChannel(DjangoChannelRepository())
+    return CreateChannel(DjangoChannelRepository(), build_audit_recorder())
 
 
 def build_set_channel_status() -> SetChannelStatus:
-    return SetChannelStatus(DjangoChannelRepository())
+    return SetChannelStatus(DjangoChannelRepository(), build_audit_recorder())
 
 
 def build_get_channel() -> GetChannel:

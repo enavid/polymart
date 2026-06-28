@@ -1,15 +1,18 @@
 """Unit tests for the channel use cases.
 
-The use cases are exercised against an in-memory fake repository: no Django, no
-database. This is the payoff of the dependency rule -- business orchestration is
-testable in isolation and at speed.
+The use cases are exercised against an in-memory fake repository and a fake audit
+recorder: no Django, no database. This is the payoff of the dependency rule --
+business orchestration is testable in isolation and at speed.
 """
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 import pytest
 from structlog.testing import capture_logs
 
+from src.application.audit.ports import AuditRecorder
 from src.application.channel.ports import ChannelRepository
 from src.application.channel.use_cases import (
     CreateChannel,
@@ -18,6 +21,7 @@ from src.application.channel.use_cases import (
     ListChannels,
     SetChannelStatus,
 )
+from src.domain.audit.entities import FieldChange
 from src.domain.channel.entities import Channel
 from src.domain.channel.exceptions import (
     ChannelAlreadyExistsError,
@@ -62,16 +66,57 @@ class FakeChannelRepository(ChannelRepository):
         return channel
 
 
+class RecordedAudit:
+    """One captured audit call (the keyword facts the use case supplied)."""
+
+    def __init__(
+        self,
+        action: str,
+        resource_type: str,
+        resource_id: str,
+        actor: str | None,
+        changes: tuple[FieldChange, ...],
+    ) -> None:
+        self.action = action
+        self.resource_type = resource_type
+        self.resource_id = resource_id
+        self.actor = actor
+        self.changes = changes
+
+
+class FakeAuditRecorder(AuditRecorder):
+    """Captures audit calls in memory so the use case's trail is assertable."""
+
+    def __init__(self) -> None:
+        self.calls: list[RecordedAudit] = []
+
+    def record(
+        self,
+        *,
+        action: str,
+        resource_type: str,
+        resource_id: str,
+        actor: str | None = None,
+        changes: Sequence[FieldChange] = (),
+    ) -> None:
+        self.calls.append(RecordedAudit(action, resource_type, resource_id, actor, tuple(changes)))
+
+
 @pytest.fixture
 def repo() -> FakeChannelRepository:
     return FakeChannelRepository()
 
 
+@pytest.fixture
+def audit() -> FakeAuditRecorder:
+    return FakeAuditRecorder()
+
+
 class TestCreateChannel:
     def test_persists_and_returns_a_channel_with_an_identity(
-        self, repo: FakeChannelRepository
+        self, repo: FakeChannelRepository, audit: FakeAuditRecorder
     ) -> None:
-        use_case = CreateChannel(repo)
+        use_case = CreateChannel(repo, audit)
 
         channel = use_case.execute(
             CreateChannelCommand(name="Coffee", slug="coffee", currency="IRR")
@@ -83,25 +128,29 @@ class TestCreateChannel:
         assert channel.is_active is True
         assert repo.exists_by_slug("coffee")
 
-    def test_rejects_a_duplicate_slug(self, repo: FakeChannelRepository) -> None:
-        use_case = CreateChannel(repo)
+    def test_rejects_a_duplicate_slug(
+        self, repo: FakeChannelRepository, audit: FakeAuditRecorder
+    ) -> None:
+        use_case = CreateChannel(repo, audit)
         use_case.execute(CreateChannelCommand(name="Coffee", slug="coffee", currency="IRR"))
 
         with pytest.raises(ChannelAlreadyExistsError):
             use_case.execute(CreateChannelCommand(name="Other", slug="coffee", currency="USD"))
 
     def test_does_not_persist_when_the_currency_is_invalid(
-        self, repo: FakeChannelRepository
+        self, repo: FakeChannelRepository, audit: FakeAuditRecorder
     ) -> None:
-        use_case = CreateChannel(repo)
+        use_case = CreateChannel(repo, audit)
 
         with pytest.raises(InvalidCurrencyCodeError):
             use_case.execute(CreateChannelCommand(name="Coffee", slug="coffee", currency="toman"))
 
         assert repo.list_all() == []
 
-    def test_can_create_an_initially_inactive_channel(self, repo: FakeChannelRepository) -> None:
-        use_case = CreateChannel(repo)
+    def test_can_create_an_initially_inactive_channel(
+        self, repo: FakeChannelRepository, audit: FakeAuditRecorder
+    ) -> None:
+        use_case = CreateChannel(repo, audit)
 
         channel = use_case.execute(
             CreateChannelCommand(name="Draft", slug="draft", currency="IRR", is_active=False)
@@ -109,11 +158,13 @@ class TestCreateChannel:
 
         assert channel.is_active is False
 
-    def test_records_the_acting_user_in_the_audit_event(self, repo: FakeChannelRepository) -> None:
+    def test_records_the_acting_user_in_the_audit_event(
+        self, repo: FakeChannelRepository, audit: FakeAuditRecorder
+    ) -> None:
         # Channel mutations gate currency/pricing; the audit trail must say who
         # made the change, not just that it happened.
         with capture_logs() as logs:
-            CreateChannel(repo).execute(
+            CreateChannel(repo, audit).execute(
                 CreateChannelCommand(name="Coffee", slug="coffee", currency="IRR"),
                 actor="operator",
             )
@@ -121,47 +172,117 @@ class TestCreateChannel:
         events = [entry for entry in logs if entry["event"] == "channel_created"]
         assert events and events[0]["actor"] == "operator"
 
+    def test_writes_a_durable_audit_entry(
+        self, repo: FakeChannelRepository, audit: FakeAuditRecorder
+    ) -> None:
+        channel = CreateChannel(repo, audit).execute(
+            CreateChannelCommand(name="Coffee", slug="coffee", currency="IRR"),
+            actor="operator",
+        )
+
+        assert len(audit.calls) == 1
+        call = audit.calls[0]
+        assert call.action == "channel.created"
+        assert call.resource_type == "channel"
+        assert call.resource_id == str(channel.id)
+        assert call.actor == "operator"
+        # Creation captures "after" values only.
+        recorded = {change.field: (change.before, change.after) for change in call.changes}
+        assert recorded == {
+            "slug": (None, "coffee"),
+            "currency": (None, "IRR"),
+            "is_active": (None, True),
+        }
+
+    def test_does_not_audit_a_rejected_duplicate(
+        self, repo: FakeChannelRepository, audit: FakeAuditRecorder
+    ) -> None:
+        use_case = CreateChannel(repo, audit)
+        use_case.execute(CreateChannelCommand(name="Coffee", slug="coffee", currency="IRR"))
+
+        with pytest.raises(ChannelAlreadyExistsError):
+            use_case.execute(CreateChannelCommand(name="Other", slug="coffee", currency="USD"))
+
+        # Only the first, successful creation is on the trail.
+        assert len(audit.calls) == 1
+
 
 class TestSetChannelStatus:
-    def test_deactivates_an_existing_channel(self, repo: FakeChannelRepository) -> None:
-        CreateChannel(repo).execute(
+    def test_deactivates_an_existing_channel(
+        self, repo: FakeChannelRepository, audit: FakeAuditRecorder
+    ) -> None:
+        CreateChannel(repo, audit).execute(
             CreateChannelCommand(name="Coffee", slug="coffee", currency="IRR")
         )
 
-        channel = SetChannelStatus(repo).execute(slug="coffee", active=False)
+        channel = SetChannelStatus(repo, audit).execute(slug="coffee", active=False)
 
         assert channel.is_active is False
         assert repo.get_by_slug("coffee").is_active is False
 
-    def test_is_idempotent(self, repo: FakeChannelRepository) -> None:
-        CreateChannel(repo).execute(
+    def test_is_idempotent(self, repo: FakeChannelRepository, audit: FakeAuditRecorder) -> None:
+        CreateChannel(repo, audit).execute(
             CreateChannelCommand(name="Coffee", slug="coffee", currency="IRR")
         )
 
-        SetChannelStatus(repo).execute(slug="coffee", active=True)
-        channel = SetChannelStatus(repo).execute(slug="coffee", active=True)
+        SetChannelStatus(repo, audit).execute(slug="coffee", active=True)
+        channel = SetChannelStatus(repo, audit).execute(slug="coffee", active=True)
 
         assert channel.is_active is True
 
-    def test_raises_when_the_channel_is_unknown(self, repo: FakeChannelRepository) -> None:
+    def test_raises_when_the_channel_is_unknown(
+        self, repo: FakeChannelRepository, audit: FakeAuditRecorder
+    ) -> None:
         with pytest.raises(ChannelNotFoundError):
-            SetChannelStatus(repo).execute(slug="ghost", active=False)
+            SetChannelStatus(repo, audit).execute(slug="ghost", active=False)
 
-    def test_records_the_acting_user_in_the_audit_event(self, repo: FakeChannelRepository) -> None:
-        CreateChannel(repo).execute(
+    def test_records_the_acting_user_in_the_audit_event(
+        self, repo: FakeChannelRepository, audit: FakeAuditRecorder
+    ) -> None:
+        CreateChannel(repo, audit).execute(
             CreateChannelCommand(name="Coffee", slug="coffee", currency="IRR")
         )
 
         with capture_logs() as logs:
-            SetChannelStatus(repo).execute(slug="coffee", active=False, actor="operator")
+            SetChannelStatus(repo, audit).execute(slug="coffee", active=False, actor="operator")
 
         events = [entry for entry in logs if entry["event"] == "channel_status_changed"]
         assert events and events[0]["actor"] == "operator"
 
+    def test_writes_a_durable_audit_entry_with_before_and_after(
+        self, repo: FakeChannelRepository, audit: FakeAuditRecorder
+    ) -> None:
+        channel = CreateChannel(repo, audit).execute(
+            CreateChannelCommand(name="Coffee", slug="coffee", currency="IRR")
+        )
+
+        SetChannelStatus(repo, audit).execute(slug="coffee", active=False, actor="operator")
+
+        status_calls = [call for call in audit.calls if call.action == "channel.status_changed"]
+        assert len(status_calls) == 1
+        call = status_calls[0]
+        assert call.resource_id == str(channel.id)
+        assert call.actor == "operator"
+        assert call.changes == (FieldChange(field="is_active", before=True, after=False),)
+
+    def test_a_no_op_status_change_is_not_audited(
+        self, repo: FakeChannelRepository, audit: FakeAuditRecorder
+    ) -> None:
+        CreateChannel(repo, audit).execute(
+            CreateChannelCommand(name="Coffee", slug="coffee", currency="IRR")
+        )
+
+        SetChannelStatus(repo, audit).execute(slug="coffee", active=True)
+
+        # The create was audited; the no-op activation added nothing.
+        assert [call.action for call in audit.calls] == ["channel.created"]
+
 
 class TestGetChannel:
-    def test_returns_the_requested_channel(self, repo: FakeChannelRepository) -> None:
-        CreateChannel(repo).execute(
+    def test_returns_the_requested_channel(
+        self, repo: FakeChannelRepository, audit: FakeAuditRecorder
+    ) -> None:
+        CreateChannel(repo, audit).execute(
             CreateChannelCommand(name="Coffee", slug="coffee", currency="IRR")
         )
 
@@ -175,8 +296,10 @@ class TestGetChannel:
 
 
 class TestListChannels:
-    def test_returns_all_channels_sorted_by_slug(self, repo: FakeChannelRepository) -> None:
-        create = CreateChannel(repo)
+    def test_returns_all_channels_sorted_by_slug(
+        self, repo: FakeChannelRepository, audit: FakeAuditRecorder
+    ) -> None:
+        create = CreateChannel(repo, audit)
         create.execute(CreateChannelCommand(name="Tea", slug="tea", currency="IRR"))
         create.execute(CreateChannelCommand(name="Coffee", slug="coffee", currency="IRR"))
 
@@ -184,8 +307,10 @@ class TestListChannels:
 
         assert [c.slug.value for c in channels] == ["coffee", "tea"]
 
-    def test_can_filter_to_active_channels_only(self, repo: FakeChannelRepository) -> None:
-        create = CreateChannel(repo)
+    def test_can_filter_to_active_channels_only(
+        self, repo: FakeChannelRepository, audit: FakeAuditRecorder
+    ) -> None:
+        create = CreateChannel(repo, audit)
         create.execute(CreateChannelCommand(name="Tea", slug="tea", currency="IRR"))
         create.execute(
             CreateChannelCommand(name="Draft", slug="draft", currency="IRR", is_active=False)
