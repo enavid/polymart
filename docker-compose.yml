@@ -1,5 +1,15 @@
 name: polymart
 
+# Anchor: every app container talks to the in-network db/redis hostnames,
+# regardless of what backend/.env says (which targets localhost for native dev).
+x-app-environment: &app-environment
+  DJANGO_SETTINGS_MODULE: config.settings.dev
+  DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-insecure-dev-key-change-me}
+  DATABASE_URL: postgres://${POSTGRES_USER:-polymart}:${POSTGRES_PASSWORD:-polymart}@db:5432/${POSTGRES_DB:-polymart}
+  REDIS_URL: redis://redis:6379/0
+  CELERY_BROKER_URL: redis://redis:6379/0
+  CELERY_RESULT_BACKEND: redis://redis:6379/1
+
 services:
   db:
     image: postgres:16-alpine
@@ -15,7 +25,7 @@ services:
       timeout: 3s
       retries: 5
     ports:
-      - "5432:5432"
+      - "${POSTGRES_PORT:-5432}:5432"
 
   redis:
     image: redis:7-alpine
@@ -25,15 +35,14 @@ services:
       timeout: 3s
       retries: 5
     ports:
-      - "6379:6379"
+      - "${REDIS_PORT:-6379}:6379"
 
   backend:
     build:
       context: ./backend
       target: dev
-    env_file: .env
     environment:
-      DJANGO_SETTINGS_MODULE: config.settings.dev
+      <<: *app-environment
     volumes:
       - ./backend:/app
     depends_on:
@@ -49,9 +58,8 @@ services:
       context: ./backend
       target: dev
     command: celery -A config worker -l info
-    env_file: .env
     environment:
-      DJANGO_SETTINGS_MODULE: config.settings.dev
+      <<: *app-environment
     volumes:
       - ./backend:/app
     depends_on:
@@ -63,9 +71,8 @@ services:
       context: ./backend
       target: dev
     command: celery -A config beat -l info
-    env_file: .env
     environment:
-      DJANGO_SETTINGS_MODULE: config.settings.dev
+      <<: *app-environment
     volumes:
       - ./backend:/app
     depends_on:
@@ -76,7 +83,8 @@ services:
     build:
       context: ./frontend
       target: dev
-    env_file: .env
+    environment:
+      NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8000/api/v1}
     volumes:
       - ./frontend:/app
       - /app/node_modules

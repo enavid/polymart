@@ -27,21 +27,39 @@ Makefile    Single entry point for all common commands
 
 ## Quick start (development)
 
+Two ways to run the stack. **Native** (default) runs the app on your machine and
+only the database/Redis in Docker; **Docker** runs everything in containers.
+
+### Native (default)
+
 ```bash
-cp .env.example .env
-make build
-make up
-make migrate
+make setup        # backend virtualenv (uv if present) + backend/.env
+make up           # infra (db+redis) in Docker, migrate, then run app natively
+make logs         # tail the native process logs
+make down         # stop the app processes and the infra containers
+```
+
+### Docker (full stack)
+
+```bash
+make env
+make docker-build
+make docker-up
+make docker-migrate
 ```
 
 - Backend health: <http://localhost:8000/api/v1/health/>
 - API docs (Swagger): <http://localhost:8000/api/docs/>
 - Frontend: <http://localhost:3000>
 
+> Native infra uses host ports 5432/6379. If they are taken, free them or set
+> `POSTGRES_PORT` / `REDIS_PORT` (and match `DATABASE_URL` in `backend/.env`).
+
 ## Common commands
 
 ```bash
 make help              # list all targets
+make check             # quick local gate: backend lint + type + test
 make test              # backend tests + coverage
 make fe-test           # frontend unit tests
 make ci                # full quality gate (mirrors GitHub Actions)
