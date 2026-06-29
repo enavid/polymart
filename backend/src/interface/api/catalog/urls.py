@@ -16,6 +16,8 @@ from src.interface.api.catalog.views import (
     CollectionRuleView,
     ProductCategoriesView,
     ProductDetailView,
+    ProductExportView,
+    ProductImportView,
     ProductListCreateView,
     ProductPublicationView,
     ProductTypeDetailView,
@@ -46,6 +48,16 @@ urlpatterns = [
         name="product-type-detail",
     ),
     path("catalog/products/", ProductListCreateView.as_view(), name="product-list"),
+    path(
+        "catalog/products/export/",
+        ProductExportView.as_view(),
+        name="product-export",
+    ),
+    path(
+        "catalog/products/import/",
+        ProductImportView.as_view(),
+        name="product-import",
+    ),
     path(
         "catalog/storefront/products/",
         StorefrontProductListView.as_view(),

@@ -396,6 +396,27 @@ class InvalidPaginationError(CatalogError):
         self.detail = detail
 
 
+class DuplicateImportRowError(CatalogError):
+    """Raised when one import file lists the same product code more than once."""
+
+    def __init__(self, code: str) -> None:
+        super().__init__(f"duplicate product code in import: {code!r}")
+        self.code = code
+
+
+class ImportTooLargeError(CatalogError):
+    """Raised when an import file has more rows than a single request may carry.
+
+    A hard ceiling on the row count bounds the work one request can trigger, so a
+    huge upload cannot exhaust the database or the worker.
+    """
+
+    def __init__(self, count: int, limit: int) -> None:
+        super().__init__(f"import too large: {count} rows exceeds the limit of {limit}")
+        self.count = count
+        self.limit = limit
+
+
 class InvalidStockQuantityError(CatalogError):
     """Raised when a stock quantity is not a non-negative integer within bounds.
 

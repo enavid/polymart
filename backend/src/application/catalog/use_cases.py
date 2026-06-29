@@ -11,7 +11,7 @@ audit-friendly event naming the actor.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from decimal import Decimal
 
@@ -20,6 +20,7 @@ import structlog
 from src.application.audit.ports import AuditRecorder
 from src.application.catalog.ports import (
     AttributeRepository,
+    CatalogImportWriter,
     CategoryRepository,
     ChannelReader,
     CollectionProductRepository,
@@ -27,6 +28,7 @@ from src.application.catalog.ports import (
     CollectionRuleRepository,
     ProductCategoryRepository,
     ProductFilters,
+    ProductImportItem,
     ProductPage,
     ProductQueryRepository,
     ProductRepository,
@@ -47,8 +49,11 @@ from src.domain.catalog.entities import (
 from src.domain.catalog.enums import AttributeInputType, RuleOperator
 from src.domain.catalog.exceptions import (
     AttributeAlreadyExistsError,
+    CatalogError,
     CategoryAlreadyExistsError,
     CollectionAlreadyExistsError,
+    DuplicateImportRowError,
+    ImportTooLargeError,
     InvalidAttributeInputTypeError,
     InvalidPaginationError,
     InvalidRuleOperatorError,
@@ -112,6 +117,14 @@ _ACTION_PRODUCT_PUBLISH_CHANGED = "product.publish_changed"
 # single request can never ask the database for an unbounded result set.
 _DEFAULT_PAGE_LIMIT = 20
 _MAX_PAGE_LIMIT = 100
+
+# Bulk import: a hard ceiling on the row count so one upload cannot exhaust the
+# database. The byte size of the upload is capped separately at the transport edge.
+_MAX_IMPORT_ROWS = 10_000
+_RESOURCE_CATALOG = "catalog"
+_ACTION_PRODUCTS_IMPORTED = "catalog.products_imported"
+# A bulk import has no single resource id; this constant anchors its summary entry.
+_IMPORT_RESOURCE_ID = "products"
 
 # Membership is recorded in the audit trail as a deterministic, comma-joined slug
 # string (AuditValue is a flat scalar, never a list).
@@ -1498,3 +1511,192 @@ class GetPublishedProduct:
         product = self._repository.get_published_by_code(code)
         logger.debug("storefront_product_retrieved", code=code)
         return product
+
+
+@dataclass(frozen=True)
+class ProductRow:
+    """A flat, format-agnostic representation of one product for CSV import/export.
+
+    The application speaks in rows; turning rows into CSV bytes (and back) is a
+    transport detail owned by the interface layer.
+    """
+
+    code: str
+    name: str
+    product_type: str
+    is_published: bool = False
+    categories: tuple[str, ...] = ()
+    values: tuple[AttributeValueInput, ...] = ()
+
+
+@dataclass(frozen=True)
+class ImportRowError:
+    """One row that failed import: its 1-based position, its code, and why.
+
+    ``row_number`` 0 marks a whole-file failure (a malformed upload) that belongs to
+    no single data row.
+    """
+
+    row_number: int
+    code: str
+    error: str
+
+
+@dataclass(frozen=True)
+class ProductImportResult:
+    """The outcome of an import: how many were created and which rows failed.
+
+    The import is all-or-nothing: when ``errors`` is non-empty nothing was created
+    (``created`` is 0); otherwise every row was created.
+    """
+
+    created: int
+    errors: tuple[ImportRowError, ...] = ()
+
+
+class ExportCatalogProducts:
+    """Project every product (head, values, categories) to flat rows for export.
+
+    A read-only use case: it loads the products and each product's category
+    membership and shapes them into ``ProductRow`` objects. Encoding the rows as CSV
+    is the interface layer's job, so the use case stays format-agnostic.
+    """
+
+    def __init__(
+        self, repository: ProductRepository, product_categories: ProductCategoryRepository
+    ) -> None:
+        self._repository = repository
+        self._product_categories = product_categories
+
+    def execute(self) -> tuple[ProductRow, ...]:
+        rows = tuple(self._to_row(product) for product in self._repository.list_all())
+        logger.debug("catalog_products_exported", count=len(rows))
+        return rows
+
+    def _to_row(self, product: Product) -> ProductRow:
+        categories = self._product_categories.list_for_product(product.code.value)
+        return ProductRow(
+            code=product.code.value,
+            name=product.name,
+            product_type=product.product_type.value,
+            is_published=product.is_published,
+            categories=tuple(category.value for category in categories),
+            values=tuple(
+                AttributeValueInput(attribute=value.attribute.value, value=value.value)
+                for value in product.values
+            ),
+        )
+
+
+class ImportCatalogProducts:
+    """Create products in bulk from flat rows, atomically and all-or-nothing.
+
+    The use case validates every row first (read-only): it builds the value objects,
+    rejects a code that is duplicated within the file or already taken, resolves the
+    product type, conforms the attribute values via the domain service, and confirms
+    every referenced category exists. If any row fails, nothing is written and every
+    failure is reported (so the caller fixes the file once, not row by row). Only when
+    all rows are valid does it hand the batch to the writer, which persists it in one
+    transaction. The write -- and its transaction boundary -- is the adapter's;
+    validation and the all-or-nothing policy are the use case's.
+    """
+
+    def __init__(
+        self,
+        products: ProductRepository,
+        product_types: ProductTypeRepository,
+        attributes: AttributeRepository,
+        categories: CategoryRepository,
+        writer: CatalogImportWriter,
+        audit: AuditRecorder,
+    ) -> None:
+        self._products = products
+        self._product_types = product_types
+        self._attributes = attributes
+        self._categories = categories
+        self._writer = writer
+        self._audit = audit
+
+    def execute(
+        self, rows: Sequence[ProductRow], *, actor: str | None = None
+    ) -> ProductImportResult:
+        # Bound the work before touching the database: an oversized upload is
+        # rejected outright rather than half-processed.
+        if len(rows) > _MAX_IMPORT_ROWS:
+            logger.warning(
+                "catalog_products_import_too_large", count=len(rows), actor=actor
+            )
+            raise ImportTooLargeError(len(rows), _MAX_IMPORT_ROWS)
+
+        items, errors = self._validate(rows)
+        if errors:
+            logger.warning(
+                "catalog_products_import_rejected", error_count=len(errors), actor=actor
+            )
+            return ProductImportResult(created=0, errors=tuple(errors))
+
+        # Every row is valid: persist the whole batch atomically.
+        self._writer.create_products(items)
+        created = len(items)
+        logger.info("catalog_products_imported", created=created, actor=actor)
+        self._audit.record(
+            action=_ACTION_PRODUCTS_IMPORTED,
+            resource_type=_RESOURCE_CATALOG,
+            resource_id=_IMPORT_RESOURCE_ID,
+            actor=actor,
+            changes=(FieldChange(field="created_count", after=created),),
+        )
+        return ProductImportResult(created=created, errors=())
+
+    def _validate(
+        self, rows: Sequence[ProductRow]
+    ) -> tuple[list[ProductImportItem], list[ImportRowError]]:
+        items: list[ProductImportItem] = []
+        errors: list[ImportRowError] = []
+        seen_codes: set[str] = set()
+        for row_number, row in enumerate(rows, start=1):
+            try:
+                items.append(self._validate_row(row, seen_codes))
+            except CatalogError as exc:
+                errors.append(
+                    ImportRowError(row_number=row_number, code=row.code, error=str(exc))
+                )
+        return items, errors
+
+    def _validate_row(self, row: ProductRow, seen_codes: set[str]) -> ProductImportItem:
+        # Build value objects first: a malformed code/name/value fails fast.
+        product = Product(
+            code=ProductCode(row.code),
+            name=row.name,
+            product_type=ProductTypeCode(row.product_type),
+            values=tuple(
+                AttributeValue(attribute=AttributeCode(item.attribute), value=item.value)
+                for item in row.values
+            ),
+            is_published=row.is_published,
+        )
+        code = product.code.value
+
+        # The code must be unique within the file and not already taken (create-only).
+        if code in seen_codes:
+            raise DuplicateImportRowError(code)
+        seen_codes.add(code)
+        if self._products.exists_by_code(code):
+            raise ProductAlreadyExistsError(code)
+
+        # Resolve the type and conform the values to its attributes (the same domain
+        # rule a single create uses).
+        product_type = self._product_types.get_by_code(product.product_type.value)
+        definitions = [
+            self._attributes.get_by_code(attribute.value) for attribute in product_type.attributes
+        ]
+        product.values = normalize_attribute_values(definitions, product.values)
+
+        # Every referenced category must exist (and the row may not repeat one).
+        categories = reject_duplicate_categories(
+            tuple(CategorySlug(slug) for slug in row.categories)
+        )
+        for category in categories:
+            if not self._categories.exists_by_slug(category.value):
+                raise UnknownCategoryError(category.value)
+        return ProductImportItem(product=product, categories=categories)

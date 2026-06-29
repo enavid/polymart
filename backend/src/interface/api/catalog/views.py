@@ -10,8 +10,11 @@ from __future__ import annotations
 from typing import ClassVar
 
 import structlog
-from drf_spectacular.utils import extend_schema
+from django.http import HttpResponse
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import OpenApiResponse, extend_schema
 from rest_framework import status
+from rest_framework.parsers import MultiPartParser
 from rest_framework.permissions import AllowAny
 from rest_framework.request import Request
 from rest_framework.response import Response
@@ -30,6 +33,7 @@ from src.application.catalog.use_cases import (
     CreateProductTypeCommand,
     CreateVariantCommand,
     MediaInput,
+    ProductImportResult,
     RuleConditionInput,
     SearchCatalogProductsQuery,
     SetCollectionProductsCommand,
@@ -78,6 +82,7 @@ from src.interface.api.catalog.container import (
     build_create_product,
     build_create_product_type,
     build_create_variant,
+    build_export_catalog_products,
     build_get_attribute,
     build_get_category,
     build_get_collection,
@@ -91,6 +96,7 @@ from src.interface.api.catalog.container import (
     build_get_variant,
     build_get_variant_prices,
     build_get_variant_stock,
+    build_import_catalog_products,
     build_list_attributes,
     build_list_categories,
     build_list_collections,
@@ -105,6 +111,7 @@ from src.interface.api.catalog.container import (
     build_set_variant_prices,
     build_set_variant_stock,
 )
+from src.interface.api.catalog.csv_io import CsvFormatError, decode_products, encode_products
 from src.interface.api.catalog.serializers import (
     AdjustVariantStockSerializer,
     AttributeSerializer,
@@ -120,6 +127,8 @@ from src.interface.api.catalog.serializers import (
     CreateProductTypeSerializer,
     CreateVariantSerializer,
     ProductCategoriesSerializer,
+    ProductImportRequestSerializer,
+    ProductImportResultSerializer,
     ProductSerializer,
     ProductTypeSerializer,
     SetProductPublishedSerializer,
@@ -133,6 +142,10 @@ from src.interface.api.catalog.serializers import (
     VariantStockSerializer,
 )
 from src.interface.api.common import ErrorSerializer
+
+# A bulk import is loaded into memory before parsing, so its byte size is capped at
+# the edge (the row count is capped separately by the use case) to bound the upload.
+_MAX_IMPORT_BYTES = 5 * 1024 * 1024
 
 logger = structlog.get_logger(__name__)
 
@@ -958,3 +971,83 @@ class StorefrontProductDetailView(APIView):
         except ProductNotFoundError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_404_NOT_FOUND)
         return Response(_storefront_product_payload(product))
+
+
+class ProductExportView(APIView):
+    """Export every product as a CSV attachment.
+
+    A read, so it follows the catalog's read posture (any authenticated user): the
+    same data is already reachable through the management product reads, so gating a
+    bulk read more strictly than the per-row reads it duplicates would be theatre.
+    The write side (import) is what requires the manage permission.
+    """
+
+    permission_classes: ClassVar = [CatalogManagePermission]
+
+    @extend_schema(
+        responses={200: OpenApiResponse(OpenApiTypes.STR, description="CSV file of all products")}
+    )
+    def get(self, request: Request) -> HttpResponse:
+        rows = build_export_catalog_products().execute()
+        response = HttpResponse(encode_products(rows), content_type="text/csv")
+        response["Content-Disposition"] = 'attachment; filename="products.csv"'
+        return response
+
+
+def _import_result_payload(result: ProductImportResult) -> dict[str, object]:
+    """Project an import result (created count + per-row errors) to the response body."""
+    return {
+        "created": result.created,
+        "errors": [
+            {"row_number": error.row_number, "code": error.code, "error": error.error}
+            for error in result.errors
+        ],
+    }
+
+
+def _import_file_error(message: str) -> Response:
+    """A whole-file failure, shaped like an import result so the body is uniform."""
+    payload = {"created": 0, "errors": [{"row_number": 0, "code": "", "error": message}]}
+    return Response(payload, status=status.HTTP_400_BAD_REQUEST)
+
+
+class ProductImportView(APIView):
+    """Create products in bulk from an uploaded CSV file (admin, all-or-nothing).
+
+    The response is always import-result shaped: 200 when every row was created, 400
+    (with the per-row or whole-file errors) when nothing was -- a partial import is
+    impossible.
+    """
+
+    permission_classes: ClassVar = [CatalogManagePermission]
+    parser_classes: ClassVar = [MultiPartParser]
+
+    @extend_schema(
+        request=ProductImportRequestSerializer,
+        responses={
+            200: ProductImportResultSerializer,
+            400: ProductImportResultSerializer,
+            403: ErrorSerializer,
+        },
+    )
+    def post(self, request: Request) -> Response:
+        upload = request.FILES.get("file")
+        if upload is None:
+            return _import_file_error("no file uploaded (expected multipart field 'file')")
+        if upload.size > _MAX_IMPORT_BYTES:
+            return _import_file_error(f"file exceeds the {_MAX_IMPORT_BYTES}-byte limit")
+        try:
+            text = upload.read().decode("utf-8")
+        except UnicodeDecodeError:
+            return _import_file_error("file is not valid UTF-8")
+        try:
+            rows = decode_products(text)
+        except CsvFormatError as exc:
+            return _import_file_error(str(exc))
+        try:
+            result = build_import_catalog_products().execute(rows, actor=_actor(request))
+        except CatalogError as exc:
+            # An oversized row count, or a rare lost insert race during the write.
+            return _import_file_error(str(exc))
+        status_code = status.HTTP_200_OK if not result.errors else status.HTTP_400_BAD_REQUEST
+        return Response(_import_result_payload(result), status=status_code)

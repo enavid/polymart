@@ -14,6 +14,7 @@ from src.application.catalog.use_cases import (
     CreateProduct,
     CreateProductType,
     CreateVariant,
+    ExportCatalogProducts,
     GetAttribute,
     GetCategory,
     GetCollection,
@@ -27,6 +28,7 @@ from src.application.catalog.use_cases import (
     GetVariant,
     GetVariantPrices,
     GetVariantStock,
+    ImportCatalogProducts,
     ListAttributes,
     ListCategories,
     ListCollections,
@@ -43,6 +45,7 @@ from src.application.catalog.use_cases import (
 )
 from src.infrastructure.catalog.repositories import (
     DjangoAttributeRepository,
+    DjangoCatalogImportWriter,
     DjangoCategoryRepository,
     DjangoChannelReader,
     DjangoCollectionProductRepository,
@@ -230,3 +233,18 @@ def build_search_catalog_products() -> SearchCatalogProducts:
 
 def build_get_published_product() -> GetPublishedProduct:
     return GetPublishedProduct(DjangoProductQueryRepository())
+
+
+def build_export_catalog_products() -> ExportCatalogProducts:
+    return ExportCatalogProducts(DjangoProductRepository(), DjangoProductCategoryRepository())
+
+
+def build_import_catalog_products() -> ImportCatalogProducts:
+    return ImportCatalogProducts(
+        DjangoProductRepository(),
+        DjangoProductTypeRepository(),
+        DjangoAttributeRepository(),
+        DjangoCategoryRepository(),
+        DjangoCatalogImportWriter(),
+        build_audit_recorder(),
+    )

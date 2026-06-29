@@ -10,6 +10,7 @@ from django.db.models import Q, QuerySet
 
 from src.application.catalog.ports import (
     AttributeRepository,
+    CatalogImportWriter,
     CategoryRepository,
     ChannelReader,
     CollectionProductRepository,
@@ -17,6 +18,7 @@ from src.application.catalog.ports import (
     CollectionRuleRepository,
     ProductCategoryRepository,
     ProductFilters,
+    ProductImportItem,
     ProductPage,
     ProductQueryRepository,
     ProductRepository,
@@ -365,6 +367,25 @@ class DjangoProductQueryRepository(ProductQueryRepository):
             # unpublished product is never leaked through the public read surface.
             raise ProductNotFoundError(code) from exc
         return product_to_domain(model)
+
+
+class DjangoCatalogImportWriter(CatalogImportWriter):
+    """Persist a validated bulk product import with the Django ORM (all-or-nothing)."""
+
+    def __init__(self) -> None:
+        self._products = DjangoProductRepository()
+        self._categories = DjangoProductCategoryRepository()
+
+    def create_products(self, items: Sequence[ProductImportItem]) -> None:
+        # One transaction spans the whole batch, so any failure (e.g. an insert race
+        # lost after the use case validated the codes as free) rolls every product and
+        # category link back -- a partial import is impossible. The per-aggregate
+        # writers' own atomic blocks nest under this one as savepoints.
+        with transaction.atomic():
+            for item in items:
+                self._products.add(item.product)
+                if item.categories:
+                    self._categories.replace(item.product.code.value, item.categories)
 
 
 class DjangoVariantRepository(VariantRepository):

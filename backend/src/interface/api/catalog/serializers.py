@@ -275,3 +275,28 @@ class VariantStockSerializer(serializers.Serializer):
     """Response projection of a variant's on-hand stock quantity."""
 
     quantity = serializers.IntegerField()
+
+
+class ProductImportRequestSerializer(serializers.Serializer):
+    """Request body for a bulk product import: a single uploaded CSV file."""
+
+    file = serializers.FileField()
+
+
+class ImportRowErrorSerializer(serializers.Serializer):
+    """One row that failed import (``row_number`` 0 marks a whole-file failure)."""
+
+    row_number = serializers.IntegerField()
+    code = serializers.CharField(allow_blank=True)
+    error = serializers.CharField()
+
+
+class ProductImportResultSerializer(serializers.Serializer):
+    """Result of a bulk import: the created count and any per-row errors.
+
+    The import is all-or-nothing: with any errors nothing is created (``created`` is
+    0); the same shape is returned on success (200) and failure (400).
+    """
+
+    created = serializers.IntegerField()
+    errors = ImportRowErrorSerializer(many=True)

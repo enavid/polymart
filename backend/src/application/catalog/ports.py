@@ -394,6 +394,37 @@ class ProductQueryRepository(ABC):
         """
 
 
+@dataclass(frozen=True)
+class ProductImportItem:
+    """A validated product plus its category membership, ready to persist.
+
+    The import use case validates rows (read-only) and hands the writer a batch of
+    these; the writer owns only the atomic persistence, not the validation.
+    """
+
+    product: Product
+    categories: tuple[CategorySlug, ...] = ()
+
+
+class CatalogImportWriter(ABC):
+    """Persistence boundary for a bulk product import (write side, all-or-nothing).
+
+    Splitting this from ``ProductRepository`` keeps the single-aggregate writer free
+    of batch concerns and lets the import own its own transaction boundary: the use
+    case decides *what* to write (validated entities); the adapter decides *how*
+    (one transaction spanning every product and its category links).
+    """
+
+    @abstractmethod
+    def create_products(self, items: Sequence[ProductImportItem]) -> None:
+        """Persist every item's product and category membership in one transaction.
+
+        All-or-nothing: any failure rolls the whole batch back so a partial import
+        is impossible. Raises a domain exception (e.g. ``ProductAlreadyExistsError``)
+        if a persistence race is lost, so callers never see an infrastructure leak.
+        """
+
+
 class ChannelReader(ABC):
     """Read-only boundary onto the channel context for the catalog.
 

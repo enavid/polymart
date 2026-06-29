@@ -242,6 +242,20 @@ def test_set_product_publication_documents_validation_forbidden_and_not_found() 
     assert "404" in responses
 
 
+def test_export_products_documents_success() -> None:
+    responses = _responses("/api/v1/catalog/products/export/", "get")
+
+    assert "200" in responses
+
+
+def test_import_products_documents_success_validation_and_forbidden() -> None:
+    responses = _responses("/api/v1/catalog/products/import/", "post")
+
+    assert "200" in responses
+    assert "400" in responses
+    assert "403" in responses
+
+
 def test_storefront_product_list_documents_validation() -> None:
     responses = _responses("/api/v1/catalog/storefront/products/", "get")
 
