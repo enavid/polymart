@@ -18,7 +18,7 @@ from src.domain.catalog.entities import (
     ProductType,
     ProductVariant,
 )
-from src.domain.catalog.value_objects import CategorySlug, ProductCode
+from src.domain.catalog.value_objects import CategorySlug, ProductCode, RuleCondition
 
 
 class AttributeRepository(ABC):
@@ -243,3 +243,29 @@ class CollectionProductRepository(ABC):
     @abstractmethod
     def list_for_collection(self, collection_slug: str) -> tuple[ProductCode, ...]:
         """Return a collection's products in assignment order (empty if none)."""
+
+
+class CollectionRuleRepository(ABC):
+    """Persistence boundary for a rule-based collection's membership rule.
+
+    A rule is an ordered set of conditions belonging to a collection (a separate
+    facet from the curated membership). Implementations MUST translate
+    storage-specific failures into domain exceptions (``CollectionNotFoundError``
+    for a missing collection, ``UnknownAttributeError`` for a referenced attribute
+    that does not exist) so callers never see infrastructure leaks.
+    """
+
+    @abstractmethod
+    def replace(
+        self, collection_slug: str, conditions: Sequence[RuleCondition]
+    ) -> tuple[RuleCondition, ...]:
+        """Replace a collection's whole rule atomically.
+
+        Returns the stored conditions in order. Raises ``CollectionNotFoundError``
+        if the collection does not exist and ``UnknownAttributeError`` if a
+        referenced attribute does not exist (the whole replace then rolls back).
+        """
+
+    @abstractmethod
+    def list_for_collection(self, collection_slug: str) -> tuple[RuleCondition, ...]:
+        """Return a collection's rule conditions in order (empty if no rule)."""

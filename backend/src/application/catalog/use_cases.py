@@ -22,6 +22,7 @@ from src.application.catalog.ports import (
     CategoryRepository,
     CollectionProductRepository,
     CollectionRepository,
+    CollectionRuleRepository,
     ProductCategoryRepository,
     ProductRepository,
     ProductTypeRepository,
@@ -36,12 +37,13 @@ from src.domain.catalog.entities import (
     ProductType,
     ProductVariant,
 )
-from src.domain.catalog.enums import AttributeInputType
+from src.domain.catalog.enums import AttributeInputType, RuleOperator
 from src.domain.catalog.exceptions import (
     AttributeAlreadyExistsError,
     CategoryAlreadyExistsError,
     CollectionAlreadyExistsError,
     InvalidAttributeInputTypeError,
+    InvalidRuleOperatorError,
     ParentCategoryNotFoundError,
     ProductAlreadyExistsError,
     ProductTypeAlreadyExistsError,
@@ -51,8 +53,10 @@ from src.domain.catalog.exceptions import (
     VariantAlreadyExistsError,
 )
 from src.domain.catalog.services import (
+    match_products,
     normalize_attribute_values,
     reject_duplicate_categories,
+    reject_duplicate_conditions,
     reject_duplicate_products,
 )
 from src.domain.catalog.value_objects import (
@@ -64,6 +68,7 @@ from src.domain.catalog.value_objects import (
     MediaAsset,
     ProductCode,
     ProductTypeCode,
+    RuleCondition,
     Sku,
 )
 
@@ -85,10 +90,13 @@ _ACTION_PRODUCT_CATEGORIES_CHANGED = "product.categories_changed"
 _RESOURCE_COLLECTION = "collection"
 _ACTION_COLLECTION_CREATED = "collection.created"
 _ACTION_COLLECTION_PRODUCTS_CHANGED = "collection.products_changed"
+_ACTION_COLLECTION_RULE_CHANGED = "collection.rule_changed"
 
 # Membership is recorded in the audit trail as a deterministic, comma-joined slug
 # string (AuditValue is a flat scalar, never a list).
 _MEMBERSHIP_JOIN = ","
+# A single rule condition renders as "attribute:operator:value" for the audit trail.
+_CONDITION_JOIN = ":"
 
 
 def _join_categories(categories: tuple[CategorySlug, ...]) -> str:
@@ -97,6 +105,12 @@ def _join_categories(categories: tuple[CategorySlug, ...]) -> str:
 
 def _join_products(products: tuple[ProductCode, ...]) -> str:
     return _MEMBERSHIP_JOIN.join(product.value for product in products)
+
+
+def _join_conditions(conditions: tuple[RuleCondition, ...]) -> str:
+    return _MEMBERSHIP_JOIN.join(
+        _CONDITION_JOIN.join((c.attribute.value, c.operator.value, c.value)) for c in conditions
+    )
 
 
 @dataclass(frozen=True)
@@ -928,3 +942,160 @@ class GetCollectionProducts:
             "collection_products_listed", collection=collection_slug, count=len(products)
         )
         return products
+
+
+@dataclass(frozen=True)
+class RuleConditionInput:
+    """Raw input for one rule condition. Validated into a ``RuleCondition`` by the domain."""
+
+    attribute: str
+    operator: str
+    value: str
+
+
+@dataclass(frozen=True)
+class SetCollectionRuleCommand:
+    """Input for replacing a collection's membership rule (raw condition strings)."""
+
+    collection: str
+    conditions: tuple[RuleConditionInput, ...] = field(default_factory=tuple)
+
+
+def _to_rule_operator(raw: str) -> RuleOperator:
+    """Resolve a raw string to the operator enum, as a domain error if it is unknown."""
+    try:
+        return RuleOperator(raw)
+    except ValueError as exc:
+        raise InvalidRuleOperatorError(raw) from exc
+
+
+class SetCollectionRule:
+    """Replace a collection's membership rule (a conjunction of conditions).
+
+    Unlike the curated membership, a rule does not list products: it selects them
+    by attribute value, resolved dynamically. This use case validates the
+    conditions and the attributes they reference, then delegates the atomic replace
+    to the repository. An empty rule clears it. It owns only the orchestration:
+    build, verify the collection and every referenced attribute exist, reject
+    duplicates, replace, and record a before/after audit entry.
+    """
+
+    def __init__(
+        self,
+        repository: CollectionRuleRepository,
+        collections: CollectionRepository,
+        attributes: AttributeRepository,
+        audit: AuditRecorder,
+    ) -> None:
+        self._repository = repository
+        self._collections = collections
+        self._attributes = attributes
+        self._audit = audit
+
+    def execute(
+        self, command: SetCollectionRuleCommand, *, actor: str | None = None
+    ) -> tuple[RuleCondition, ...]:
+        # Build value objects first: a malformed code/operator/value or a duplicate
+        # condition fails fast, before any I/O.
+        requested = reject_duplicate_conditions(
+            tuple(
+                RuleCondition(
+                    attribute=AttributeCode(item.attribute),
+                    operator=_to_rule_operator(item.operator),
+                    value=item.value,
+                )
+                for item in command.conditions
+            )
+        )
+        collection_slug = command.collection
+
+        # The collection must exist (a 404 at the edge); its id anchors the audit
+        # entry. The repository defends the concurrent-deletion race too.
+        collection = self._collections.get_by_slug(collection_slug)
+        # Every referenced attribute must exist (a 400 at the edge); the repository
+        # defends the concurrent-deletion race too.
+        self._reject_unknown_attributes(requested, actor=actor)
+
+        before = self._repository.list_for_collection(collection_slug)
+        persisted = self._repository.replace(collection_slug, requested)
+        logger.info(
+            "collection_rule_set",
+            collection_id=collection.id,
+            collection=collection_slug,
+            count=len(persisted),
+            actor=actor,
+        )
+        self._audit.record(
+            action=_ACTION_COLLECTION_RULE_CHANGED,
+            resource_type=_RESOURCE_COLLECTION,
+            resource_id=str(collection.id),
+            actor=actor,
+            changes=(
+                FieldChange(
+                    field="rule",
+                    before=_join_conditions(before),
+                    after=_join_conditions(persisted),
+                ),
+            ),
+        )
+        return persisted
+
+    def _reject_unknown_attributes(
+        self, conditions: tuple[RuleCondition, ...], *, actor: str | None
+    ) -> None:
+        for condition in conditions:
+            code = condition.attribute.value
+            if not self._attributes.exists_by_code(code):
+                logger.warning(
+                    "collection_rule_rejected_unknown_attribute", attribute=code, actor=actor
+                )
+                raise UnknownAttributeError(code)
+
+
+class GetCollectionRule:
+    """Read a collection's membership rule (404 if the collection does not exist)."""
+
+    def __init__(
+        self, repository: CollectionRuleRepository, collections: CollectionRepository
+    ) -> None:
+        self._repository = repository
+        self._collections = collections
+
+    def execute(self, *, collection_slug: str) -> tuple[RuleCondition, ...]:
+        # Confirm the collection exists so an unknown slug is a 404, not an empty rule.
+        self._collections.get_by_slug(collection_slug)
+        conditions = self._repository.list_for_collection(collection_slug)
+        logger.debug("collection_rule_listed", collection=collection_slug, count=len(conditions))
+        return conditions
+
+
+class GetCollectionRuleMembers:
+    """Resolve the products a rule-based collection currently selects.
+
+    Membership is computed dynamically: the rule's conditions are evaluated against
+    every product by the matching domain service. A collection with no rule selects
+    nothing. Resolution is read-only (no persistence, no audit).
+    """
+
+    def __init__(
+        self,
+        repository: CollectionRuleRepository,
+        collections: CollectionRepository,
+        products: ProductRepository,
+    ) -> None:
+        self._repository = repository
+        self._collections = collections
+        self._products = products
+
+    def execute(self, *, collection_slug: str) -> tuple[ProductCode, ...]:
+        # Confirm the collection exists so an unknown slug is a 404, not an empty set.
+        self._collections.get_by_slug(collection_slug)
+        conditions = self._repository.list_for_collection(collection_slug)
+        members = match_products(conditions, self._products.list_all())
+        logger.debug(
+            "collection_rule_members_resolved",
+            collection=collection_slug,
+            condition_count=len(conditions),
+            count=len(members),
+        )
+        return members

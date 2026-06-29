@@ -8,6 +8,9 @@ collection) and so belongs to none of them. Two live here:
   attribute definitions, which no single entity owns.
 - *category-assignment uniqueness*: a product references a category at most once.
 - *collection-membership uniqueness*: a collection lists a product at most once.
+- *rule-condition uniqueness*: a rule-based collection lists each condition once.
+- *rule matching*: which products a conjunction of rule conditions selects -- a
+  rule that spans many products and their attribute values, owned by no entity.
 
 The application layer fetches the data and calls these services; the rules
 themselves stay in the domain.
@@ -18,16 +21,22 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from decimal import Decimal, InvalidOperation
 
-from src.domain.catalog.entities import Attribute
-from src.domain.catalog.enums import AttributeInputType
+from src.domain.catalog.entities import Attribute, Product
+from src.domain.catalog.enums import AttributeInputType, RuleOperator
 from src.domain.catalog.exceptions import (
     DuplicateCategoryAssignmentError,
     DuplicateProductMembershipError,
+    DuplicateRuleConditionError,
     InvalidAttributeValueError,
     MissingRequiredAttributeError,
     UnassignedAttributeError,
 )
-from src.domain.catalog.value_objects import AttributeValue, CategorySlug, ProductCode
+from src.domain.catalog.value_objects import (
+    AttributeValue,
+    CategorySlug,
+    ProductCode,
+    RuleCondition,
+)
 
 # Accepted boolean literals; values are normalized to these canonical forms.
 _TRUE = "true"
@@ -155,3 +164,52 @@ def reject_duplicate_products(
             raise DuplicateProductMembershipError(product.value)
         seen.add(product.value)
     return tuple(products)
+
+
+def reject_duplicate_conditions(
+    conditions: Sequence[RuleCondition],
+) -> tuple[RuleCondition, ...]:
+    """Return the rule unchanged, rejecting an exact-duplicate condition.
+
+    Two conditions are duplicates only when their attribute, operator, and value
+    all match; the same attribute with a different operator or value is a distinct,
+    meaningful predicate (``roast != light AND roast != medium``) and is allowed.
+    """
+    seen: set[tuple[str, str, str]] = set()
+    for condition in conditions:
+        key = (condition.attribute.value, condition.operator.value, condition.value)
+        if key in seen:
+            raise DuplicateRuleConditionError(":".join(key))
+        seen.add(key)
+    return tuple(conditions)
+
+
+def match_products(
+    conditions: Sequence[RuleCondition],
+    products: Sequence[Product],
+) -> tuple[ProductCode, ...]:
+    """Select the products that satisfy every condition (a conjunction).
+
+    Returns the matching product codes in the given product order. An empty rule
+    selects nothing: a conjunction of zero conditions would be vacuously true, but
+    treating an unconfigured rule as "every product" is a footgun, so it is
+    deliberately empty instead.
+    """
+    if not conditions:
+        return ()
+    return tuple(
+        product.code for product in products if _matches_all(conditions, product)
+    )
+
+
+def _matches_all(conditions: Sequence[RuleCondition], product: Product) -> bool:
+    values = {value.attribute.value: value.value for value in product.values}
+    return all(_matches_one(condition, values) for condition in conditions)
+
+
+def _matches_one(condition: RuleCondition, values: dict[str, str]) -> bool:
+    actual = values.get(condition.attribute.value)
+    if condition.operator is RuleOperator.EQUALS:
+        return actual is not None and actual == condition.value
+    # NOT_EQUALS: a product with no value for the attribute is "not equal to" any value.
+    return actual is None or actual != condition.value

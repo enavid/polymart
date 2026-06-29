@@ -9,6 +9,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from src.domain.catalog.enums import RuleOperator
 from src.domain.catalog.exceptions import (
     InvalidAttributeChoiceError,
     InvalidAttributeCodeError,
@@ -17,6 +18,7 @@ from src.domain.catalog.exceptions import (
     InvalidMediaAssetError,
     InvalidProductCodeError,
     InvalidProductTypeCodeError,
+    InvalidRuleConditionError,
     InvalidSkuError,
 )
 
@@ -31,6 +33,10 @@ _SKU_RE = re.compile(r"^[A-Z0-9]+(?:-[A-Z0-9]+)*$")
 _SLUG_MAX_LENGTH = 64
 _LABEL_MAX_LENGTH = 255
 _URL_MAX_LENGTH = 2048
+# A rule condition compares against a product's stored attribute value (text,
+# number, boolean literal, or choice slug); the bound matches the product metadata
+# value limit so any storable value is expressible.
+_RULE_VALUE_MAX_LENGTH = 1024
 # A media URL is either absolute (a CDN/object-store link) or site-relative (a
 # path served by the platform), so themes can point at either without code changes.
 _URL_PREFIXES = ("http://", "https://", "/")
@@ -176,6 +182,28 @@ class MediaAsset:
             raise InvalidMediaAssetError(f"alt_text {self.alt_text!r}")
         object.__setattr__(self, "url", url)
         object.__setattr__(self, "alt_text", alt_text)
+
+
+@dataclass(frozen=True)
+class RuleCondition:
+    """One predicate of a rule-based collection's membership rule.
+
+    Pairs an attribute (by code) with an operator and the value to compare against.
+    A rule selects products that satisfy a conjunction (AND) of such conditions.
+    Whether the referenced attribute exists is an application-layer concern; this
+    value object owns only the structural rule that the comparison value is a
+    non-blank, bounded string.
+    """
+
+    attribute: AttributeCode
+    operator: RuleOperator
+    value: str
+
+    def __post_init__(self) -> None:
+        value = self.value.strip()
+        if not value or len(value) > _RULE_VALUE_MAX_LENGTH:
+            raise InvalidRuleConditionError(f"value {self.value!r}")
+        object.__setattr__(self, "value", value)
 
 
 @dataclass(frozen=True)

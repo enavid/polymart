@@ -12,6 +12,7 @@ from src.application.catalog.ports import (
     CategoryRepository,
     CollectionProductRepository,
     CollectionRepository,
+    CollectionRuleRepository,
     ProductCategoryRepository,
     ProductRepository,
     ProductTypeRepository,
@@ -25,6 +26,7 @@ from src.domain.catalog.entities import (
     ProductType,
     ProductVariant,
 )
+from src.domain.catalog.enums import RuleOperator
 from src.domain.catalog.exceptions import (
     AttributeAlreadyExistsError,
     AttributeNotFoundError,
@@ -43,7 +45,12 @@ from src.domain.catalog.exceptions import (
     VariantAlreadyExistsError,
     VariantNotFoundError,
 )
-from src.domain.catalog.value_objects import AttributeCode, CategorySlug, ProductCode
+from src.domain.catalog.value_objects import (
+    AttributeCode,
+    CategorySlug,
+    ProductCode,
+    RuleCondition,
+)
 from src.infrastructure.catalog.mappers import (
     apply_category_scalar_fields,
     apply_collection_scalar_fields,
@@ -66,6 +73,7 @@ from src.infrastructure.catalog.models import (
     CategoryModel,
     CollectionModel,
     CollectionProductModel,
+    CollectionRuleConditionModel,
     ProductAttributeValueModel,
     ProductCategoryModel,
     ProductModel,
@@ -541,3 +549,68 @@ class DjangoCollectionProductRepository(CollectionProductRepository):
             .order_by("position")
         )
         return tuple(ProductCode(link.product.code) for link in links)
+
+
+class DjangoCollectionRuleRepository(CollectionRuleRepository):
+    """Persist a rule-based collection's membership rule with the Django ORM."""
+
+    def replace(
+        self, collection_slug: str, conditions: Sequence[RuleCondition]
+    ) -> tuple[RuleCondition, ...]:
+        # Replacing the rule (clear + reinsert) must be all-or-nothing, so a failed
+        # reinsert never leaves the collection with a half-updated rule. The
+        # collection row is locked so two concurrent replaces of the same collection
+        # serialize instead of interleaving into a unique-constraint error.
+        with transaction.atomic():
+            collection = self._lock_collection(collection_slug)
+            CollectionRuleConditionModel.objects.filter(collection=collection).delete()
+            self._insert_conditions(collection, conditions)
+        return self.list_for_collection(collection_slug)
+
+    @staticmethod
+    def _lock_collection(collection_slug: str) -> CollectionModel:
+        try:
+            return CollectionModel.objects.select_for_update().get(slug=collection_slug)
+        except CollectionModel.DoesNotExist as exc:
+            raise CollectionNotFoundError(collection_slug) from exc
+
+    @staticmethod
+    def _insert_conditions(
+        collection: CollectionModel, conditions: Sequence[RuleCondition]
+    ) -> None:
+        # Resolve every referenced attribute code to a row in one query, preserving
+        # the requested order via the condition position.
+        codes = [condition.attribute.value for condition in conditions]
+        by_code = {a.code: a for a in AttributeModel.objects.filter(code__in=codes)}
+        rows = []
+        for position, condition in enumerate(conditions):
+            attribute_model = by_code.get(condition.attribute.value)
+            if attribute_model is None:
+                # The use case validated existence; reaching here means the attribute
+                # vanished concurrently. Surface it as a domain error and roll back.
+                raise UnknownAttributeError(condition.attribute.value)
+            rows.append(
+                CollectionRuleConditionModel(
+                    collection=collection,
+                    attribute=attribute_model,
+                    operator=condition.operator.value,
+                    value=condition.value,
+                    position=position,
+                )
+            )
+        CollectionRuleConditionModel.objects.bulk_create(rows)
+
+    def list_for_collection(self, collection_slug: str) -> tuple[RuleCondition, ...]:
+        conditions = (
+            CollectionRuleConditionModel.objects.select_related("attribute")
+            .filter(collection__slug=collection_slug)
+            .order_by("position")
+        )
+        return tuple(
+            RuleCondition(
+                attribute=AttributeCode(condition.attribute.code),
+                operator=RuleOperator(condition.operator),
+                value=condition.value,
+            )
+            for condition in conditions
+        )

@@ -362,3 +362,27 @@ class UnknownProductError(CatalogError):
     def __init__(self, code: str) -> None:
         super().__init__(f"unknown product: {code!r}")
         self.code = code
+
+
+class InvalidRuleConditionError(CatalogError):
+    """Raised when a rule-based collection condition's value is malformed."""
+
+    def __init__(self, detail: str) -> None:
+        super().__init__(f"invalid rule condition: {detail}")
+        self.detail = detail
+
+
+class InvalidRuleOperatorError(CatalogError):
+    """Raised when a raw operator string matches no known rule operator."""
+
+    def __init__(self, value: str) -> None:
+        super().__init__(f"invalid rule operator: {value!r}")
+        self.value = value
+
+
+class DuplicateRuleConditionError(CatalogError):
+    """Raised when a rule lists the same (attribute, operator, value) more than once."""
+
+    def __init__(self, detail: str) -> None:
+        super().__init__(f"duplicate rule condition: {detail}")
+        self.detail = detail

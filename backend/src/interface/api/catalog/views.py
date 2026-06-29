@@ -26,7 +26,9 @@ from src.application.catalog.use_cases import (
     CreateProductTypeCommand,
     CreateVariantCommand,
     MediaInput,
+    RuleConditionInput,
     SetCollectionProductsCommand,
+    SetCollectionRuleCommand,
     SetProductCategoriesCommand,
 )
 from src.domain.catalog.entities import (
@@ -52,7 +54,7 @@ from src.domain.catalog.exceptions import (
     VariantAlreadyExistsError,
     VariantNotFoundError,
 )
-from src.domain.catalog.value_objects import CategorySlug, ProductCode
+from src.domain.catalog.value_objects import CategorySlug, ProductCode, RuleCondition
 from src.interface.api.access.permissions import CatalogManagePermission
 from src.interface.api.catalog.container import (
     build_create_attribute,
@@ -65,6 +67,8 @@ from src.interface.api.catalog.container import (
     build_get_category,
     build_get_collection,
     build_get_collection_products,
+    build_get_collection_rule,
+    build_get_collection_rule_members,
     build_get_product,
     build_get_product_categories,
     build_get_product_type,
@@ -76,12 +80,15 @@ from src.interface.api.catalog.container import (
     build_list_product_variants,
     build_list_products,
     build_set_collection_products,
+    build_set_collection_rule,
     build_set_product_categories,
 )
 from src.interface.api.catalog.serializers import (
     AttributeSerializer,
     CategorySerializer,
     CollectionProductsSerializer,
+    CollectionRuleMembersSerializer,
+    CollectionRuleSerializer,
     CollectionSerializer,
     CreateAttributeSerializer,
     CreateCategorySerializer,
@@ -602,4 +609,79 @@ class CollectionProductsView(APIView):
         except CatalogError as exc:
             # A malformed/duplicate code, or a referenced product that does not exist.
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(_collection_products_payload(products))
+
+
+def _collection_rule_payload(conditions: tuple[RuleCondition, ...]) -> dict[str, object]:
+    """Project a collection's membership rule to the response body."""
+    return {
+        "conditions": [
+            {
+                "attribute": condition.attribute.value,
+                "operator": condition.operator.value,
+                "value": condition.value,
+            }
+            for condition in conditions
+        ]
+    }
+
+
+class CollectionRuleView(APIView):
+    """List or replace a rule-based collection's membership rule (nested under it)."""
+
+    permission_classes: ClassVar = [CatalogManagePermission]
+
+    @extend_schema(responses={200: CollectionRuleSerializer, 404: ErrorSerializer})
+    def get(self, request: Request, slug: str) -> Response:
+        try:
+            conditions = build_get_collection_rule().execute(collection_slug=slug)
+        except CollectionNotFoundError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_404_NOT_FOUND)
+        return Response(_collection_rule_payload(conditions))
+
+    @extend_schema(
+        request=CollectionRuleSerializer,
+        responses={
+            200: CollectionRuleSerializer,
+            400: ErrorSerializer,
+            403: ErrorSerializer,
+            404: ErrorSerializer,
+        },
+    )
+    def put(self, request: Request, slug: str) -> Response:
+        serializer = CollectionRuleSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        command = SetCollectionRuleCommand(
+            collection=slug,
+            conditions=tuple(
+                RuleConditionInput(
+                    attribute=item["attribute"],
+                    operator=item["operator"],
+                    value=item["value"],
+                )
+                for item in serializer.validated_data["conditions"]
+            ),
+        )
+        try:
+            conditions = build_set_collection_rule().execute(command, actor=_actor(request))
+        except CollectionNotFoundError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_404_NOT_FOUND)
+        except CatalogError as exc:
+            # A malformed/duplicate condition, an unknown operator, or a referenced
+            # attribute that does not exist.
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(_collection_rule_payload(conditions))
+
+
+class CollectionRuleMembersView(APIView):
+    """Resolve the products a rule-based collection currently selects (read-only)."""
+
+    permission_classes: ClassVar = [CatalogManagePermission]
+
+    @extend_schema(responses={200: CollectionRuleMembersSerializer, 404: ErrorSerializer})
+    def get(self, request: Request, slug: str) -> Response:
+        try:
+            products = build_get_collection_rule_members().execute(collection_slug=slug)
+        except CollectionNotFoundError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_404_NOT_FOUND)
         return Response(_collection_products_payload(products))

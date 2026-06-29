@@ -17,6 +17,8 @@ from src.application.catalog.use_cases import (
     GetCategory,
     GetCollection,
     GetCollectionProducts,
+    GetCollectionRule,
+    GetCollectionRuleMembers,
     GetProduct,
     GetProductCategories,
     GetProductType,
@@ -28,6 +30,7 @@ from src.application.catalog.use_cases import (
     ListProductTypes,
     ListProductVariants,
     SetCollectionProducts,
+    SetCollectionRule,
     SetProductCategories,
 )
 from src.infrastructure.catalog.repositories import (
@@ -35,6 +38,7 @@ from src.infrastructure.catalog.repositories import (
     DjangoCategoryRepository,
     DjangoCollectionProductRepository,
     DjangoCollectionRepository,
+    DjangoCollectionRuleRepository,
     DjangoProductCategoryRepository,
     DjangoProductRepository,
     DjangoProductTypeRepository,
@@ -152,3 +156,24 @@ def build_set_collection_products() -> SetCollectionProducts:
 
 def build_get_collection_products() -> GetCollectionProducts:
     return GetCollectionProducts(DjangoCollectionProductRepository(), DjangoCollectionRepository())
+
+
+def build_set_collection_rule() -> SetCollectionRule:
+    return SetCollectionRule(
+        DjangoCollectionRuleRepository(),
+        DjangoCollectionRepository(),
+        DjangoAttributeRepository(),
+        build_audit_recorder(),
+    )
+
+
+def build_get_collection_rule() -> GetCollectionRule:
+    return GetCollectionRule(DjangoCollectionRuleRepository(), DjangoCollectionRepository())
+
+
+def build_get_collection_rule_members() -> GetCollectionRuleMembers:
+    return GetCollectionRuleMembers(
+        DjangoCollectionRuleRepository(),
+        DjangoCollectionRepository(),
+        DjangoProductRepository(),
+    )

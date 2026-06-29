@@ -194,6 +194,29 @@ def test_get_collection_products_documents_not_found() -> None:
     assert "404" in responses
 
 
+def test_set_collection_rule_documents_validation_forbidden_and_not_found() -> None:
+    responses = _responses("/api/v1/catalog/collections/{slug}/rule/", "put")
+
+    assert "200" in responses
+    assert "400" in responses
+    assert "403" in responses
+    assert "404" in responses
+
+
+def test_get_collection_rule_documents_not_found() -> None:
+    responses = _responses("/api/v1/catalog/collections/{slug}/rule/", "get")
+
+    assert "200" in responses
+    assert "404" in responses
+
+
+def test_get_collection_rule_members_documents_not_found() -> None:
+    responses = _responses("/api/v1/catalog/collections/{slug}/rule/members/", "get")
+
+    assert "200" in responses
+    assert "404" in responses
+
+
 def test_set_product_categories_documents_validation_forbidden_and_not_found() -> None:
     responses = _responses("/api/v1/catalog/products/{code}/categories/", "put")
 

@@ -156,3 +156,23 @@ class CollectionProductsSerializer(serializers.Serializer):
     """Response/request projection of a collection's product membership (ordered codes)."""
 
     products = serializers.ListField(child=serializers.CharField())
+
+
+class RuleConditionSerializer(serializers.Serializer):
+    """One condition of a rule-based collection's membership rule."""
+
+    attribute = serializers.CharField()
+    operator = serializers.CharField()
+    value = serializers.CharField()
+
+
+class CollectionRuleSerializer(serializers.Serializer):
+    """Response/request projection of a collection's membership rule (ordered conditions)."""
+
+    conditions = RuleConditionSerializer(many=True)
+
+
+class CollectionRuleMembersSerializer(serializers.Serializer):
+    """Response projection of the products a rule-based collection currently selects."""
+
+    products = serializers.ListField(child=serializers.CharField())

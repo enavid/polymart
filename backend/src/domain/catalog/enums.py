@@ -27,3 +27,16 @@ class AttributeInputType(Enum):
 
 # Defined after the class so the membership set can reference its members.
 _CHOICE_TYPES = frozenset({AttributeInputType.DROPDOWN})
+
+
+class RuleOperator(Enum):
+    """How a rule-based collection condition compares a product's attribute value.
+
+    A rule selects products whose attribute values satisfy a conjunction of such
+    conditions. Comparison is on the canonical, normalized string the catalog
+    already stores for each value, so equality is exact for every input type.
+    Ordered/range operators (greater-than, ...) are a deliberate follow-up.
+    """
+
+    EQUALS = "equals"
+    NOT_EQUALS = "not_equals"

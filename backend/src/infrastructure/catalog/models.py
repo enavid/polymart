@@ -12,13 +12,15 @@ from typing import ClassVar
 
 from django.db import models
 
-from src.domain.catalog.enums import AttributeInputType
+from src.domain.catalog.enums import AttributeInputType, RuleOperator
 
 _CODE_MAX_LENGTH = 64
 _NAME_MAX_LENGTH = 255
 _INPUT_TYPE_MAX_LENGTH = 32
 _KIND_MAX_LENGTH = 16
 _URL_MAX_LENGTH = 2048
+_OPERATOR_MAX_LENGTH = 16
+_RULE_VALUE_MAX_LENGTH = 1024
 
 # Discriminates how a product type assigns an attribute: product-level (shared by
 # every variant) vs variant-level (an option that distinguishes variants). Stored
@@ -362,6 +364,46 @@ class CollectionProductModel(models.Model):
 
     def __str__(self) -> str:
         return f"{self.collection_id}:{self.product_id}"
+
+
+class CollectionRuleConditionModel(models.Model):
+    """One condition of a rule-based collection's membership rule (an ordered row).
+
+    A rule is the ordered set of a collection's conditions; the collection is
+    rule-based exactly when it has at least one. ``position`` orders the conditions;
+    deleting the collection cascades its rule away, while an attribute still
+    referenced is PROTECTed from deletion.
+    """
+
+    _OPERATOR_CHOICES: ClassVar[list[tuple[str, str]]] = [
+        (operator.value, operator.value) for operator in RuleOperator
+    ]
+
+    collection = models.ForeignKey(
+        CollectionModel, related_name="rule_conditions", on_delete=models.CASCADE
+    )
+    attribute = models.ForeignKey(
+        AttributeModel, related_name="rule_conditions", on_delete=models.PROTECT
+    )
+    operator = models.CharField(max_length=_OPERATOR_MAX_LENGTH, choices=_OPERATOR_CHOICES)
+    # Canonical string compared against a product's stored attribute value.
+    value = models.CharField(max_length=_RULE_VALUE_MAX_LENGTH)
+    position = models.PositiveSmallIntegerField(default=0)
+
+    class Meta:
+        app_label = "catalog"
+        db_table = "catalog_collection_rule_condition"
+        ordering = ("position",)
+        # A rule lists each (attribute, operator, value) predicate at most once.
+        constraints: ClassVar[list[models.BaseConstraint]] = [
+            models.UniqueConstraint(
+                fields=["collection", "attribute", "operator", "value"],
+                name="uniq_condition_per_collection_rule",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.collection_id}:{self.attribute.code}:{self.operator}:{self.value}"
 
 
 class ProductVariantMediaModel(models.Model):
