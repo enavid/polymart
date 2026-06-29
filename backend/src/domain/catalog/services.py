@@ -7,6 +7,7 @@ collection) and so belongs to none of them. Two live here:
   product type assigns -- a rule that needs both the product's values and the
   attribute definitions, which no single entity owns.
 - *category-assignment uniqueness*: a product references a category at most once.
+- *collection-membership uniqueness*: a collection lists a product at most once.
 
 The application layer fetches the data and calls these services; the rules
 themselves stay in the domain.
@@ -21,11 +22,12 @@ from src.domain.catalog.entities import Attribute
 from src.domain.catalog.enums import AttributeInputType
 from src.domain.catalog.exceptions import (
     DuplicateCategoryAssignmentError,
+    DuplicateProductMembershipError,
     InvalidAttributeValueError,
     MissingRequiredAttributeError,
     UnassignedAttributeError,
 )
-from src.domain.catalog.value_objects import AttributeValue, CategorySlug
+from src.domain.catalog.value_objects import AttributeValue, CategorySlug, ProductCode
 
 # Accepted boolean literals; values are normalized to these canonical forms.
 _TRUE = "true"
@@ -137,3 +139,19 @@ def reject_duplicate_categories(
             raise DuplicateCategoryAssignmentError(category.value)
         seen.add(category.value)
     return tuple(categories)
+
+
+def reject_duplicate_products(
+    products: Sequence[ProductCode],
+) -> tuple[ProductCode, ...]:
+    """Return the membership unchanged, rejecting a product listed twice.
+
+    A collection lists a product at most once; a repeated code is a malformed
+    membership, not a silently-collapsed set, so it is surfaced as a domain error.
+    """
+    seen: set[str] = set()
+    for product in products:
+        if product.value in seen:
+            raise DuplicateProductMembershipError(product.value)
+        seen.add(product.value)
+    return tuple(products)

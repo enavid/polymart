@@ -150,3 +150,9 @@ class CreateCollectionSerializer(serializers.Serializer):
 
     slug = serializers.CharField()
     name = serializers.CharField()
+
+
+class CollectionProductsSerializer(serializers.Serializer):
+    """Response/request projection of a collection's product membership (ordered codes)."""
+
+    products = serializers.ListField(child=serializers.CharField())

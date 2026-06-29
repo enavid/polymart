@@ -346,3 +346,19 @@ class CollectionAlreadyExistsError(CatalogError):
     def __init__(self, slug: str) -> None:
         super().__init__(f"collection already exists: {slug!r}")
         self.slug = slug
+
+
+class DuplicateProductMembershipError(CatalogError):
+    """Raised when a collection lists the same product more than once."""
+
+    def __init__(self, code: str) -> None:
+        super().__init__(f"duplicate product membership: {code!r}")
+        self.code = code
+
+
+class UnknownProductError(CatalogError):
+    """Raised when a collection references a product that does not exist."""
+
+    def __init__(self, code: str) -> None:
+        super().__init__(f"unknown product: {code!r}")
+        self.code = code

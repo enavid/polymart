@@ -26,6 +26,7 @@ from src.application.catalog.use_cases import (
     CreateProductTypeCommand,
     CreateVariantCommand,
     MediaInput,
+    SetCollectionProductsCommand,
     SetProductCategoriesCommand,
 )
 from src.domain.catalog.entities import (
@@ -51,7 +52,7 @@ from src.domain.catalog.exceptions import (
     VariantAlreadyExistsError,
     VariantNotFoundError,
 )
-from src.domain.catalog.value_objects import CategorySlug
+from src.domain.catalog.value_objects import CategorySlug, ProductCode
 from src.interface.api.access.permissions import CatalogManagePermission
 from src.interface.api.catalog.container import (
     build_create_attribute,
@@ -63,6 +64,7 @@ from src.interface.api.catalog.container import (
     build_get_attribute,
     build_get_category,
     build_get_collection,
+    build_get_collection_products,
     build_get_product,
     build_get_product_categories,
     build_get_product_type,
@@ -73,11 +75,13 @@ from src.interface.api.catalog.container import (
     build_list_product_types,
     build_list_product_variants,
     build_list_products,
+    build_set_collection_products,
     build_set_product_categories,
 )
 from src.interface.api.catalog.serializers import (
     AttributeSerializer,
     CategorySerializer,
+    CollectionProductsSerializer,
     CollectionSerializer,
     CreateAttributeSerializer,
     CreateCategorySerializer,
@@ -555,3 +559,47 @@ class CollectionDetailView(APIView):
         except CollectionNotFoundError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_404_NOT_FOUND)
         return Response(_collection_payload(collection))
+
+
+def _collection_products_payload(products: tuple[ProductCode, ...]) -> dict[str, object]:
+    """Project a collection's product membership to the response body."""
+    return {"products": [product.value for product in products]}
+
+
+class CollectionProductsView(APIView):
+    """List or replace a collection's product membership (nested under the collection)."""
+
+    permission_classes: ClassVar = [CatalogManagePermission]
+
+    @extend_schema(responses={200: CollectionProductsSerializer, 404: ErrorSerializer})
+    def get(self, request: Request, slug: str) -> Response:
+        try:
+            products = build_get_collection_products().execute(collection_slug=slug)
+        except CollectionNotFoundError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_404_NOT_FOUND)
+        return Response(_collection_products_payload(products))
+
+    @extend_schema(
+        request=CollectionProductsSerializer,
+        responses={
+            200: CollectionProductsSerializer,
+            400: ErrorSerializer,
+            403: ErrorSerializer,
+            404: ErrorSerializer,
+        },
+    )
+    def put(self, request: Request, slug: str) -> Response:
+        serializer = CollectionProductsSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        command = SetCollectionProductsCommand(
+            collection=slug,
+            products=tuple(serializer.validated_data["products"]),
+        )
+        try:
+            products = build_set_collection_products().execute(command, actor=_actor(request))
+        except CollectionNotFoundError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_404_NOT_FOUND)
+        except CatalogError as exc:
+            # A malformed/duplicate code, or a referenced product that does not exist.
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(_collection_products_payload(products))

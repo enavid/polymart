@@ -16,6 +16,7 @@ from src.application.catalog.use_cases import (
     GetAttribute,
     GetCategory,
     GetCollection,
+    GetCollectionProducts,
     GetProduct,
     GetProductCategories,
     GetProductType,
@@ -26,11 +27,13 @@ from src.application.catalog.use_cases import (
     ListProducts,
     ListProductTypes,
     ListProductVariants,
+    SetCollectionProducts,
     SetProductCategories,
 )
 from src.infrastructure.catalog.repositories import (
     DjangoAttributeRepository,
     DjangoCategoryRepository,
+    DjangoCollectionProductRepository,
     DjangoCollectionRepository,
     DjangoProductCategoryRepository,
     DjangoProductRepository,
@@ -136,3 +139,16 @@ def build_get_collection() -> GetCollection:
 
 def build_list_collections() -> ListCollections:
     return ListCollections(DjangoCollectionRepository())
+
+
+def build_set_collection_products() -> SetCollectionProducts:
+    return SetCollectionProducts(
+        DjangoCollectionProductRepository(),
+        DjangoCollectionRepository(),
+        DjangoProductRepository(),
+        build_audit_recorder(),
+    )
+
+
+def build_get_collection_products() -> GetCollectionProducts:
+    return GetCollectionProducts(DjangoCollectionProductRepository(), DjangoCollectionRepository())

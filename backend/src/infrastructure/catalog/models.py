@@ -333,6 +333,37 @@ class CollectionModel(models.Model):
         return self.slug
 
 
+class CollectionProductModel(models.Model):
+    """Membership of a product in a collection (an ordered M2M through row).
+
+    ``position`` orders the curated list; deleting the collection cascades its
+    membership away, while a product still listed is PROTECTed from deletion.
+    """
+
+    collection = models.ForeignKey(
+        CollectionModel, related_name="product_links", on_delete=models.CASCADE
+    )
+    product = models.ForeignKey(
+        ProductModel, related_name="collection_links", on_delete=models.PROTECT
+    )
+    position = models.PositiveSmallIntegerField(default=0)
+
+    class Meta:
+        app_label = "catalog"
+        db_table = "catalog_collection_product"
+        ordering = ("position",)
+        # A product belongs to a collection at most once.
+        constraints: ClassVar[list[models.BaseConstraint]] = [
+            models.UniqueConstraint(
+                fields=["collection", "product"],
+                name="uniq_product_per_collection",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.collection_id}:{self.product_id}"
+
+
 class ProductVariantMediaModel(models.Model):
     """One image attached to a variant (a URL reference, not a stored file)."""
 

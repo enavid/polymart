@@ -11,6 +11,7 @@ from src.interface.api.catalog.views import (
     CategoryListCreateView,
     CollectionDetailView,
     CollectionListCreateView,
+    CollectionProductsView,
     ProductCategoriesView,
     ProductDetailView,
     ProductListCreateView,
@@ -69,5 +70,10 @@ urlpatterns = [
         "catalog/collections/<slug:slug>/",
         CollectionDetailView.as_view(),
         name="collection-detail",
+    ),
+    path(
+        "catalog/collections/<slug:slug>/products/",
+        CollectionProductsView.as_view(),
+        name="collection-product-membership",
     ),
 ]

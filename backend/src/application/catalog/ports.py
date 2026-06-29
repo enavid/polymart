@@ -18,7 +18,7 @@ from src.domain.catalog.entities import (
     ProductType,
     ProductVariant,
 )
-from src.domain.catalog.value_objects import CategorySlug
+from src.domain.catalog.value_objects import CategorySlug, ProductCode
 
 
 class AttributeRepository(ABC):
@@ -217,3 +217,29 @@ class CollectionRepository(ABC):
     @abstractmethod
     def list_all(self) -> list[Collection]:
         """Return every collection, ordered by slug for deterministic output."""
+
+
+class CollectionProductRepository(ABC):
+    """Persistence boundary for a collection's product membership (a join table).
+
+    Implementations MUST translate storage-specific failures into domain
+    exceptions (``CollectionNotFoundError`` for a missing collection,
+    ``UnknownProductError`` for a referenced product that does not exist) so
+    callers never see infrastructure leaks.
+    """
+
+    @abstractmethod
+    def replace(
+        self, collection_slug: str, products: Sequence[ProductCode]
+    ) -> tuple[ProductCode, ...]:
+        """Replace a collection's whole product membership atomically.
+
+        Returns the stored membership in assignment order. Raises
+        ``CollectionNotFoundError`` if the collection does not exist and
+        ``UnknownProductError`` if a referenced product does not exist (the whole
+        replace then rolls back).
+        """
+
+    @abstractmethod
+    def list_for_collection(self, collection_slug: str) -> tuple[ProductCode, ...]:
+        """Return a collection's products in assignment order (empty if none)."""

@@ -10,6 +10,7 @@ from django.db import IntegrityError, transaction
 from src.application.catalog.ports import (
     AttributeRepository,
     CategoryRepository,
+    CollectionProductRepository,
     CollectionRepository,
     ProductCategoryRepository,
     ProductRepository,
@@ -38,10 +39,11 @@ from src.domain.catalog.exceptions import (
     ProductTypeNotFoundError,
     UnknownAttributeError,
     UnknownCategoryError,
+    UnknownProductError,
     VariantAlreadyExistsError,
     VariantNotFoundError,
 )
-from src.domain.catalog.value_objects import AttributeCode, CategorySlug
+from src.domain.catalog.value_objects import AttributeCode, CategorySlug, ProductCode
 from src.infrastructure.catalog.mappers import (
     apply_category_scalar_fields,
     apply_collection_scalar_fields,
@@ -63,6 +65,7 @@ from src.infrastructure.catalog.models import (
     AttributeModel,
     CategoryModel,
     CollectionModel,
+    CollectionProductModel,
     ProductAttributeValueModel,
     ProductCategoryModel,
     ProductModel,
@@ -486,3 +489,55 @@ class DjangoProductCategoryRepository(ProductCategoryRepository):
             .order_by("position")
         )
         return tuple(CategorySlug(link.category.slug) for link in links)
+
+
+class DjangoCollectionProductRepository(CollectionProductRepository):
+    """Persist a collection's product membership with the Django ORM."""
+
+    def replace(
+        self, collection_slug: str, products: Sequence[ProductCode]
+    ) -> tuple[ProductCode, ...]:
+        # Replacing the membership (clear + reinsert) must be all-or-nothing, so a
+        # failed reinsert never leaves the collection with a half-updated list. The
+        # collection row is locked so two concurrent replaces of the same collection
+        # serialize instead of interleaving into a unique-constraint error.
+        with transaction.atomic():
+            collection = self._lock_collection(collection_slug)
+            CollectionProductModel.objects.filter(collection=collection).delete()
+            self._insert_links(collection, products)
+        return self.list_for_collection(collection_slug)
+
+    @staticmethod
+    def _lock_collection(collection_slug: str) -> CollectionModel:
+        try:
+            return CollectionModel.objects.select_for_update().get(slug=collection_slug)
+        except CollectionModel.DoesNotExist as exc:
+            raise CollectionNotFoundError(collection_slug) from exc
+
+    @staticmethod
+    def _insert_links(collection: CollectionModel, products: Sequence[ProductCode]) -> None:
+        # Resolve every referenced code to a row in one query, preserving the
+        # requested order via the link position.
+        codes = [product.value for product in products]
+        by_code = {p.code: p for p in ProductModel.objects.filter(code__in=codes)}
+        rows = []
+        for position, product in enumerate(products):
+            product_model = by_code.get(product.value)
+            if product_model is None:
+                # The use case validated existence; reaching here means the product
+                # vanished concurrently. Surface it as a domain error and roll back.
+                raise UnknownProductError(product.value)
+            rows.append(
+                CollectionProductModel(
+                    collection=collection, product=product_model, position=position
+                )
+            )
+        CollectionProductModel.objects.bulk_create(rows)
+
+    def list_for_collection(self, collection_slug: str) -> tuple[ProductCode, ...]:
+        links = (
+            CollectionProductModel.objects.select_related("product")
+            .filter(collection__slug=collection_slug)
+            .order_by("position")
+        )
+        return tuple(ProductCode(link.product.code) for link in links)

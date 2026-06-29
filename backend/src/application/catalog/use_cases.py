@@ -20,6 +20,7 @@ from src.application.audit.ports import AuditRecorder
 from src.application.catalog.ports import (
     AttributeRepository,
     CategoryRepository,
+    CollectionProductRepository,
     CollectionRepository,
     ProductCategoryRepository,
     ProductRepository,
@@ -46,11 +47,13 @@ from src.domain.catalog.exceptions import (
     ProductTypeAlreadyExistsError,
     UnknownAttributeError,
     UnknownCategoryError,
+    UnknownProductError,
     VariantAlreadyExistsError,
 )
 from src.domain.catalog.services import (
     normalize_attribute_values,
     reject_duplicate_categories,
+    reject_duplicate_products,
 )
 from src.domain.catalog.value_objects import (
     AttributeChoice,
@@ -81,14 +84,19 @@ _ACTION_CATEGORY_CREATED = "category.created"
 _ACTION_PRODUCT_CATEGORIES_CHANGED = "product.categories_changed"
 _RESOURCE_COLLECTION = "collection"
 _ACTION_COLLECTION_CREATED = "collection.created"
+_ACTION_COLLECTION_PRODUCTS_CHANGED = "collection.products_changed"
 
 # Membership is recorded in the audit trail as a deterministic, comma-joined slug
 # string (AuditValue is a flat scalar, never a list).
-_CATEGORY_JOIN = ","
+_MEMBERSHIP_JOIN = ","
 
 
 def _join_categories(categories: tuple[CategorySlug, ...]) -> str:
-    return _CATEGORY_JOIN.join(category.value for category in categories)
+    return _MEMBERSHIP_JOIN.join(category.value for category in categories)
+
+
+def _join_products(products: tuple[ProductCode, ...]) -> str:
+    return _MEMBERSHIP_JOIN.join(product.value for product in products)
 
 
 @dataclass(frozen=True)
@@ -816,3 +824,107 @@ class ListCollections:
         collections = self._repository.list_all()
         logger.debug("collections_listed", count=len(collections))
         return collections
+
+
+@dataclass(frozen=True)
+class SetCollectionProductsCommand:
+    """Input for replacing a collection's product membership (raw code strings)."""
+
+    collection: str
+    products: tuple[str, ...] = field(default_factory=tuple)
+
+
+class SetCollectionProducts:
+    """Replace a collection's whole product membership (a curated, ordered list).
+
+    The collection, the products, and the join all live in different aggregates, so
+    this use case loads/validates them and delegates the replace to the repository
+    (which performs it atomically). It owns the orchestration only: build, verify
+    the collection and every referenced product exist, reject duplicates, replace,
+    and record a before/after audit entry. Unlike a category set this membership is
+    an ordered list, so the requested order is preserved as the curation order.
+    """
+
+    def __init__(
+        self,
+        repository: CollectionProductRepository,
+        collections: CollectionRepository,
+        products: ProductRepository,
+        audit: AuditRecorder,
+    ) -> None:
+        self._repository = repository
+        self._collections = collections
+        self._products = products
+        self._audit = audit
+
+    def execute(
+        self, command: SetCollectionProductsCommand, *, actor: str | None = None
+    ) -> tuple[ProductCode, ...]:
+        # Build value objects first: a malformed or duplicated code fails fast,
+        # before any I/O.
+        requested = reject_duplicate_products(
+            tuple(ProductCode(code) for code in command.products)
+        )
+        collection_slug = command.collection
+
+        # The collection must exist (a 404 at the edge); its id anchors the audit
+        # entry. The repository defends the concurrent-deletion race too.
+        collection = self._collections.get_by_slug(collection_slug)
+        # Every referenced product must exist (a 400 at the edge); the repository
+        # defends the concurrent-deletion race too.
+        self._reject_unknown_products(requested, actor=actor)
+
+        before = self._repository.list_for_collection(collection_slug)
+        persisted = self._repository.replace(collection_slug, requested)
+        logger.info(
+            "collection_products_set",
+            collection_id=collection.id,
+            collection=collection_slug,
+            count=len(persisted),
+            actor=actor,
+        )
+        self._audit.record(
+            action=_ACTION_COLLECTION_PRODUCTS_CHANGED,
+            resource_type=_RESOURCE_COLLECTION,
+            resource_id=str(collection.id),
+            actor=actor,
+            changes=(
+                FieldChange(
+                    field="products",
+                    before=_join_products(before),
+                    after=_join_products(persisted),
+                ),
+            ),
+        )
+        return persisted
+
+    def _reject_unknown_products(
+        self, products: tuple[ProductCode, ...], *, actor: str | None
+    ) -> None:
+        for product in products:
+            if not self._products.exists_by_code(product.value):
+                logger.warning(
+                    "collection_products_rejected_unknown_product",
+                    product=product.value,
+                    actor=actor,
+                )
+                raise UnknownProductError(product.value)
+
+
+class GetCollectionProducts:
+    """List a collection's products (404 if the collection does not exist)."""
+
+    def __init__(
+        self, repository: CollectionProductRepository, collections: CollectionRepository
+    ) -> None:
+        self._repository = repository
+        self._collections = collections
+
+    def execute(self, *, collection_slug: str) -> tuple[ProductCode, ...]:
+        # Confirm the collection exists so an unknown slug is a 404, not an empty set.
+        self._collections.get_by_slug(collection_slug)
+        products = self._repository.list_for_collection(collection_slug)
+        logger.debug(
+            "collection_products_listed", collection=collection_slug, count=len(products)
+        )
+        return products
