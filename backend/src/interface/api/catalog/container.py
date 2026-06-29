@@ -23,6 +23,7 @@ from src.application.catalog.use_cases import (
     GetProduct,
     GetProductCategories,
     GetProductType,
+    GetPublishedProduct,
     GetVariant,
     GetVariantPrices,
     GetVariantStock,
@@ -32,9 +33,11 @@ from src.application.catalog.use_cases import (
     ListProducts,
     ListProductTypes,
     ListProductVariants,
+    SearchCatalogProducts,
     SetCollectionProducts,
     SetCollectionRule,
     SetProductCategories,
+    SetProductPublished,
     SetVariantPrices,
     SetVariantStock,
 )
@@ -46,6 +49,7 @@ from src.infrastructure.catalog.repositories import (
     DjangoCollectionRepository,
     DjangoCollectionRuleRepository,
     DjangoProductCategoryRepository,
+    DjangoProductQueryRepository,
     DjangoProductRepository,
     DjangoProductTypeRepository,
     DjangoStockRepository,
@@ -214,3 +218,15 @@ def build_adjust_variant_stock() -> AdjustVariantStock:
 
 def build_get_variant_stock() -> GetVariantStock:
     return GetVariantStock(DjangoStockRepository(), DjangoVariantRepository())
+
+
+def build_set_product_published() -> SetProductPublished:
+    return SetProductPublished(DjangoProductRepository(), build_audit_recorder())
+
+
+def build_search_catalog_products() -> SearchCatalogProducts:
+    return SearchCatalogProducts(DjangoProductQueryRepository())
+
+
+def build_get_published_product() -> GetPublishedProduct:
+    return GetPublishedProduct(DjangoProductQueryRepository())

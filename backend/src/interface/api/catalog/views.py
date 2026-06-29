@@ -12,10 +12,12 @@ from typing import ClassVar
 import structlog
 from drf_spectacular.utils import extend_schema
 from rest_framework import status
+from rest_framework.permissions import AllowAny
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from src.application.catalog.ports import ProductPage
 from src.application.catalog.use_cases import (
     AdjustVariantStockCommand,
     AttributeChoiceInput,
@@ -29,9 +31,11 @@ from src.application.catalog.use_cases import (
     CreateVariantCommand,
     MediaInput,
     RuleConditionInput,
+    SearchCatalogProductsQuery,
     SetCollectionProductsCommand,
     SetCollectionRuleCommand,
     SetProductCategoriesCommand,
+    SetProductPublishedCommand,
     SetVariantPricesCommand,
     SetVariantStockCommand,
 )
@@ -83,6 +87,7 @@ from src.interface.api.catalog.container import (
     build_get_product,
     build_get_product_categories,
     build_get_product_type,
+    build_get_published_product,
     build_get_variant,
     build_get_variant_prices,
     build_get_variant_stock,
@@ -92,9 +97,11 @@ from src.interface.api.catalog.container import (
     build_list_product_types,
     build_list_product_variants,
     build_list_products,
+    build_search_catalog_products,
     build_set_collection_products,
     build_set_collection_rule,
     build_set_product_categories,
+    build_set_product_published,
     build_set_variant_prices,
     build_set_variant_stock,
 )
@@ -115,8 +122,12 @@ from src.interface.api.catalog.serializers import (
     ProductCategoriesSerializer,
     ProductSerializer,
     ProductTypeSerializer,
+    SetProductPublishedSerializer,
     SetVariantPricesSerializer,
     SetVariantStockSerializer,
+    StorefrontProductPageSerializer,
+    StorefrontProductQuerySerializer,
+    StorefrontProductSerializer,
     VariantPricesSerializer,
     VariantSerializer,
     VariantStockSerializer,
@@ -285,6 +296,7 @@ def _product_payload(product: Product) -> dict[str, object]:
             {"attribute": value.attribute.value, "value": value.value} for value in product.values
         ],
         "metadata": dict(product.metadata),
+        "is_published": product.is_published,
     }
 
 
@@ -341,6 +353,33 @@ class ProductDetailView(APIView):
     def get(self, request: Request, code: str) -> Response:
         try:
             product = build_get_product().execute(code=code)
+        except ProductNotFoundError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_404_NOT_FOUND)
+        return Response(_product_payload(product))
+
+
+class ProductPublicationView(APIView):
+    """Publish or unpublish a product (admin; controls storefront visibility)."""
+
+    permission_classes: ClassVar = [CatalogManagePermission]
+
+    @extend_schema(
+        request=SetProductPublishedSerializer,
+        responses={
+            200: ProductSerializer,
+            400: ErrorSerializer,
+            403: ErrorSerializer,
+            404: ErrorSerializer,
+        },
+    )
+    def put(self, request: Request, code: str) -> Response:
+        serializer = SetProductPublishedSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        command = SetProductPublishedCommand(
+            product=code, is_published=serializer.validated_data["is_published"]
+        )
+        try:
+            product = build_set_product_published().execute(command, actor=_actor(request))
         except ProductNotFoundError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_404_NOT_FOUND)
         return Response(_product_payload(product))
@@ -836,3 +875,86 @@ class VariantStockView(APIView):
             # An oversell (would go below zero) or an overflow surfaced from the domain.
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         return Response(_variant_stock_payload(quantity))
+
+
+def _storefront_product_payload(product: Product) -> dict[str, object]:
+    """Project a published product for the public storefront.
+
+    Deliberately omits the internal ``id`` (the public key is the ``code``) so the
+    sequential database id is never exposed to anonymous callers.
+    """
+    return {
+        "code": product.code.value,
+        "name": product.name,
+        "product_type": product.product_type.value,
+        "values": [
+            {"attribute": value.attribute.value, "value": value.value} for value in product.values
+        ],
+        "metadata": dict(product.metadata),
+    }
+
+
+def _storefront_page_payload(page: ProductPage, *, limit: int, offset: int) -> dict[str, object]:
+    """Project a page of storefront products to the response body."""
+    return {
+        "count": page.total,
+        "limit": limit,
+        "offset": offset,
+        "results": [_storefront_product_payload(product) for product in page.items],
+    }
+
+
+class StorefrontProductListView(APIView):
+    """Public, paginated, filterable list of published products (the PLP source)."""
+
+    permission_classes: ClassVar = [AllowAny]
+
+    @extend_schema(
+        parameters=[StorefrontProductQuerySerializer],
+        responses={200: StorefrontProductPageSerializer, 400: ErrorSerializer},
+    )
+    def get(self, request: Request) -> Response:
+        params = StorefrontProductQuerySerializer(data=request.query_params)
+        params.is_valid(raise_exception=True)
+        data = params.validated_data
+        query = SearchCatalogProductsQuery(
+            search=data.get("search"),
+            category=data.get("category"),
+            collection=data.get("collection"),
+            product_type=data.get("product_type"),
+            **_window_kwargs(data),
+        )
+        try:
+            page = build_search_catalog_products().execute(query)
+        except CatalogError as exc:
+            # An out-of-range limit/offset surfaced from the domain.
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(_storefront_page_payload(page, limit=query.limit, offset=query.offset))
+
+
+def _window_kwargs(data: dict[str, object]) -> dict[str, int]:
+    """Pass limit/offset to the query only when supplied, so the dataclass defaults apply."""
+    window: dict[str, int] = {}
+    if "limit" in data:
+        window["limit"] = data["limit"]  # type: ignore[assignment]
+    if "offset" in data:
+        window["offset"] = data["offset"]  # type: ignore[assignment]
+    return window
+
+
+class StorefrontProductDetailView(APIView):
+    """Public detail of a single published product (the PDP source).
+
+    A draft or unknown product is a 404 alike -- the existence of an unpublished
+    product is never revealed to anonymous callers.
+    """
+
+    permission_classes: ClassVar = [AllowAny]
+
+    @extend_schema(responses={200: StorefrontProductSerializer, 404: ErrorSerializer})
+    def get(self, request: Request, code: str) -> Response:
+        try:
+            product = build_get_published_product().execute(code=code)
+        except ProductNotFoundError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_404_NOT_FOUND)
+        return Response(_storefront_product_payload(product))

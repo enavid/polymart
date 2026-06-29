@@ -108,6 +108,7 @@ def product_to_domain(model: ProductModel) -> Product:
             for value in model.attribute_values.all()
         ),
         metadata=dict(model.metadata),
+        is_published=model.is_published,
     )
 
 
@@ -120,6 +121,7 @@ def apply_product_scalar_fields(product: Product, model: ProductModel) -> Produc
     model.code = product.code.value
     model.name = product.name
     model.metadata = dict(product.metadata)
+    model.is_published = product.is_published
     return model
 
 

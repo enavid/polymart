@@ -107,6 +107,11 @@ class FakeProductRepository(ProductRepository):
     def list_all(self) -> list[Product]:
         return [self._by_code[c] for c in sorted(self._by_code)]
 
+    def set_published(  # pragma: no cover - unused here
+        self, code: str, is_published: bool
+    ) -> Product:
+        raise NotImplementedError
+
 
 class RecordedAudit:
     def __init__(

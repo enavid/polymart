@@ -118,6 +118,11 @@ class FakeProductRepository(ProductRepository):
     def list_all(self) -> list[Product]:  # pragma: no cover - unused here
         return list(self._by_code.values())
 
+    def set_published(  # pragma: no cover - unused here
+        self, code: str, is_published: bool
+    ) -> Product:
+        raise NotImplementedError
+
 
 class FakeVariantRepository(VariantRepository):
     def __init__(self) -> None:

@@ -198,6 +198,30 @@ class TestReads:
         assert [p.code.value for p in repo.list_all()] == ["house-blend", "tea-blend"]
 
 
+class TestSetPublished:
+    def test_publishes_an_existing_product(self) -> None:
+        _seed_catalog()
+        repo = DjangoProductRepository()
+        repo.add(
+            Product(
+                code=ProductCode("house-blend"),
+                name="House Blend",
+                product_type=ProductTypeCode("coffee"),
+            )
+        )
+
+        updated = repo.set_published("house-blend", True)
+
+        assert updated.is_published is True
+        assert repo.get_by_code("house-blend").is_published is True
+
+    def test_raises_when_the_product_is_missing(self) -> None:
+        # The adapter guards its own not-found path even though the use case checks
+        # existence first (a direct call or a concurrent deletion can still hit it).
+        with pytest.raises(ProductNotFoundError):
+            DjangoProductRepository().set_published("ghost", True)
+
+
 def test_value_model_str_is_informative() -> None:
     _seed_catalog("origin")
     stored = DjangoProductRepository().add(

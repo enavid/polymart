@@ -163,6 +163,9 @@ class ProductModel(models.Model):
     # Free-form, string-keyed extension data (JSONB in Postgres). Never used for
     # money, which is modelled with Decimal in the pricing slice.
     metadata = models.JSONField(default=dict)
+    # Storefront visibility gate: a product is a draft until explicitly published.
+    # Indexed because the public read API filters on it on every request.
+    is_published = models.BooleanField(default=False, db_index=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

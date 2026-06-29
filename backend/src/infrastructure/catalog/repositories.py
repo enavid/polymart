@@ -6,6 +6,7 @@ from collections.abc import Sequence
 
 import structlog
 from django.db import IntegrityError, transaction
+from django.db.models import Q, QuerySet
 
 from src.application.catalog.ports import (
     AttributeRepository,
@@ -15,6 +16,9 @@ from src.application.catalog.ports import (
     CollectionRepository,
     CollectionRuleRepository,
     ProductCategoryRepository,
+    ProductFilters,
+    ProductPage,
+    ProductQueryRepository,
     ProductRepository,
     ProductTypeRepository,
     StockRepository,
@@ -295,6 +299,72 @@ class DjangoProductRepository(ProductRepository):
             .all()
         )
         return [product_to_domain(model) for model in models]
+
+    def set_published(self, code: str, is_published: bool) -> Product:
+        # A single-column update on one row; the implicit statement-level atomicity
+        # is enough (no child tables to keep consistent).
+        try:
+            model = (
+                ProductModel.objects.select_related("product_type")
+                .prefetch_related(_PRODUCT_VALUES_PREFETCH)
+                .get(code=code)
+            )
+        except ProductModel.DoesNotExist as exc:
+            raise ProductNotFoundError(code) from exc
+        model.is_published = is_published
+        model.save(update_fields=["is_published", "updated_at"])
+        return product_to_domain(model)
+
+
+class DjangoProductQueryRepository(ProductQueryRepository):
+    """Read-optimised product browsing (filter / search / paginate) with the Django ORM."""
+
+    def search(self, *, filters: ProductFilters, limit: int, offset: int) -> ProductPage:
+        queryset = self._apply_filters(ProductModel.objects.all(), filters)
+        # Count the full match set before windowing so the caller can paginate.
+        total = queryset.count()
+        window = (
+            queryset.select_related("product_type")
+            .prefetch_related(_PRODUCT_VALUES_PREFETCH)
+            .order_by("code")[offset : offset + limit]
+        )
+        items = tuple(product_to_domain(model) for model in window)
+        return ProductPage(items=items, total=total)
+
+    @staticmethod
+    def _apply_filters(
+        queryset: QuerySet[ProductModel], filters: ProductFilters
+    ) -> QuerySet[ProductModel]:
+        # Each criterion narrows the set (AND). Membership filters join the through
+        # tables; the per-(product, target) uniqueness constraints mean no row is
+        # duplicated, but distinct() keeps the result safe under future joins.
+        if filters.published_only:
+            queryset = queryset.filter(is_published=True)
+        if filters.product_type is not None:
+            queryset = queryset.filter(product_type__code=filters.product_type)
+        if filters.category is not None:
+            queryset = queryset.filter(category_links__category__slug=filters.category)
+        if filters.collection is not None:
+            queryset = queryset.filter(collection_links__collection__slug=filters.collection)
+        if filters.search is not None:
+            # The ORM parameterises these, so the user-supplied term cannot inject SQL.
+            queryset = queryset.filter(
+                Q(name__icontains=filters.search) | Q(code__icontains=filters.search)
+            )
+        return queryset.distinct()
+
+    def get_published_by_code(self, code: str) -> Product:
+        try:
+            model = (
+                ProductModel.objects.select_related("product_type")
+                .prefetch_related(_PRODUCT_VALUES_PREFETCH)
+                .get(code=code, is_published=True)
+            )
+        except ProductModel.DoesNotExist as exc:
+            # A draft (or a genuinely missing product) is a 404: the existence of an
+            # unpublished product is never leaked through the public read surface.
+            raise ProductNotFoundError(code) from exc
+        return product_to_domain(model)
 
 
 class DjangoVariantRepository(VariantRepository):

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
+from dataclasses import dataclass
 
 from src.domain.catalog.entities import (
     Attribute,
@@ -109,6 +110,13 @@ class ProductRepository(ABC):
     @abstractmethod
     def list_all(self) -> list[Product]:
         """Return every product, ordered by code for deterministic output."""
+
+    @abstractmethod
+    def set_published(self, code: str, is_published: bool) -> Product:
+        """Set a product's published flag and return the updated product.
+
+        Raises ``ProductNotFoundError`` if the product does not exist.
+        """
 
 
 class VariantRepository(ABC):
@@ -330,6 +338,59 @@ class StockRepository(ABC):
         ``VariantNotFoundError`` if the variant does not exist and
         ``InsufficientStockError`` if the delta would drive the quantity below zero
         (the change is then not applied).
+        """
+
+
+@dataclass(frozen=True)
+class ProductFilters:
+    """The criteria a storefront product search is narrowed by (all AND-combined).
+
+    Every field is optional; an unset field does not constrain the result.
+    ``published_only`` is set by the read use case (never by the client) so the
+    public surface can never be asked to include drafts.
+    """
+
+    search: str | None = None
+    category: str | None = None
+    collection: str | None = None
+    product_type: str | None = None
+    published_only: bool = True
+
+
+@dataclass(frozen=True)
+class ProductPage:
+    """One page of a product search: the windowed items plus the full match count.
+
+    ``total`` is the number of products matching the filters, independent of the
+    page window, so the caller can render pagination controls.
+    """
+
+    items: tuple[Product, ...]
+    total: int
+
+
+class ProductQueryRepository(ABC):
+    """Read-optimised boundary for storefront product browsing (a query side).
+
+    Separate from the write-side ``ProductRepository`` because browsing is a
+    fundamentally different access pattern (filtered, paged, published-gated) than
+    managing a single aggregate. Implementations MUST translate storage-specific
+    failures into domain exceptions (``ProductNotFoundError``) so callers never see
+    infrastructure leaks.
+    """
+
+    @abstractmethod
+    def search(self, *, filters: ProductFilters, limit: int, offset: int) -> ProductPage:
+        """Return the products matching ``filters``, ordered by code, windowed by
+        ``offset``/``limit``, together with the total match count."""
+
+    @abstractmethod
+    def get_published_by_code(self, code: str) -> Product:
+        """Return the published product with this code.
+
+        Raises ``ProductNotFoundError`` if no product with that code exists *or* it
+        exists but is not published -- a draft must be indistinguishable from a
+        missing product, so its existence is never leaked.
         """
 
 

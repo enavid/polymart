@@ -153,6 +153,10 @@ class Product:
     ``metadata`` is free-form, string-keyed, string-valued extension data (mirroring
     Saleor's metadata) -- never a place for money, which is modelled with Decimal in
     the pricing slice.
+
+    ``is_published`` gates storefront visibility: a product is a draft (not shown by
+    the public read API) until it is explicitly published. It defaults to ``False`` so
+    nothing is exposed by accident.
     """
 
     code: ProductCode
@@ -160,6 +164,7 @@ class Product:
     product_type: ProductTypeCode
     values: tuple[AttributeValue, ...] = ()
     metadata: Mapping[str, str] = field(default_factory=dict)
+    is_published: bool = False
     id: int | None = field(default=None)
 
     def __post_init__(self) -> None:

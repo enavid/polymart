@@ -104,6 +104,11 @@ class FakeProductRepository(ProductRepository):
     def list_all(self) -> list[Product]:
         return list(self._products)
 
+    def set_published(  # pragma: no cover - unused here
+        self, code: str, is_published: bool
+    ) -> Product:
+        raise NotImplementedError
+
 
 class FakeCollectionRuleRepository(CollectionRuleRepository):
     def __init__(self) -> None:

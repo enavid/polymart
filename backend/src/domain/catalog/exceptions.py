@@ -388,6 +388,14 @@ class DuplicateRuleConditionError(CatalogError):
         self.detail = detail
 
 
+class InvalidPaginationError(CatalogError):
+    """Raised when a list request's limit or offset is out of the accepted range."""
+
+    def __init__(self, detail: str) -> None:
+        super().__init__(f"invalid pagination: {detail}")
+        self.detail = detail
+
+
 class InvalidStockQuantityError(CatalogError):
     """Raised when a stock quantity is not a non-negative integer within bounds.
 

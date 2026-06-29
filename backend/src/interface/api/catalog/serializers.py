@@ -73,7 +73,7 @@ class AttributeValueSerializer(serializers.Serializer):
 
 
 class ProductSerializer(serializers.Serializer):
-    """Response projection of a product."""
+    """Response projection of a product (management view)."""
 
     id = serializers.IntegerField(read_only=True)
     code = serializers.CharField()
@@ -81,6 +81,47 @@ class ProductSerializer(serializers.Serializer):
     product_type = serializers.CharField()
     values = AttributeValueSerializer(many=True)
     metadata = serializers.DictField(child=serializers.CharField())
+    is_published = serializers.BooleanField()
+
+
+class SetProductPublishedSerializer(serializers.Serializer):
+    """Request body for changing a product's published flag."""
+
+    is_published = serializers.BooleanField()
+
+
+class StorefrontProductSerializer(serializers.Serializer):
+    """Public projection of a published product (no internal ``id``)."""
+
+    code = serializers.CharField()
+    name = serializers.CharField()
+    product_type = serializers.CharField()
+    values = AttributeValueSerializer(many=True)
+    metadata = serializers.DictField(child=serializers.CharField())
+
+
+class StorefrontProductPageSerializer(serializers.Serializer):
+    """A page of storefront products: the count, the window, and the items."""
+
+    count = serializers.IntegerField()
+    limit = serializers.IntegerField()
+    offset = serializers.IntegerField()
+    results = StorefrontProductSerializer(many=True)
+
+
+class StorefrontProductQuerySerializer(serializers.Serializer):
+    """Query-string parameters for the storefront product list.
+
+    Filters are optional; pagination bounds are enforced by the use case so an
+    out-of-range page surfaces as a domain 400 (this layer only checks types).
+    """
+
+    search = serializers.CharField(required=False)
+    category = serializers.CharField(required=False)
+    collection = serializers.CharField(required=False)
+    product_type = serializers.CharField(required=False)
+    limit = serializers.IntegerField(required=False)
+    offset = serializers.IntegerField(required=False)
 
 
 class CreateProductSerializer(serializers.Serializer):

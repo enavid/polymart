@@ -26,6 +26,9 @@ from src.application.catalog.ports import (
     CollectionRepository,
     CollectionRuleRepository,
     ProductCategoryRepository,
+    ProductFilters,
+    ProductPage,
+    ProductQueryRepository,
     ProductRepository,
     ProductTypeRepository,
     StockRepository,
@@ -47,6 +50,7 @@ from src.domain.catalog.exceptions import (
     CategoryAlreadyExistsError,
     CollectionAlreadyExistsError,
     InvalidAttributeInputTypeError,
+    InvalidPaginationError,
     InvalidRuleOperatorError,
     ParentCategoryNotFoundError,
     ProductAlreadyExistsError,
@@ -102,6 +106,12 @@ _ACTION_COLLECTION_PRODUCTS_CHANGED = "collection.products_changed"
 _ACTION_COLLECTION_RULE_CHANGED = "collection.rule_changed"
 _ACTION_VARIANT_PRICE_CHANGED = "variant.price_changed"
 _ACTION_VARIANT_STOCK_CHANGED = "variant.stock_changed"
+_ACTION_PRODUCT_PUBLISH_CHANGED = "product.publish_changed"
+
+# Storefront listing pagination: a sensible default page and a hard ceiling so a
+# single request can never ask the database for an unbounded result set.
+_DEFAULT_PAGE_LIMIT = 20
+_MAX_PAGE_LIMIT = 100
 
 # Membership is recorded in the audit trail as a deterministic, comma-joined slug
 # string (AuditValue is a flat scalar, never a list).
@@ -1367,3 +1377,124 @@ class GetVariantStock:
         quantity = self._repository.get_quantity(sku)
         logger.debug("variant_stock_listed", sku=sku, quantity=quantity.value)
         return quantity
+
+
+@dataclass(frozen=True)
+class SetProductPublishedCommand:
+    """Input for changing a product's storefront-visibility (published) flag."""
+
+    product: str
+    is_published: bool
+
+
+class SetProductPublished:
+    """Publish or unpublish a product (controls storefront visibility).
+
+    Publishing is the gate between the management catalog and the public storefront,
+    so the change is audited (before/after) and logged with the actor. The use case
+    owns only the orchestration: delegate the flag write to the repository (which
+    raises if the product is unknown) and observe.
+    """
+
+    def __init__(self, repository: ProductRepository, audit: AuditRecorder) -> None:
+        self._repository = repository
+        self._audit = audit
+
+    def execute(
+        self, command: SetProductPublishedCommand, *, actor: str | None = None
+    ) -> Product:
+        code = command.product
+        before = self._repository.get_by_code(code).is_published
+        product = self._repository.set_published(code, command.is_published)
+        logger.info(
+            "product_publish_changed",
+            product_id=product.id,
+            code=code,
+            is_published=product.is_published,
+            actor=actor,
+        )
+        self._audit.record(
+            action=_ACTION_PRODUCT_PUBLISH_CHANGED,
+            resource_type=_RESOURCE_PRODUCT,
+            resource_id=str(product.id),
+            actor=actor,
+            changes=(
+                FieldChange(field="is_published", before=before, after=product.is_published),
+            ),
+        )
+        return product
+
+
+@dataclass(frozen=True)
+class SearchCatalogProductsQuery:
+    """Input for a storefront product search: filters plus a page window.
+
+    All filter fields are optional; ``limit``/``offset`` are validated by the use
+    case. The published-only restriction is not part of the input -- the use case
+    always enforces it so a public caller can never request drafts.
+    """
+
+    search: str | None = None
+    category: str | None = None
+    collection: str | None = None
+    product_type: str | None = None
+    limit: int = _DEFAULT_PAGE_LIMIT
+    offset: int = 0
+
+
+class SearchCatalogProducts:
+    """List published products for the storefront, filtered, searched, and paged.
+
+    The currency of trust here is *visibility*: the use case forces
+    ``published_only=True`` onto the filters so a draft can never reach the public
+    API, validates the page window, delegates the query to the read repository, and
+    observes. It owns no query logic itself (that is the adapter's) -- only the
+    visibility guarantee and the pagination contract.
+    """
+
+    def __init__(self, repository: ProductQueryRepository) -> None:
+        self._repository = repository
+
+    def execute(self, query: SearchCatalogProductsQuery) -> ProductPage:
+        limit, offset = self._validated_window(query.limit, query.offset)
+        # published_only is forced on here, never taken from the caller.
+        filters = ProductFilters(
+            search=query.search,
+            category=query.category,
+            collection=query.collection,
+            product_type=query.product_type,
+            published_only=True,
+        )
+        page = self._repository.search(filters=filters, limit=limit, offset=offset)
+        logger.debug(
+            "catalog_products_searched",
+            count=page.total,
+            returned=len(page.items),
+            limit=limit,
+            offset=offset,
+        )
+        return page
+
+    @staticmethod
+    def _validated_window(limit: int, offset: int) -> tuple[int, int]:
+        if limit < 1 or limit > _MAX_PAGE_LIMIT:
+            raise InvalidPaginationError(f"limit must be between 1 and {_MAX_PAGE_LIMIT}: {limit}")
+        if offset < 0:
+            raise InvalidPaginationError(f"offset must not be negative: {offset}")
+        return limit, offset
+
+
+class GetPublishedProduct:
+    """Read a single published product for the storefront (404 otherwise).
+
+    Delegates to the read repository, which treats a draft as not-found so the
+    existence of an unpublished product is never leaked through this public surface.
+    """
+
+    def __init__(self, repository: ProductQueryRepository) -> None:
+        self._repository = repository
+
+    def execute(self, *, code: str) -> Product:
+        product = self._repository.get_published_by_code(code)
+        logger.debug("storefront_product_retrieved", code=code)
+        return product
