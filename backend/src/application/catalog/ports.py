@@ -9,7 +9,13 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from src.domain.catalog.entities import Attribute, Product, ProductType, ProductVariant
+from src.domain.catalog.entities import (
+    Attribute,
+    Category,
+    Product,
+    ProductType,
+    ProductVariant,
+)
 
 
 class AttributeRepository(ABC):
@@ -124,3 +130,33 @@ class VariantRepository(ABC):
     @abstractmethod
     def list_for_product(self, product_code: str) -> list[ProductVariant]:
         """Return the variants of one product, ordered by SKU for deterministic output."""
+
+
+class CategoryRepository(ABC):
+    """Persistence boundary for the Category aggregate.
+
+    Implementations MUST translate storage-specific failures into domain
+    exceptions (``CategoryNotFoundError``, ``CategoryAlreadyExistsError``,
+    ``ParentCategoryNotFoundError`` for a missing parent) so callers never see
+    infrastructure leaks.
+    """
+
+    @abstractmethod
+    def add(self, category: Category) -> Category:
+        """Persist a new category and return it with its assigned identity.
+
+        Raises ``CategoryAlreadyExistsError`` if the slug is already taken, and
+        ``ParentCategoryNotFoundError`` if the referenced parent does not exist.
+        """
+
+    @abstractmethod
+    def get_by_slug(self, slug: str) -> Category:
+        """Return the category with this slug or raise ``CategoryNotFoundError``."""
+
+    @abstractmethod
+    def exists_by_slug(self, slug: str) -> bool:
+        """Return whether a category with this slug already exists."""
+
+    @abstractmethod
+    def list_all(self) -> list[Category]:
+        """Return every category, ordered by slug for deterministic output."""

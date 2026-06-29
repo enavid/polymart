@@ -250,3 +250,51 @@ class DuplicateMediaAssetError(CatalogError):
     def __init__(self, url: str) -> None:
         super().__init__(f"duplicate media asset url: {url!r}")
         self.url = url
+
+
+class InvalidCategorySlugError(CatalogError):
+    """Raised when a category slug is empty, too long, or not a slug."""
+
+    def __init__(self, value: str) -> None:
+        super().__init__(f"invalid category slug: {value!r}")
+        self.value = value
+
+
+class InvalidCategoryNameError(CatalogError):
+    """Raised when a category display name is blank or exceeds the length limit."""
+
+    def __init__(self, value: str) -> None:
+        super().__init__(f"invalid category name: {value!r}")
+        self.value = value
+
+
+class SelfParentingCategoryError(CatalogError):
+    """Raised when a category is given itself as its parent."""
+
+    def __init__(self, slug: str) -> None:
+        super().__init__(f"category cannot be its own parent: {slug!r}")
+        self.slug = slug
+
+
+class CategoryNotFoundError(CatalogError):
+    """Raised when a category cannot be located by its slug."""
+
+    def __init__(self, slug: str) -> None:
+        super().__init__(f"category not found: {slug!r}")
+        self.slug = slug
+
+
+class CategoryAlreadyExistsError(CatalogError):
+    """Raised when creating a category whose slug is already taken."""
+
+    def __init__(self, slug: str) -> None:
+        super().__init__(f"category already exists: {slug!r}")
+        self.slug = slug
+
+
+class ParentCategoryNotFoundError(CatalogError):
+    """Raised when a category references a parent that does not exist."""
+
+    def __init__(self, slug: str) -> None:
+        super().__init__(f"parent category not found: {slug!r}")
+        self.slug = slug

@@ -114,3 +114,20 @@ class CreateVariantSerializer(serializers.Serializer):
     name = serializers.CharField()
     values = AttributeValueSerializer(many=True, required=False, default=list)
     media = VariantMediaSerializer(many=True, required=False, default=list)
+
+
+class CategorySerializer(serializers.Serializer):
+    """Response projection of a category (``parent`` is null for a root)."""
+
+    id = serializers.IntegerField(read_only=True)
+    slug = serializers.CharField()
+    name = serializers.CharField()
+    parent = serializers.CharField(allow_null=True)
+
+
+class CreateCategorySerializer(serializers.Serializer):
+    """Request body for creating a category."""
+
+    slug = serializers.CharField()
+    name = serializers.CharField()
+    parent = serializers.CharField(required=False, allow_null=True, default=None)

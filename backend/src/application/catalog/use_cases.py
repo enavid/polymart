@@ -19,16 +19,25 @@ import structlog
 from src.application.audit.ports import AuditRecorder
 from src.application.catalog.ports import (
     AttributeRepository,
+    CategoryRepository,
     ProductRepository,
     ProductTypeRepository,
     VariantRepository,
 )
 from src.domain.audit.entities import FieldChange
-from src.domain.catalog.entities import Attribute, Product, ProductType, ProductVariant
+from src.domain.catalog.entities import (
+    Attribute,
+    Category,
+    Product,
+    ProductType,
+    ProductVariant,
+)
 from src.domain.catalog.enums import AttributeInputType
 from src.domain.catalog.exceptions import (
     AttributeAlreadyExistsError,
+    CategoryAlreadyExistsError,
     InvalidAttributeInputTypeError,
+    ParentCategoryNotFoundError,
     ProductAlreadyExistsError,
     ProductTypeAlreadyExistsError,
     UnknownAttributeError,
@@ -39,6 +48,7 @@ from src.domain.catalog.value_objects import (
     AttributeChoice,
     AttributeCode,
     AttributeValue,
+    CategorySlug,
     MediaAsset,
     ProductCode,
     ProductTypeCode,
@@ -57,6 +67,8 @@ _RESOURCE_PRODUCT = "product"
 _ACTION_PRODUCT_CREATED = "product.created"
 _RESOURCE_VARIANT = "variant"
 _ACTION_VARIANT_CREATED = "variant.created"
+_RESOURCE_CATEGORY = "category"
+_ACTION_CATEGORY_CREATED = "category.created"
 
 
 @dataclass(frozen=True)
@@ -519,3 +531,101 @@ class ListProductVariants:
         variants = self._repository.list_for_product(product_code)
         logger.debug("product_variants_listed", product=product_code, count=len(variants))
         return variants
+
+
+@dataclass(frozen=True)
+class CreateCategoryCommand:
+    """Input for creating a category. Raw strings are validated by the domain."""
+
+    slug: str
+    name: str
+    parent: str | None = None
+
+
+class CreateCategory:
+    """Create a category, optionally nested under an existing parent.
+
+    The entity owns the structural rules (name, no self-parenting); this use case
+    owns the orchestration: confirm the referenced parent exists (a cross-aggregate
+    fact the entity cannot reach), reject a duplicate slug, persist, and observe.
+    On creation the new slug is brand new, so it cannot yet be an ancestor of
+    anything -- no cycle is possible beyond self-parenting, which the entity already
+    forbids. Re-parenting (and the cycle check it needs) is a later slice.
+    """
+
+    def __init__(self, repository: CategoryRepository, audit: AuditRecorder) -> None:
+        self._repository = repository
+        self._audit = audit
+
+    def execute(self, command: CreateCategoryCommand, *, actor: str | None = None) -> Category:
+        # Build value objects first: a malformed slug, blank name, or self-parenting
+        # fails fast, before any I/O.
+        category = Category(
+            slug=CategorySlug(command.slug),
+            name=command.name,
+            parent=CategorySlug(command.parent) if command.parent is not None else None,
+        )
+        slug = category.slug.value
+
+        # A referenced parent must exist; the repository defends the concurrent-
+        # deletion race too.
+        if category.parent is not None and not self._repository.exists_by_slug(
+            category.parent.value
+        ):
+            logger.warning(
+                "category_create_rejected_unknown_parent",
+                parent=category.parent.value,
+                actor=actor,
+            )
+            raise ParentCategoryNotFoundError(category.parent.value)
+
+        # Pre-check for a clean error; the repository remains the source of truth
+        # and will still raise on a concurrent insert.
+        if self._repository.exists_by_slug(slug):
+            logger.warning("category_create_rejected_duplicate", slug=slug, actor=actor)
+            raise CategoryAlreadyExistsError(slug)
+
+        persisted = self._repository.add(category)
+        parent_slug = persisted.parent.value if persisted.parent is not None else None
+        logger.info(
+            "category_created",
+            category_id=persisted.id,
+            slug=slug,
+            parent=parent_slug,
+            actor=actor,
+        )
+        self._audit.record(
+            action=_ACTION_CATEGORY_CREATED,
+            resource_type=_RESOURCE_CATEGORY,
+            resource_id=str(persisted.id),
+            actor=actor,
+            changes=(
+                FieldChange(field="slug", after=slug),
+                FieldChange(field="parent", after=parent_slug),
+            ),
+        )
+        return persisted
+
+
+class GetCategory:
+    """Retrieve a single category by slug."""
+
+    def __init__(self, repository: CategoryRepository) -> None:
+        self._repository = repository
+
+    def execute(self, *, slug: str) -> Category:
+        category = self._repository.get_by_slug(slug)
+        logger.debug("category_retrieved", slug=slug)
+        return category
+
+
+class ListCategories:
+    """List every category."""
+
+    def __init__(self, repository: CategoryRepository) -> None:
+        self._repository = repository
+
+    def execute(self) -> list[Category]:
+        categories = self._repository.list_all()
+        logger.debug("categories_listed", count=len(categories))
+        return categories

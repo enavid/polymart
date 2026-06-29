@@ -8,20 +8,24 @@ from __future__ import annotations
 
 from src.application.catalog.use_cases import (
     CreateAttribute,
+    CreateCategory,
     CreateProduct,
     CreateProductType,
     CreateVariant,
     GetAttribute,
+    GetCategory,
     GetProduct,
     GetProductType,
     GetVariant,
     ListAttributes,
+    ListCategories,
     ListProducts,
     ListProductTypes,
     ListProductVariants,
 )
 from src.infrastructure.catalog.repositories import (
     DjangoAttributeRepository,
+    DjangoCategoryRepository,
     DjangoProductRepository,
     DjangoProductTypeRepository,
     DjangoVariantRepository,
@@ -88,3 +92,15 @@ def build_get_variant() -> GetVariant:
 
 def build_list_product_variants() -> ListProductVariants:
     return ListProductVariants(DjangoVariantRepository(), DjangoProductRepository())
+
+
+def build_create_category() -> CreateCategory:
+    return CreateCategory(DjangoCategoryRepository(), build_audit_recorder())
+
+
+def build_get_category() -> GetCategory:
+    return GetCategory(DjangoCategoryRepository())
+
+
+def build_list_categories() -> ListCategories:
+    return ListCategories(DjangoCategoryRepository())

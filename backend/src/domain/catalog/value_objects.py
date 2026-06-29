@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from src.domain.catalog.exceptions import (
     InvalidAttributeChoiceError,
     InvalidAttributeCodeError,
+    InvalidCategorySlugError,
     InvalidMediaAssetError,
     InvalidProductCodeError,
     InvalidProductTypeCodeError,
@@ -76,6 +77,22 @@ class ProductCode:
         normalized = self.value.strip()
         if len(normalized) > _SLUG_MAX_LENGTH or not _SLUG_RE.match(normalized):
             raise InvalidProductCodeError(self.value)
+        object.__setattr__(self, "value", normalized)
+
+    def __str__(self) -> str:
+        return self.value
+
+
+@dataclass(frozen=True)
+class CategorySlug:
+    """A stable, URL-safe identifier for a category (its place in the tree)."""
+
+    value: str
+
+    def __post_init__(self) -> None:
+        normalized = self.value.strip()
+        if len(normalized) > _SLUG_MAX_LENGTH or not _SLUG_RE.match(normalized):
+            raise InvalidCategorySlugError(self.value)
         object.__setattr__(self, "value", normalized)
 
     def __str__(self) -> str:

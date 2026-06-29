@@ -7,14 +7,24 @@ from django.db import IntegrityError, transaction
 
 from src.application.catalog.ports import (
     AttributeRepository,
+    CategoryRepository,
     ProductRepository,
     ProductTypeRepository,
     VariantRepository,
 )
-from src.domain.catalog.entities import Attribute, Product, ProductType, ProductVariant
+from src.domain.catalog.entities import (
+    Attribute,
+    Category,
+    Product,
+    ProductType,
+    ProductVariant,
+)
 from src.domain.catalog.exceptions import (
     AttributeAlreadyExistsError,
     AttributeNotFoundError,
+    CategoryAlreadyExistsError,
+    CategoryNotFoundError,
+    ParentCategoryNotFoundError,
     ProductAlreadyExistsError,
     ProductNotFoundError,
     ProductTypeAlreadyExistsError,
@@ -25,10 +35,12 @@ from src.domain.catalog.exceptions import (
 )
 from src.domain.catalog.value_objects import AttributeCode
 from src.infrastructure.catalog.mappers import (
+    apply_category_scalar_fields,
     apply_product_scalar_fields,
     apply_product_type_scalar_fields,
     apply_scalar_fields,
     apply_variant_scalar_fields,
+    category_to_domain,
     product_to_domain,
     product_type_to_domain,
     to_domain,
@@ -39,6 +51,7 @@ from src.infrastructure.catalog.models import (
     VARIANT_ATTRIBUTE_KIND,
     AttributeChoiceModel,
     AttributeModel,
+    CategoryModel,
     ProductAttributeValueModel,
     ProductModel,
     ProductTypeAttributeModel,
@@ -337,3 +350,47 @@ class DjangoVariantRepository(VariantRepository):
             .filter(product__code=product_code)
         )
         return [variant_to_domain(model) for model in models]
+
+
+class DjangoCategoryRepository(CategoryRepository):
+    """Persist catalog categories with the Django ORM, returning domain entities."""
+
+    def add(self, category: Category) -> Category:
+        # A category is a single row (no child tables), so no transaction wrapper is
+        # needed: the one INSERT is already atomic.
+        model = apply_category_scalar_fields(category, CategoryModel())
+        model.parent = self._resolve_parent(category)
+        try:
+            model.save()
+        except IntegrityError as exc:
+            # Unique-constraint violation on slug -> domain-level conflict (a
+            # concurrent insert won the race after the use case's pre-check).
+            logger.warning("category_insert_race_lost", slug=category.slug.value)
+            raise CategoryAlreadyExistsError(category.slug.value) from exc
+        return self.get_by_slug(category.slug.value)
+
+    @staticmethod
+    def _resolve_parent(category: Category) -> CategoryModel | None:
+        if category.parent is None:
+            return None
+        slug = category.parent.value
+        try:
+            return CategoryModel.objects.get(slug=slug)
+        except CategoryModel.DoesNotExist as exc:
+            # The use case validated existence; reaching here means the parent
+            # vanished concurrently. Surface it as a domain error (no row written).
+            raise ParentCategoryNotFoundError(slug) from exc
+
+    def get_by_slug(self, slug: str) -> Category:
+        try:
+            model = CategoryModel.objects.select_related("parent").get(slug=slug)
+        except CategoryModel.DoesNotExist as exc:
+            raise CategoryNotFoundError(slug) from exc
+        return category_to_domain(model)
+
+    def exists_by_slug(self, slug: str) -> bool:
+        return CategoryModel.objects.filter(slug=slug).exists()
+
+    def list_all(self) -> list[Category]:
+        models = CategoryModel.objects.select_related("parent").all()
+        return [category_to_domain(model) for model in models]

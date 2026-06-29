@@ -22,15 +22,18 @@ from src.domain.catalog.exceptions import (
     DuplicateAttributeValueError,
     DuplicateMediaAssetError,
     InvalidAttributeNameError,
+    InvalidCategoryNameError,
     InvalidProductMetadataError,
     InvalidProductNameError,
     InvalidProductTypeNameError,
     InvalidVariantNameError,
+    SelfParentingCategoryError,
 )
 from src.domain.catalog.value_objects import (
     AttributeChoice,
     AttributeCode,
     AttributeValue,
+    CategorySlug,
     MediaAsset,
     ProductCode,
     ProductTypeCode,
@@ -249,3 +252,36 @@ class ProductVariant:
                 raise DuplicateMediaAssetError(asset.url)
             seen.add(asset.url)
         return media
+
+
+@dataclass
+class Category:
+    """A node in the hierarchical catalog taxonomy.
+
+    A category groups products under a stable slug and, optionally, points at a
+    parent category by slug -- ``None`` marks a root. This entity owns only
+    *structural* rules: a non-blank, bounded display name, and the rule that a
+    category is never its own parent. Whether the parent actually exists, and
+    whether re-parenting would form a cycle, are tree-spanning concerns the entity
+    cannot reach; they are decided in the application layer against the repository.
+    """
+
+    slug: CategorySlug
+    name: str
+    parent: CategorySlug | None = None
+    id: int | None = field(default=None)
+
+    def __post_init__(self) -> None:
+        self.name = self._validated_name(self.name)
+        self._reject_self_parenting()
+
+    @staticmethod
+    def _validated_name(raw: str) -> str:
+        name = raw.strip()
+        if not name or len(name) > _NAME_MAX_LENGTH:
+            raise InvalidCategoryNameError(raw)
+        return name
+
+    def _reject_self_parenting(self) -> None:
+        if self.parent is not None and self.parent == self.slug:
+            raise SelfParentingCategoryError(self.slug.value)

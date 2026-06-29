@@ -256,6 +256,37 @@ class ProductVariantAttributeValueModel(models.Model):
         return f"{self.variant_id}:{self.attribute_id}"
 
 
+class CategoryModel(models.Model):
+    """A node in the hierarchical catalog taxonomy.
+
+    ``parent`` is a self-referential link (null on a root). Deleting a category
+    that still has children is PROTECTed so a subtree is never silently orphaned
+    or destroyed.
+    """
+
+    slug = models.SlugField(max_length=_CODE_MAX_LENGTH, unique=True)
+    name = models.CharField(max_length=_NAME_MAX_LENGTH)
+    parent = models.ForeignKey(
+        "self",
+        related_name="children",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        app_label = "catalog"
+        db_table = "catalog_category"
+        ordering = ("slug",)
+        verbose_name = "category"
+        verbose_name_plural = "categories"
+
+    def __str__(self) -> str:
+        return self.slug
+
+
 class ProductVariantMediaModel(models.Model):
     """One image attached to a variant (a URL reference, not a stored file)."""
 

@@ -2,12 +2,19 @@
 
 from __future__ import annotations
 
-from src.domain.catalog.entities import Attribute, Product, ProductType, ProductVariant
+from src.domain.catalog.entities import (
+    Attribute,
+    Category,
+    Product,
+    ProductType,
+    ProductVariant,
+)
 from src.domain.catalog.enums import AttributeInputType
 from src.domain.catalog.value_objects import (
     AttributeChoice,
     AttributeCode,
     AttributeValue,
+    CategorySlug,
     MediaAsset,
     ProductCode,
     ProductTypeCode,
@@ -16,6 +23,7 @@ from src.domain.catalog.value_objects import (
 from src.infrastructure.catalog.models import (
     VARIANT_ATTRIBUTE_KIND,
     AttributeModel,
+    CategoryModel,
     ProductModel,
     ProductTypeModel,
     ProductVariantModel,
@@ -145,4 +153,31 @@ def apply_variant_scalar_fields(
     """
     model.sku = variant.sku.value
     model.name = variant.name
+    return model
+
+
+def category_to_domain(model: CategoryModel) -> Category:
+    """Rebuild a category from a persisted row and its optional parent link.
+
+    Relies on the caller having loaded the related ``parent`` (via
+    ``select_related``) so the mapper triggers no extra query when reading the
+    parent slug.
+    """
+    parent = model.parent
+    return Category(
+        id=model.pk,
+        slug=CategorySlug(model.slug),
+        name=model.name,
+        parent=CategorySlug(parent.slug) if parent is not None else None,
+    )
+
+
+def apply_category_scalar_fields(category: Category, model: CategoryModel) -> CategoryModel:
+    """Copy the category's own (non-relational) fields onto an ORM instance.
+
+    The ``parent`` foreign key is set by the repository, which resolves the
+    referenced slug to a row.
+    """
+    model.slug = category.slug.value
+    model.name = category.name
     return model

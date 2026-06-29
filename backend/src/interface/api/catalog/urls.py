@@ -7,6 +7,8 @@ from django.urls import path
 from src.interface.api.catalog.views import (
     AttributeDetailView,
     AttributeListCreateView,
+    CategoryDetailView,
+    CategoryListCreateView,
     ProductDetailView,
     ProductListCreateView,
     ProductTypeDetailView,
@@ -47,5 +49,11 @@ urlpatterns = [
         "catalog/variants/<str:sku>/",
         VariantDetailView.as_view(),
         name="variant-detail",
+    ),
+    path("catalog/categories/", CategoryListCreateView.as_view(), name="category-list"),
+    path(
+        "catalog/categories/<slug:slug>/",
+        CategoryDetailView.as_view(),
+        name="category-detail",
     ),
 ]

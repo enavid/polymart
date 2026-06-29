@@ -20,16 +20,25 @@ from src.application.catalog.use_cases import (
     AttributeChoiceInput,
     AttributeValueInput,
     CreateAttributeCommand,
+    CreateCategoryCommand,
     CreateProductCommand,
     CreateProductTypeCommand,
     CreateVariantCommand,
     MediaInput,
 )
-from src.domain.catalog.entities import Attribute, Product, ProductType, ProductVariant
+from src.domain.catalog.entities import (
+    Attribute,
+    Category,
+    Product,
+    ProductType,
+    ProductVariant,
+)
 from src.domain.catalog.exceptions import (
     AttributeAlreadyExistsError,
     AttributeNotFoundError,
     CatalogError,
+    CategoryAlreadyExistsError,
+    CategoryNotFoundError,
     ProductAlreadyExistsError,
     ProductNotFoundError,
     ProductTypeAlreadyExistsError,
@@ -40,21 +49,26 @@ from src.domain.catalog.exceptions import (
 from src.interface.api.access.permissions import CatalogManagePermission
 from src.interface.api.catalog.container import (
     build_create_attribute,
+    build_create_category,
     build_create_product,
     build_create_product_type,
     build_create_variant,
     build_get_attribute,
+    build_get_category,
     build_get_product,
     build_get_product_type,
     build_get_variant,
     build_list_attributes,
+    build_list_categories,
     build_list_product_types,
     build_list_product_variants,
     build_list_products,
 )
 from src.interface.api.catalog.serializers import (
     AttributeSerializer,
+    CategorySerializer,
     CreateAttributeSerializer,
+    CreateCategorySerializer,
     CreateProductSerializer,
     CreateProductTypeSerializer,
     CreateVariantSerializer,
@@ -371,3 +385,65 @@ class VariantDetailView(APIView):
         except VariantNotFoundError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_404_NOT_FOUND)
         return Response(_variant_payload(variant))
+
+
+def _category_payload(category: Category) -> dict[str, object]:
+    """Project a category entity to the response body (``parent`` is null for a root)."""
+    return {
+        "id": category.id,
+        "slug": category.slug.value,
+        "name": category.name,
+        "parent": category.parent.value if category.parent is not None else None,
+    }
+
+
+class CategoryListCreateView(APIView):
+    """List categories or create a new one."""
+
+    permission_classes: ClassVar = [CatalogManagePermission]
+
+    @extend_schema(responses=CategorySerializer(many=True))
+    def get(self, request: Request) -> Response:
+        categories = build_list_categories().execute()
+        return Response([_category_payload(category) for category in categories])
+
+    @extend_schema(
+        request=CreateCategorySerializer,
+        responses={
+            201: CategorySerializer,
+            400: ErrorSerializer,
+            403: ErrorSerializer,
+            409: ErrorSerializer,
+        },
+    )
+    def post(self, request: Request) -> Response:
+        serializer = CreateCategorySerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        command = CreateCategoryCommand(
+            slug=data["slug"],
+            name=data["name"],
+            parent=data["parent"],
+        )
+        try:
+            category = build_create_category().execute(command, actor=_actor(request))
+        except CategoryAlreadyExistsError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
+        except CatalogError as exc:
+            # Invalid slug/name, self-parenting, or an unknown parent reference.
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(_category_payload(category), status=status.HTTP_201_CREATED)
+
+
+class CategoryDetailView(APIView):
+    """Retrieve a single category by slug."""
+
+    permission_classes: ClassVar = [CatalogManagePermission]
+
+    @extend_schema(responses={200: CategorySerializer, 404: ErrorSerializer})
+    def get(self, request: Request, slug: str) -> Response:
+        try:
+            category = build_get_category().execute(slug=slug)
+        except CategoryNotFoundError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_404_NOT_FOUND)
+        return Response(_category_payload(category))
