@@ -10,6 +10,7 @@ from __future__ import annotations
 import re
 from datetime import UTC
 
+from django.test import override_settings
 from structlog.testing import capture_logs
 
 from src.infrastructure.identity.services import (
@@ -59,10 +60,31 @@ class TestLoggingSmsSender:
 
     def test_fully_masks_an_unexpectedly_short_phone(self) -> None:
         # Defensive: a too-short value is never partially revealed.
-        with capture_logs() as logs:
+        with override_settings(DEBUG=False), capture_logs() as logs:
             LoggingSmsSender().send_otp("12", "0")
 
         assert logs[0]["phone"] == "**"
+
+    @override_settings(DEBUG=True)
+    def test_logs_the_code_in_debug_for_local_development(self) -> None:
+        # There is no SMS gateway in local dev, so DEBUG surfaces the code (and
+        # full phone) in the logs to make the OTP flow completable by hand.
+        with capture_logs() as logs:
+            LoggingSmsSender().send_otp("+989123456789", "123456")
+
+        assert any(
+            entry["event"] == "otp_dispatched_dev" and entry.get("code") == "123456"
+            for entry in logs
+        )
+
+    @override_settings(DEBUG=False)
+    def test_never_logs_the_code_outside_debug(self) -> None:
+        # Production (DEBUG=False) must never log the code: it is a live credential.
+        with capture_logs() as logs:
+            LoggingSmsSender().send_otp("+989123456789", "123456")
+
+        assert "123456" not in repr(logs)
+        assert all(entry["event"] != "otp_dispatched_dev" for entry in logs)
 
 
 class TestSystemClock:

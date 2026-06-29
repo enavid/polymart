@@ -3,7 +3,8 @@
 Cryptographically secure code generation, keyed one-way hashing, SMS delivery,
 and a system clock. The SMS sender is the seam where a real Iranian gateway
 (Kavenegar, Ghasedak, ...) plugs in later; for now it logs that a code was
-dispatched -- deliberately never the code itself, even in debug.
+dispatched -- never the code itself in production, though DEBUG logs the code so
+the OTP flow is completable locally without a real gateway.
 """
 
 from __future__ import annotations
@@ -56,9 +57,19 @@ class HmacCodeHasher(CodeHasher):
 
 
 class LoggingSmsSender(SmsSender):
-    """Stand-in SMS gateway: logs dispatch without ever logging the code."""
+    """Stand-in SMS gateway: logs that a code was dispatched.
+
+    In production the code is intentionally never logged -- it is a live
+    credential. In local development (``DEBUG=True``) there is no real gateway,
+    so the code (and full phone) are logged as well, letting a developer complete
+    the OTP flow without an SMS provider. The branch is guarded by ``DEBUG`` so it
+    can never fire in production.
+    """
 
     def send_otp(self, phone_number: str, code: str) -> None:
+        if settings.DEBUG:
+            logger.warning("otp_dispatched_dev", phone=phone_number, code=code)
+            return
         # ``code`` is intentionally not logged: it is a live credential.
         logger.info("otp_dispatched", phone=_mask_phone(phone_number))
 
