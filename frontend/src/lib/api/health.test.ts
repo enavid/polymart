@@ -33,6 +33,6 @@ describe("fetchHealth", () => {
       http.get("*/health/", () => new HttpResponse(null, { status: 503 })),
     );
 
-    await expect(fetchHealth()).rejects.toThrow("API request failed: 503");
+    await expect(fetchHealth()).rejects.toThrow("request failed with status 503");
   });
 });
