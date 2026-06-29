@@ -470,3 +470,26 @@ class VariantPriceModel(models.Model):
 
     def __str__(self) -> str:
         return f"{self.variant_id}:{self.channel_slug}:{self.amount} {self.currency_code}"
+
+
+class VariantStockModel(models.Model):
+    """A variant's on-hand stock quantity (one row per variant).
+
+    A single non-negative count of sellable units. Modelled as a one-to-one facet of
+    the variant rather than a column on the variant so it can later grow into the
+    multi-warehouse (MSI) model without reshaping the variant table. Reservation and
+    order-time deduction are a later phase; this stores only the on-hand quantity.
+    """
+
+    variant = models.OneToOneField(
+        ProductVariantModel, related_name="stock", on_delete=models.CASCADE
+    )
+    quantity = models.PositiveIntegerField(default=0)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        app_label = "catalog"
+        db_table = "catalog_variant_stock"
+
+    def __str__(self) -> str:
+        return f"{self.variant_id}:{self.quantity}"

@@ -23,6 +23,7 @@ from src.domain.catalog.value_objects import (
     ChannelPrice,
     ProductCode,
     RuleCondition,
+    StockQuantity,
 )
 
 
@@ -297,6 +298,39 @@ class VariantPriceRepository(ABC):
     @abstractmethod
     def list_for_variant(self, sku: str) -> tuple[ChannelPrice, ...]:
         """Return a variant's channel prices, ordered by channel (empty if none)."""
+
+
+class StockRepository(ABC):
+    """Persistence boundary for a variant's on-hand stock quantity.
+
+    A variant's stock is a single non-negative count (a separate facet from its
+    attributes/media/prices). Implementations MUST translate storage-specific
+    failures into domain exceptions (``VariantNotFoundError`` for a missing variant)
+    so callers never see infrastructure leaks. ``adjust_quantity`` performs an
+    atomic read-modify-write under a row lock so concurrent adjustments cannot lose
+    an update or oversell.
+    """
+
+    @abstractmethod
+    def get_quantity(self, sku: str) -> StockQuantity:
+        """Return the variant's on-hand quantity (zero if it has no stock record)."""
+
+    @abstractmethod
+    def set_quantity(self, sku: str, quantity: StockQuantity) -> StockQuantity:
+        """Set the variant's on-hand quantity to an absolute value and return it.
+
+        Raises ``VariantNotFoundError`` if the variant does not exist.
+        """
+
+    @abstractmethod
+    def adjust_quantity(self, sku: str, delta: int) -> StockQuantity:
+        """Apply a signed delta atomically and return the new quantity.
+
+        The read-modify-write is serialized with a row lock. Raises
+        ``VariantNotFoundError`` if the variant does not exist and
+        ``InsufficientStockError`` if the delta would drive the quantity below zero
+        (the change is then not applied).
+        """
 
 
 class ChannelReader(ABC):

@@ -388,6 +388,31 @@ class DuplicateRuleConditionError(CatalogError):
         self.detail = detail
 
 
+class InvalidStockQuantityError(CatalogError):
+    """Raised when a stock quantity is not a non-negative integer within bounds.
+
+    Covers a non-integer (including a bool), a negative quantity, or a quantity
+    that exceeds the stored column's range.
+    """
+
+    def __init__(self, value: object) -> None:
+        super().__init__(f"invalid stock quantity: {value!r}")
+        self.value = value
+
+
+class InsufficientStockError(CatalogError):
+    """Raised when a stock adjustment would drive the quantity below zero.
+
+    This is the overselling guard: stock on hand can never be negative, so a
+    decrement larger than what is available is rejected rather than clamped.
+    """
+
+    def __init__(self, available: int, delta: int) -> None:
+        super().__init__(f"insufficient stock: available {available}, requested change {delta}")
+        self.available = available
+        self.delta = delta
+
+
 class InvalidMoneyError(CatalogError):
     """Raised when a money amount or currency is malformed.
 

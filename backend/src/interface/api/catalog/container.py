@@ -7,6 +7,7 @@ Views depend on these factories, never on the infrastructure layer directly.
 from __future__ import annotations
 
 from src.application.catalog.use_cases import (
+    AdjustVariantStock,
     CreateAttribute,
     CreateCategory,
     CreateCollection,
@@ -24,6 +25,7 @@ from src.application.catalog.use_cases import (
     GetProductType,
     GetVariant,
     GetVariantPrices,
+    GetVariantStock,
     ListAttributes,
     ListCategories,
     ListCollections,
@@ -34,6 +36,7 @@ from src.application.catalog.use_cases import (
     SetCollectionRule,
     SetProductCategories,
     SetVariantPrices,
+    SetVariantStock,
 )
 from src.infrastructure.catalog.repositories import (
     DjangoAttributeRepository,
@@ -45,6 +48,7 @@ from src.infrastructure.catalog.repositories import (
     DjangoProductCategoryRepository,
     DjangoProductRepository,
     DjangoProductTypeRepository,
+    DjangoStockRepository,
     DjangoVariantPriceRepository,
     DjangoVariantRepository,
 )
@@ -194,3 +198,19 @@ def build_set_variant_prices() -> SetVariantPrices:
 
 def build_get_variant_prices() -> GetVariantPrices:
     return GetVariantPrices(DjangoVariantPriceRepository(), DjangoVariantRepository())
+
+
+def build_set_variant_stock() -> SetVariantStock:
+    return SetVariantStock(
+        DjangoStockRepository(), DjangoVariantRepository(), build_audit_recorder()
+    )
+
+
+def build_adjust_variant_stock() -> AdjustVariantStock:
+    return AdjustVariantStock(
+        DjangoStockRepository(), DjangoVariantRepository(), build_audit_recorder()
+    )
+
+
+def build_get_variant_stock() -> GetVariantStock:
+    return GetVariantStock(DjangoStockRepository(), DjangoVariantRepository())

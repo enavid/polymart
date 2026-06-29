@@ -28,6 +28,7 @@ from src.application.catalog.ports import (
     ProductCategoryRepository,
     ProductRepository,
     ProductTypeRepository,
+    StockRepository,
     VariantPriceRepository,
     VariantRepository,
 )
@@ -77,6 +78,7 @@ from src.domain.catalog.value_objects import (
     ProductTypeCode,
     RuleCondition,
     Sku,
+    StockQuantity,
 )
 
 logger = structlog.get_logger(__name__)
@@ -99,6 +101,7 @@ _ACTION_COLLECTION_CREATED = "collection.created"
 _ACTION_COLLECTION_PRODUCTS_CHANGED = "collection.products_changed"
 _ACTION_COLLECTION_RULE_CHANGED = "collection.rule_changed"
 _ACTION_VARIANT_PRICE_CHANGED = "variant.price_changed"
+_ACTION_VARIANT_STOCK_CHANGED = "variant.stock_changed"
 
 # Membership is recorded in the audit trail as a deterministic, comma-joined slug
 # string (AuditValue is a flat scalar, never a list).
@@ -1224,3 +1227,143 @@ class GetVariantPrices:
         prices = self._repository.list_for_variant(sku)
         logger.debug("variant_prices_listed", sku=sku, count=len(prices))
         return prices
+
+
+@dataclass(frozen=True)
+class SetVariantStockCommand:
+    """Input for setting a variant's absolute on-hand stock quantity."""
+
+    variant: str
+    quantity: int
+
+
+@dataclass(frozen=True)
+class AdjustVariantStockCommand:
+    """Input for applying a signed delta to a variant's on-hand stock quantity."""
+
+    variant: str
+    delta: int
+
+
+class SetVariantStock:
+    """Set a variant's on-hand stock to an absolute quantity (idempotent).
+
+    Stock is inventory-sensitive, so this use case records a before/after audit
+    entry naming the actor. It confirms the variant exists (a 404 at the edge),
+    builds a non-negative ``StockQuantity`` (a malformed quantity is a 400), delegates
+    the write to the repository, and observes. Setting an absolute value is naturally
+    idempotent; the race-prone read-modify-write lives in ``AdjustVariantStock``.
+    """
+
+    def __init__(
+        self,
+        repository: StockRepository,
+        variants: VariantRepository,
+        audit: AuditRecorder,
+    ) -> None:
+        self._repository = repository
+        self._variants = variants
+        self._audit = audit
+
+    def execute(
+        self, command: SetVariantStockCommand, *, actor: str | None = None
+    ) -> StockQuantity:
+        # Build the value object first: a malformed quantity fails fast, before any I/O.
+        requested = StockQuantity(command.quantity)
+        sku = command.variant
+
+        # The variant must exist (a 404 at the edge); its id anchors the audit entry.
+        # The repository defends the concurrent-deletion race too.
+        variant = self._variants.get_by_sku(sku)
+
+        before = self._repository.get_quantity(sku)
+        stored = self._repository.set_quantity(sku, requested)
+        logger.info(
+            "variant_stock_set",
+            variant_id=variant.id,
+            sku=sku,
+            quantity=stored.value,
+            actor=actor,
+        )
+        self._audit.record(
+            action=_ACTION_VARIANT_STOCK_CHANGED,
+            resource_type=_RESOURCE_VARIANT,
+            resource_id=str(variant.id),
+            actor=actor,
+            changes=(
+                FieldChange(field="quantity", before=before.value, after=stored.value),
+            ),
+        )
+        return stored
+
+
+class AdjustVariantStock:
+    """Apply a signed delta to a variant's on-hand stock atomically.
+
+    A delta is a restock (positive) or a withdrawal (negative). The atomic
+    read-modify-write -- and the lock that serializes concurrent adjustments so two
+    callers cannot both withdraw the last unit -- live in the repository; the
+    overselling rule (never below zero) lives in the domain. This use case confirms
+    the variant exists (a 404), delegates the adjustment (an oversell or overflow is
+    a 400), and records a before/after inventory-sensitive audit entry.
+    """
+
+    def __init__(
+        self,
+        repository: StockRepository,
+        variants: VariantRepository,
+        audit: AuditRecorder,
+    ) -> None:
+        self._repository = repository
+        self._variants = variants
+        self._audit = audit
+
+    def execute(
+        self, command: AdjustVariantStockCommand, *, actor: str | None = None
+    ) -> StockQuantity:
+        sku = command.variant
+
+        # The variant must exist (a 404 at the edge); its id anchors the audit entry.
+        variant = self._variants.get_by_sku(sku)
+
+        # The repository serializes this read-modify-write under a row lock and applies
+        # the domain's no-oversell rule; an oversell/overflow raises (no row is written).
+        stored = self._repository.adjust_quantity(sku, command.delta)
+        # Derive the before-value from the locked result rather than a separate,
+        # unlocked read: adjust_stock never clamps (it raises instead), so a successful
+        # adjustment satisfies after == before + delta exactly. This keeps the audit
+        # pair lock-accurate and internally consistent under concurrent adjustments.
+        before_value = stored.value - command.delta
+        logger.info(
+            "variant_stock_adjusted",
+            variant_id=variant.id,
+            sku=sku,
+            delta=command.delta,
+            quantity=stored.value,
+            actor=actor,
+        )
+        self._audit.record(
+            action=_ACTION_VARIANT_STOCK_CHANGED,
+            resource_type=_RESOURCE_VARIANT,
+            resource_id=str(variant.id),
+            actor=actor,
+            changes=(
+                FieldChange(field="quantity", before=before_value, after=stored.value),
+            ),
+        )
+        return stored
+
+
+class GetVariantStock:
+    """Read a variant's on-hand stock quantity (404 if the variant does not exist)."""
+
+    def __init__(self, repository: StockRepository, variants: VariantRepository) -> None:
+        self._repository = repository
+        self._variants = variants
+
+    def execute(self, *, sku: str) -> StockQuantity:
+        # Confirm the variant exists so an unknown SKU is a 404, not a default of zero.
+        self._variants.get_by_sku(sku)
+        quantity = self._repository.get_quantity(sku)
+        logger.debug("variant_stock_listed", sku=sku, quantity=quantity.value)
+        return quantity

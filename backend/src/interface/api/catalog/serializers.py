@@ -212,3 +212,25 @@ class VariantPricesSerializer(serializers.Serializer):
     """Response projection of a variant's per-channel base prices."""
 
     prices = ChannelPriceSerializer(many=True)
+
+
+class SetVariantStockSerializer(serializers.Serializer):
+    """Request body for setting a variant's absolute on-hand stock quantity.
+
+    The non-negative rule is the domain's (a negative value surfaces as a 400 from
+    ``StockQuantity``); this only checks the field is present and an integer.
+    """
+
+    quantity = serializers.IntegerField()
+
+
+class AdjustVariantStockSerializer(serializers.Serializer):
+    """Request body for adjusting a variant's stock by a signed delta."""
+
+    delta = serializers.IntegerField()
+
+
+class VariantStockSerializer(serializers.Serializer):
+    """Response projection of a variant's on-hand stock quantity."""
+
+    quantity = serializers.IntegerField()

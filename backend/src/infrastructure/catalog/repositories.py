@@ -17,6 +17,7 @@ from src.application.catalog.ports import (
     ProductCategoryRepository,
     ProductRepository,
     ProductTypeRepository,
+    StockRepository,
     VariantPriceRepository,
     VariantRepository,
 )
@@ -47,6 +48,7 @@ from src.domain.catalog.exceptions import (
     VariantAlreadyExistsError,
     VariantNotFoundError,
 )
+from src.domain.catalog.services import adjust_stock
 from src.domain.catalog.value_objects import (
     AttributeCode,
     CategorySlug,
@@ -54,6 +56,7 @@ from src.domain.catalog.value_objects import (
     Money,
     ProductCode,
     RuleCondition,
+    StockQuantity,
 )
 from src.infrastructure.catalog.mappers import (
     apply_category_scalar_fields,
@@ -87,6 +90,7 @@ from src.infrastructure.catalog.models import (
     ProductVariantMediaModel,
     ProductVariantModel,
     VariantPriceModel,
+    VariantStockModel,
 )
 from src.infrastructure.channel.models import ChannelModel
 
@@ -675,3 +679,54 @@ class DjangoChannelReader(ChannelReader):
             .values_list("currency_code", flat=True)
             .first()
         )
+
+
+class DjangoStockRepository(StockRepository):
+    """Persist a variant's on-hand stock quantity with the Django ORM."""
+
+    def get_quantity(self, sku: str) -> StockQuantity:
+        quantity = (
+            VariantStockModel.objects.filter(variant__sku=sku)
+            .values_list("quantity", flat=True)
+            .first()
+        )
+        return StockQuantity(quantity if quantity is not None else 0)
+
+    def set_quantity(self, sku: str, quantity: StockQuantity) -> StockQuantity:
+        # Lock the variant so a set and a concurrent adjust on the same variant
+        # serialize instead of racing; the single upsert is then trivially atomic.
+        with transaction.atomic():
+            variant = self._lock_variant(sku)
+            VariantStockModel.objects.update_or_create(
+                variant=variant, defaults={"quantity": quantity.value}
+            )
+        return quantity
+
+    def adjust_quantity(self, sku: str, delta: int) -> StockQuantity:
+        # The whole read-modify-write runs under a lock on the variant row, so two
+        # concurrent adjustments cannot both read the same starting quantity and lose
+        # an update (or oversell). The no-below-zero rule itself is the domain's.
+        with transaction.atomic():
+            variant = self._lock_variant(sku)
+            current = self._current_quantity(variant)
+            new_quantity = adjust_stock(current, delta)
+            VariantStockModel.objects.update_or_create(
+                variant=variant, defaults={"quantity": new_quantity.value}
+            )
+            return new_quantity
+
+    @staticmethod
+    def _lock_variant(sku: str) -> ProductVariantModel:
+        try:
+            return ProductVariantModel.objects.select_for_update().get(sku=sku)
+        except ProductVariantModel.DoesNotExist as exc:
+            raise VariantNotFoundError(sku) from exc
+
+    @staticmethod
+    def _current_quantity(variant: ProductVariantModel) -> StockQuantity:
+        quantity = (
+            VariantStockModel.objects.filter(variant=variant)
+            .values_list("quantity", flat=True)
+            .first()
+        )
+        return StockQuantity(quantity if quantity is not None else 0)

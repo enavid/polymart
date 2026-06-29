@@ -233,6 +233,31 @@ def test_get_variant_prices_documents_not_found() -> None:
     assert "404" in responses
 
 
+def test_set_variant_stock_documents_validation_forbidden_and_not_found() -> None:
+    responses = _responses("/api/v1/catalog/variants/{sku}/stock/", "put")
+
+    assert "200" in responses
+    assert "400" in responses
+    assert "403" in responses
+    assert "404" in responses
+
+
+def test_adjust_variant_stock_documents_validation_forbidden_and_not_found() -> None:
+    responses = _responses("/api/v1/catalog/variants/{sku}/stock/", "patch")
+
+    assert "200" in responses
+    assert "400" in responses
+    assert "403" in responses
+    assert "404" in responses
+
+
+def test_get_variant_stock_documents_not_found() -> None:
+    responses = _responses("/api/v1/catalog/variants/{sku}/stock/", "get")
+
+    assert "200" in responses
+    assert "404" in responses
+
+
 def test_set_product_categories_documents_validation_forbidden_and_not_found() -> None:
     responses = _responses("/api/v1/catalog/products/{code}/categories/", "put")
 

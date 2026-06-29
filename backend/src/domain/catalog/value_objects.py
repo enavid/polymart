@@ -23,6 +23,7 @@ from src.domain.catalog.exceptions import (
     InvalidProductTypeCodeError,
     InvalidRuleConditionError,
     InvalidSkuError,
+    InvalidStockQuantityError,
 )
 
 # URL-safe kebab-case: lower-case alphanumerics in hyphen-separated groups. Codes
@@ -53,6 +54,10 @@ _MONEY_MAX_DECIMAL_PLACES = 4
 # (IRR/USD/...) is validated by the channel context; a price always derives its
 # currency from a persisted channel, so here we only enforce the structural shape.
 _CURRENCY_RE = re.compile(r"^[A-Z]{3}$")
+# A stock quantity is a non-negative integer bounded to the stored column's range
+# (a 32-bit positive integer), so an absurd value is rejected at the domain edge
+# rather than at the database.
+_STOCK_MAX_QUANTITY = 2_147_483_647
 
 
 @dataclass(frozen=True)
@@ -302,3 +307,24 @@ class ChannelPrice:
         if not channel or len(channel) > _SLUG_MAX_LENGTH:
             raise InvalidChannelReferenceError(self.channel)
         object.__setattr__(self, "channel", channel)
+
+
+@dataclass(frozen=True)
+class StockQuantity:
+    """The number of sellable units of a variant on hand.
+
+    A quantity is a non-negative integer: zero is a valid (out-of-stock) state, but
+    a negative count is never representable. ``bool`` is an ``int`` subclass, so it
+    is rejected explicitly -- ``True`` must never silently become a quantity of one.
+    The upper bound matches the stored column so an out-of-range value fails here
+    rather than at the database. Reservation/deduction on order is a later phase;
+    this is only the on-hand count.
+    """
+
+    value: int
+
+    def __post_init__(self) -> None:
+        if isinstance(self.value, bool) or not isinstance(self.value, int):
+            raise InvalidStockQuantityError(self.value)
+        if self.value < 0 or self.value > _STOCK_MAX_QUANTITY:
+            raise InvalidStockQuantityError(self.value)

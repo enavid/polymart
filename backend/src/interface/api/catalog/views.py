@@ -17,6 +17,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from src.application.catalog.use_cases import (
+    AdjustVariantStockCommand,
     AttributeChoiceInput,
     AttributeValueInput,
     ChannelPriceInput,
@@ -32,6 +33,7 @@ from src.application.catalog.use_cases import (
     SetCollectionRuleCommand,
     SetProductCategoriesCommand,
     SetVariantPricesCommand,
+    SetVariantStockCommand,
 )
 from src.domain.catalog.entities import (
     Attribute,
@@ -61,9 +63,11 @@ from src.domain.catalog.value_objects import (
     ChannelPrice,
     ProductCode,
     RuleCondition,
+    StockQuantity,
 )
 from src.interface.api.access.permissions import CatalogManagePermission
 from src.interface.api.catalog.container import (
+    build_adjust_variant_stock,
     build_create_attribute,
     build_create_category,
     build_create_collection,
@@ -81,6 +85,7 @@ from src.interface.api.catalog.container import (
     build_get_product_type,
     build_get_variant,
     build_get_variant_prices,
+    build_get_variant_stock,
     build_list_attributes,
     build_list_categories,
     build_list_collections,
@@ -91,8 +96,10 @@ from src.interface.api.catalog.container import (
     build_set_collection_rule,
     build_set_product_categories,
     build_set_variant_prices,
+    build_set_variant_stock,
 )
 from src.interface.api.catalog.serializers import (
+    AdjustVariantStockSerializer,
     AttributeSerializer,
     CategorySerializer,
     CollectionProductsSerializer,
@@ -109,8 +116,10 @@ from src.interface.api.catalog.serializers import (
     ProductSerializer,
     ProductTypeSerializer,
     SetVariantPricesSerializer,
+    SetVariantStockSerializer,
     VariantPricesSerializer,
     VariantSerializer,
+    VariantStockSerializer,
 )
 from src.interface.api.common import ErrorSerializer
 
@@ -758,3 +767,72 @@ class VariantPricesView(APIView):
             # channel price surfaced from the domain.
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         return Response(_variant_prices_payload(prices))
+
+
+def _variant_stock_payload(quantity: StockQuantity) -> dict[str, object]:
+    """Project a variant's on-hand stock quantity to the response body."""
+    return {"quantity": quantity.value}
+
+
+class VariantStockView(APIView):
+    """Read, set, or adjust a variant's on-hand stock (nested under the variant).
+
+    ``PUT`` sets an absolute quantity (idempotent); ``PATCH`` applies a signed delta
+    atomically (an oversell is rejected, never clamped).
+    """
+
+    permission_classes: ClassVar = [CatalogManagePermission]
+
+    @extend_schema(responses={200: VariantStockSerializer, 404: ErrorSerializer})
+    def get(self, request: Request, sku: str) -> Response:
+        try:
+            quantity = build_get_variant_stock().execute(sku=sku)
+        except VariantNotFoundError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_404_NOT_FOUND)
+        return Response(_variant_stock_payload(quantity))
+
+    @extend_schema(
+        request=SetVariantStockSerializer,
+        responses={
+            200: VariantStockSerializer,
+            400: ErrorSerializer,
+            403: ErrorSerializer,
+            404: ErrorSerializer,
+        },
+    )
+    def put(self, request: Request, sku: str) -> Response:
+        serializer = SetVariantStockSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        command = SetVariantStockCommand(
+            variant=sku, quantity=serializer.validated_data["quantity"]
+        )
+        try:
+            quantity = build_set_variant_stock().execute(command, actor=_actor(request))
+        except VariantNotFoundError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_404_NOT_FOUND)
+        except CatalogError as exc:
+            # A negative or out-of-range quantity surfaced from the domain.
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(_variant_stock_payload(quantity))
+
+    @extend_schema(
+        request=AdjustVariantStockSerializer,
+        responses={
+            200: VariantStockSerializer,
+            400: ErrorSerializer,
+            403: ErrorSerializer,
+            404: ErrorSerializer,
+        },
+    )
+    def patch(self, request: Request, sku: str) -> Response:
+        serializer = AdjustVariantStockSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        command = AdjustVariantStockCommand(variant=sku, delta=serializer.validated_data["delta"])
+        try:
+            quantity = build_adjust_variant_stock().execute(command, actor=_actor(request))
+        except VariantNotFoundError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_404_NOT_FOUND)
+        except CatalogError as exc:
+            # An oversell (would go below zero) or an overflow surfaced from the domain.
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(_variant_stock_payload(quantity))

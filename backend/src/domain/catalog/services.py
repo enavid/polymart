@@ -12,6 +12,8 @@ collection) and so belongs to none of them. Two live here:
 - *rule matching*: which products a conjunction of rule conditions selects -- a
   rule that spans many products and their attribute values, owned by no entity.
 - *channel-price uniqueness*: a variant has at most one base price per channel.
+- *stock adjustment*: applying a signed delta to a stock level, refusing to drop
+  it below zero (the overselling guard).
 
 The application layer fetches the data and calls these services; the rules
 themselves stay in the domain.
@@ -29,6 +31,7 @@ from src.domain.catalog.exceptions import (
     DuplicateChannelPriceError,
     DuplicateProductMembershipError,
     DuplicateRuleConditionError,
+    InsufficientStockError,
     InvalidAttributeValueError,
     MissingRequiredAttributeError,
     UnassignedAttributeError,
@@ -39,6 +42,7 @@ from src.domain.catalog.value_objects import (
     ChannelPrice,
     ProductCode,
     RuleCondition,
+    StockQuantity,
 )
 
 # Accepted boolean literals; values are normalized to these canonical forms.
@@ -202,6 +206,21 @@ def reject_duplicate_channel_prices(
             raise DuplicateChannelPriceError(price.channel)
         seen.add(price.channel)
     return tuple(prices)
+
+
+def adjust_stock(current: StockQuantity, delta: int) -> StockQuantity:
+    """Apply a signed delta to a stock level, never dropping it below zero.
+
+    A positive delta is a restock, a negative one a withdrawal. The result must stay
+    non-negative: a withdrawal larger than what is on hand is an oversell and is
+    rejected (``InsufficientStockError``) rather than clamped to zero, so the caller
+    learns the operation could not be honoured. The new total is built through
+    ``StockQuantity``, which also rejects an overflow past the stored maximum.
+    """
+    new_value = current.value + delta
+    if new_value < 0:
+        raise InsufficientStockError(available=current.value, delta=delta)
+    return StockQuantity(new_value)
 
 
 def match_products(
