@@ -72,8 +72,20 @@ infra-down: ## Stop and remove the infra containers + network (keeps the data vo
 	@$(ENVLOAD) $(COMPOSE) down
 
 # --- Run the app natively ----------------------------------------------------
-.PHONY: up down restart logs ps
-up: $(STAMP) env infra-up migrate ## Run the app natively (backend, worker, beat, frontend)
+.PHONY: up down restart logs ps assert-stopped
+assert-stopped: ## Fail if a native stack is already running (prevents orphaned processes)
+	@for f in $(RUN)/backend.pid $(RUN)/worker.pid $(RUN)/beat.pid $(RUN)/frontend.pid; do \
+		[ -f "$$f" ] || continue; \
+		pid=$$(cat "$$f" 2>/dev/null); \
+		if [ -n "$$pid" ] && kill -0 "$$pid" 2>/dev/null; then \
+			echo ">> a native stack is already running ($$(basename $$f .pid) pid $$pid)."; \
+			echo ">> use 'make restart' to restart it. Re-running 'make up' would start"; \
+			echo ">> duplicate servers that orphan the old ones and corrupt the Next.js build."; \
+			exit 1; \
+		fi; \
+	done
+
+up: assert-stopped $(STAMP) env infra-up migrate ## Run the app natively (backend, worker, beat, frontend)
 	@mkdir -p $(RUN)
 	@echo ">> starting backend  -> http://127.0.0.1:8000"
 	@( $(BACKEND) exec env $(DJANGO_ENV) $(VBIN)/python manage.py runserver 127.0.0.1:8000 ) \
@@ -100,6 +112,17 @@ down: ## Stop the native app processes and the infra containers
 		if kill -TERM "$$pid" 2>/dev/null; then echo "stopped $$(basename $$f .pid) (pid $$pid)"; \
 		else echo "$$(basename $$f .pid): already stopped"; fi; \
 		rm -f "$$f"; \
+	done
+	@# Sweep stray native processes orphaned by a previous double-'up' or by a
+	@# stale pid file (runserver's autoreloader and Next's next-server are children
+	@# whose pids drift from what was recorded, so the kill above can miss them and
+	@# they survive -- holding :8000/:3000 and corrupting the shared .next build).
+	@# Scoped by working directory (/proc/<pid>/cwd under $(CURDIR)) so processes
+	@# from OTHER projects are never touched.
+	-@for pid in $$(pgrep -f "manage.py runserver|celery -A config|next-server|next dev" 2>/dev/null); do \
+		case "$$(readlink -f /proc/$$pid/cwd 2>/dev/null)" in \
+			"$(CURDIR)"|"$(CURDIR)"/*) kill -TERM "$$pid" 2>/dev/null && echo "swept stray process (pid $$pid)";; \
+		esac; \
 	done
 	@$(MAKE) --no-print-directory infra-down
 
