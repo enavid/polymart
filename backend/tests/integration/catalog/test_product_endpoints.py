@@ -81,9 +81,7 @@ class TestSecurity:
         assert APIClient().post("/api/v1/catalog/products/", {}, format="json").status_code == 401
 
     def test_member_without_permission_cannot_create(self, member_client: APIClient) -> None:
-        response = member_client.post(
-            "/api/v1/catalog/products/", _product_body(), format="json"
-        )
+        response = member_client.post("/api/v1/catalog/products/", _product_body(), format="json")
         assert response.status_code == 403
 
 

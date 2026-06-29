@@ -132,9 +132,9 @@ class TestAdd:
             ("weight", "250"),
             ("grind", "espresso"),
         ]
-        rows = ProductVariantAttributeValueModel.objects.filter(
-            variant_id=stored.id
-        ).order_by("position")
+        rows = ProductVariantAttributeValueModel.objects.filter(variant_id=stored.id).order_by(
+            "position"
+        )
         assert [(r.attribute.code, r.position) for r in rows] == [("weight", 0), ("grind", 1)]
 
     def test_rejects_a_value_for_a_vanished_attribute(self) -> None:

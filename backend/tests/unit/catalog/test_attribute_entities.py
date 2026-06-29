@@ -66,9 +66,7 @@ class TestChoiceTypeRules:
             AttributeInputType.BOOLEAN,
         ],
     )
-    def test_a_non_choice_type_must_not_carry_choices(
-        self, input_type: AttributeInputType
-    ) -> None:
+    def test_a_non_choice_type_must_not_carry_choices(self, input_type: AttributeInputType) -> None:
         with pytest.raises(AttributeChoicesNotAllowedError):
             Attribute(
                 code=AttributeCode("origin"),

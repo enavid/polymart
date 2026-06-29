@@ -25,6 +25,7 @@ from src.application.catalog.use_cases import (
     CreateProductTypeCommand,
     CreateVariantCommand,
     MediaInput,
+    SetProductCategoriesCommand,
 )
 from src.domain.catalog.entities import (
     Attribute,
@@ -46,6 +47,7 @@ from src.domain.catalog.exceptions import (
     VariantAlreadyExistsError,
     VariantNotFoundError,
 )
+from src.domain.catalog.value_objects import CategorySlug
 from src.interface.api.access.permissions import CatalogManagePermission
 from src.interface.api.catalog.container import (
     build_create_attribute,
@@ -56,6 +58,7 @@ from src.interface.api.catalog.container import (
     build_get_attribute,
     build_get_category,
     build_get_product,
+    build_get_product_categories,
     build_get_product_type,
     build_get_variant,
     build_list_attributes,
@@ -63,6 +66,7 @@ from src.interface.api.catalog.container import (
     build_list_product_types,
     build_list_product_variants,
     build_list_products,
+    build_set_product_categories,
 )
 from src.interface.api.catalog.serializers import (
     AttributeSerializer,
@@ -72,6 +76,7 @@ from src.interface.api.catalog.serializers import (
     CreateProductSerializer,
     CreateProductTypeSerializer,
     CreateVariantSerializer,
+    ProductCategoriesSerializer,
     ProductSerializer,
     ProductTypeSerializer,
     VariantSerializer,
@@ -104,9 +109,7 @@ def _payload(attribute: Attribute) -> dict[str, object]:
         "name": attribute.name,
         "input_type": attribute.input_type.value,
         "required": attribute.required,
-        "choices": [
-            {"value": choice.value, "label": choice.label} for choice in attribute.choices
-        ],
+        "choices": [{"value": choice.value, "label": choice.label} for choice in attribute.choices],
     }
 
 
@@ -174,9 +177,7 @@ def _product_type_payload(product_type: ProductType) -> dict[str, object]:
         "code": product_type.code.value,
         "name": product_type.name,
         "attributes": [attribute.value for attribute in product_type.attributes],
-        "variant_attributes": [
-            attribute.value for attribute in product_type.variant_attributes
-        ],
+        "variant_attributes": [attribute.value for attribute in product_type.variant_attributes],
     }
 
 
@@ -241,8 +242,7 @@ def _product_payload(product: Product) -> dict[str, object]:
         "name": product.name,
         "product_type": product.product_type.value,
         "values": [
-            {"attribute": value.attribute.value, "value": value.value}
-            for value in product.values
+            {"attribute": value.attribute.value, "value": value.value} for value in product.values
         ],
         "metadata": dict(product.metadata),
     }
@@ -314,8 +314,7 @@ def _variant_payload(variant: ProductVariant) -> dict[str, object]:
         "sku": variant.sku.value,
         "name": variant.name,
         "values": [
-            {"attribute": value.attribute.value, "value": value.value}
-            for value in variant.values
+            {"attribute": value.attribute.value, "value": value.value} for value in variant.values
         ],
         "media": [{"url": asset.url, "alt_text": asset.alt_text} for asset in variant.media],
     }
@@ -357,8 +356,7 @@ class ProductVariantListCreateView(APIView):
                 for item in data["values"]
             ),
             media=tuple(
-                MediaInput(url=item["url"], alt_text=item["alt_text"])
-                for item in data["media"]
+                MediaInput(url=item["url"], alt_text=item["alt_text"]) for item in data["media"]
             ),
         )
         try:
@@ -447,3 +445,47 @@ class CategoryDetailView(APIView):
         except CategoryNotFoundError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_404_NOT_FOUND)
         return Response(_category_payload(category))
+
+
+def _categories_payload(categories: tuple[CategorySlug, ...]) -> dict[str, object]:
+    """Project a product's category membership to the response body."""
+    return {"categories": [category.value for category in categories]}
+
+
+class ProductCategoriesView(APIView):
+    """List or replace a product's category membership (nested under the product)."""
+
+    permission_classes: ClassVar = [CatalogManagePermission]
+
+    @extend_schema(responses={200: ProductCategoriesSerializer, 404: ErrorSerializer})
+    def get(self, request: Request, code: str) -> Response:
+        try:
+            categories = build_get_product_categories().execute(product_code=code)
+        except ProductNotFoundError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_404_NOT_FOUND)
+        return Response(_categories_payload(categories))
+
+    @extend_schema(
+        request=ProductCategoriesSerializer,
+        responses={
+            200: ProductCategoriesSerializer,
+            400: ErrorSerializer,
+            403: ErrorSerializer,
+            404: ErrorSerializer,
+        },
+    )
+    def put(self, request: Request, code: str) -> Response:
+        serializer = ProductCategoriesSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        command = SetProductCategoriesCommand(
+            product=code,
+            categories=tuple(serializer.validated_data["categories"]),
+        )
+        try:
+            categories = build_set_product_categories().execute(command, actor=_actor(request))
+        except ProductNotFoundError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_404_NOT_FOUND)
+        except CatalogError as exc:
+            # A malformed/duplicate slug, or a referenced category that does not exist.
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(_categories_payload(categories))

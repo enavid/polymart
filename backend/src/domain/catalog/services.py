@@ -1,11 +1,15 @@
 """Domain services for the catalog context (pure Python, no framework).
 
-A domain service holds business logic that spans more than one entity and so
-belongs to none of them. Here it is *attribute-value conformance*: a product's
-values must match the attributes its product type assigns -- a rule that needs
-both the product's values and the attribute definitions, which no single entity
-owns. The application layer fetches those definitions and calls this service; the
-rule itself stays in the domain.
+A domain service holds business logic that spans more than one entity (or a whole
+collection) and so belongs to none of them. Two live here:
+
+- *attribute-value conformance*: a product's values must match the attributes its
+  product type assigns -- a rule that needs both the product's values and the
+  attribute definitions, which no single entity owns.
+- *category-assignment uniqueness*: a product references a category at most once.
+
+The application layer fetches the data and calls these services; the rules
+themselves stay in the domain.
 """
 
 from __future__ import annotations
@@ -16,11 +20,12 @@ from decimal import Decimal, InvalidOperation
 from src.domain.catalog.entities import Attribute
 from src.domain.catalog.enums import AttributeInputType
 from src.domain.catalog.exceptions import (
+    DuplicateCategoryAssignmentError,
     InvalidAttributeValueError,
     MissingRequiredAttributeError,
     UnassignedAttributeError,
 )
-from src.domain.catalog.value_objects import AttributeValue
+from src.domain.catalog.value_objects import AttributeValue, CategorySlug
 
 # Accepted boolean literals; values are normalized to these canonical forms.
 _TRUE = "true"
@@ -82,9 +87,7 @@ def _normalize_number(attribute: Attribute, raw: str) -> str:
     try:
         number = Decimal(raw.strip())
     except InvalidOperation as exc:
-        raise InvalidAttributeValueError(
-            attribute.code.value, f"not a number: {raw!r}"
-        ) from exc
+        raise InvalidAttributeValueError(attribute.code.value, f"not a number: {raw!r}") from exc
     if not number.is_finite():
         raise InvalidAttributeValueError(attribute.code.value, f"not a finite number: {raw!r}")
     return str(number)
@@ -93,9 +96,7 @@ def _normalize_number(attribute: Attribute, raw: str) -> str:
 def _normalize_boolean(attribute: Attribute, raw: str) -> str:
     literal = raw.strip().lower()
     if literal not in _BOOLEAN_LITERALS:
-        raise InvalidAttributeValueError(
-            attribute.code.value, f"not a boolean: {raw!r}"
-        )
+        raise InvalidAttributeValueError(attribute.code.value, f"not a boolean: {raw!r}")
     return literal
 
 
@@ -120,3 +121,19 @@ def _normalize_one(attribute: Attribute, raw: str) -> str:
     if attribute.input_type.is_choice_type:
         return _normalize_choice(attribute, raw)
     return _SCALAR_NORMALIZERS[attribute.input_type](attribute, raw)
+
+
+def reject_duplicate_categories(
+    categories: Sequence[CategorySlug],
+) -> tuple[CategorySlug, ...]:
+    """Return the assignment unchanged, rejecting a category listed twice.
+
+    A product belongs to a category at most once; a repeated slug is a malformed
+    assignment, not a silently-collapsed set, so it is surfaced as a domain error.
+    """
+    seen: set[str] = set()
+    for category in categories:
+        if category.value in seen:
+            raise DuplicateCategoryAssignmentError(category.value)
+        seen.add(category.value)
+    return tuple(categories)

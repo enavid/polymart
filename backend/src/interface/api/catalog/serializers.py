@@ -53,9 +53,7 @@ class CreateProductTypeSerializer(serializers.Serializer):
 
     code = serializers.CharField()
     name = serializers.CharField()
-    attributes = serializers.ListField(
-        child=serializers.CharField(), required=False, default=list
-    )
+    attributes = serializers.ListField(child=serializers.CharField(), required=False, default=list)
     variant_attributes = serializers.ListField(
         child=serializers.CharField(), required=False, default=list
     )
@@ -131,3 +129,9 @@ class CreateCategorySerializer(serializers.Serializer):
     slug = serializers.CharField()
     name = serializers.CharField()
     parent = serializers.CharField(required=False, allow_null=True, default=None)
+
+
+class ProductCategoriesSerializer(serializers.Serializer):
+    """Response/request projection of a product's category membership (ordered slugs)."""
+
+    categories = serializers.ListField(child=serializers.CharField())

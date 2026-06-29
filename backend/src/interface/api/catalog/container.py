@@ -15,6 +15,7 @@ from src.application.catalog.use_cases import (
     GetAttribute,
     GetCategory,
     GetProduct,
+    GetProductCategories,
     GetProductType,
     GetVariant,
     ListAttributes,
@@ -22,10 +23,12 @@ from src.application.catalog.use_cases import (
     ListProducts,
     ListProductTypes,
     ListProductVariants,
+    SetProductCategories,
 )
 from src.infrastructure.catalog.repositories import (
     DjangoAttributeRepository,
     DjangoCategoryRepository,
+    DjangoProductCategoryRepository,
     DjangoProductRepository,
     DjangoProductTypeRepository,
     DjangoVariantRepository,
@@ -104,3 +107,16 @@ def build_get_category() -> GetCategory:
 
 def build_list_categories() -> ListCategories:
     return ListCategories(DjangoCategoryRepository())
+
+
+def build_set_product_categories() -> SetProductCategories:
+    return SetProductCategories(
+        DjangoProductCategoryRepository(),
+        DjangoProductRepository(),
+        DjangoCategoryRepository(),
+        build_audit_recorder(),
+    )
+
+
+def build_get_product_categories() -> GetProductCategories:
+    return GetProductCategories(DjangoProductCategoryRepository(), DjangoProductRepository())

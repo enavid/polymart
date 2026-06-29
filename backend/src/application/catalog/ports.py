@@ -8,6 +8,7 @@ root, keeping the dependency rule pointing inward.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 
 from src.domain.catalog.entities import (
     Attribute,
@@ -16,6 +17,7 @@ from src.domain.catalog.entities import (
     ProductType,
     ProductVariant,
 )
+from src.domain.catalog.value_objects import CategorySlug
 
 
 class AttributeRepository(ABC):
@@ -160,3 +162,29 @@ class CategoryRepository(ABC):
     @abstractmethod
     def list_all(self) -> list[Category]:
         """Return every category, ordered by slug for deterministic output."""
+
+
+class ProductCategoryRepository(ABC):
+    """Persistence boundary for a product's category membership (a join table).
+
+    Implementations MUST translate storage-specific failures into domain
+    exceptions (``ProductNotFoundError`` for a missing product,
+    ``UnknownCategoryError`` for a referenced category that does not exist) so
+    callers never see infrastructure leaks.
+    """
+
+    @abstractmethod
+    def replace(
+        self, product_code: str, categories: Sequence[CategorySlug]
+    ) -> tuple[CategorySlug, ...]:
+        """Replace a product's whole category membership atomically.
+
+        Returns the stored membership in assignment order. Raises
+        ``ProductNotFoundError`` if the product does not exist and
+        ``UnknownCategoryError`` if a referenced category does not exist (the whole
+        replace then rolls back).
+        """
+
+    @abstractmethod
+    def list_for_product(self, product_code: str) -> tuple[CategorySlug, ...]:
+        """Return a product's categories in assignment order (empty if none)."""

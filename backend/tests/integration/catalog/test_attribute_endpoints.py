@@ -70,17 +70,13 @@ class TestAuthorization:
         assert member_client.get("/api/v1/catalog/attributes/").status_code == 200
 
     def test_member_without_permission_cannot_create(self, member_client: APIClient) -> None:
-        response = member_client.post(
-            "/api/v1/catalog/attributes/", _TEXT_ATTRIBUTE, format="json"
-        )
+        response = member_client.post("/api/v1/catalog/attributes/", _TEXT_ATTRIBUTE, format="json")
         assert response.status_code == 403
 
 
 class TestCreate:
     def test_creates_a_text_attribute(self, auth_client: APIClient) -> None:
-        response = auth_client.post(
-            "/api/v1/catalog/attributes/", _TEXT_ATTRIBUTE, format="json"
-        )
+        response = auth_client.post("/api/v1/catalog/attributes/", _TEXT_ATTRIBUTE, format="json")
 
         assert response.status_code == 201
         assert response.data["code"] == "origin"
@@ -110,9 +106,7 @@ class TestCreate:
     def test_duplicate_code_returns_409(self, auth_client: APIClient) -> None:
         auth_client.post("/api/v1/catalog/attributes/", _TEXT_ATTRIBUTE, format="json")
 
-        response = auth_client.post(
-            "/api/v1/catalog/attributes/", _TEXT_ATTRIBUTE, format="json"
-        )
+        response = auth_client.post("/api/v1/catalog/attributes/", _TEXT_ATTRIBUTE, format="json")
 
         assert response.status_code == 409
 

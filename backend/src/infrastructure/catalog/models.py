@@ -64,9 +64,7 @@ class AttributeModel(models.Model):
 class AttributeChoiceModel(models.Model):
     """One allowed option of a choice-type attribute."""
 
-    attribute = models.ForeignKey(
-        AttributeModel, related_name="choices", on_delete=models.CASCADE
-    )
+    attribute = models.ForeignKey(AttributeModel, related_name="choices", on_delete=models.CASCADE)
     value = models.SlugField(max_length=_CODE_MAX_LENGTH)
     label = models.CharField(max_length=_NAME_MAX_LENGTH)
     position = models.PositiveSmallIntegerField(default=0)
@@ -205,9 +203,7 @@ class ProductAttributeValueModel(models.Model):
 class ProductVariantModel(models.Model):
     """A sellable variant of a product, identified by a globally unique SKU."""
 
-    product = models.ForeignKey(
-        ProductModel, related_name="variants", on_delete=models.CASCADE
-    )
+    product = models.ForeignKey(ProductModel, related_name="variants", on_delete=models.CASCADE)
     # The SKU is the variant's stock-keeping identity; unique across the catalogue
     # so it can address one physical item unambiguously.
     sku = models.CharField(max_length=_CODE_MAX_LENGTH, unique=True)
@@ -256,6 +252,33 @@ class ProductVariantAttributeValueModel(models.Model):
         return f"{self.variant_id}:{self.attribute_id}"
 
 
+class ProductCategoryModel(models.Model):
+    """Membership of a product in a category (an ordered M2M through row)."""
+
+    product = models.ForeignKey(
+        ProductModel, related_name="category_links", on_delete=models.CASCADE
+    )
+    category = models.ForeignKey(
+        "CategoryModel", related_name="product_links", on_delete=models.PROTECT
+    )
+    position = models.PositiveSmallIntegerField(default=0)
+
+    class Meta:
+        app_label = "catalog"
+        db_table = "catalog_product_category"
+        ordering = ("position",)
+        # A product belongs to a category at most once.
+        constraints: ClassVar[list[models.BaseConstraint]] = [
+            models.UniqueConstraint(
+                fields=["product", "category"],
+                name="uniq_category_per_product",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.product_id}:{self.category_id}"
+
+
 class CategoryModel(models.Model):
     """A node in the hierarchical catalog taxonomy.
 
@@ -290,9 +313,7 @@ class CategoryModel(models.Model):
 class ProductVariantMediaModel(models.Model):
     """One image attached to a variant (a URL reference, not a stored file)."""
 
-    variant = models.ForeignKey(
-        ProductVariantModel, related_name="media", on_delete=models.CASCADE
-    )
+    variant = models.ForeignKey(ProductVariantModel, related_name="media", on_delete=models.CASCADE)
     # Absolute (CDN) or site-relative URL; the domain validates its shape.
     url = models.CharField(max_length=_URL_MAX_LENGTH)
     alt_text = models.CharField(max_length=_NAME_MAX_LENGTH, blank=True, default="")

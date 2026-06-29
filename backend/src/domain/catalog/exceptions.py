@@ -298,3 +298,19 @@ class ParentCategoryNotFoundError(CatalogError):
     def __init__(self, slug: str) -> None:
         super().__init__(f"parent category not found: {slug!r}")
         self.slug = slug
+
+
+class DuplicateCategoryAssignmentError(CatalogError):
+    """Raised when a product is assigned the same category more than once."""
+
+    def __init__(self, slug: str) -> None:
+        super().__init__(f"duplicate category assignment: {slug!r}")
+        self.slug = slug
+
+
+class UnknownCategoryError(CatalogError):
+    """Raised when a product is assigned a category that does not exist."""
+
+    def __init__(self, slug: str) -> None:
+        super().__init__(f"unknown category: {slug!r}")
+        self.slug = slug

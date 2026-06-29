@@ -20,6 +20,7 @@ from src.application.audit.ports import AuditRecorder
 from src.application.catalog.ports import (
     AttributeRepository,
     CategoryRepository,
+    ProductCategoryRepository,
     ProductRepository,
     ProductTypeRepository,
     VariantRepository,
@@ -41,9 +42,13 @@ from src.domain.catalog.exceptions import (
     ProductAlreadyExistsError,
     ProductTypeAlreadyExistsError,
     UnknownAttributeError,
+    UnknownCategoryError,
     VariantAlreadyExistsError,
 )
-from src.domain.catalog.services import normalize_attribute_values
+from src.domain.catalog.services import (
+    normalize_attribute_values,
+    reject_duplicate_categories,
+)
 from src.domain.catalog.value_objects import (
     AttributeChoice,
     AttributeCode,
@@ -69,6 +74,15 @@ _RESOURCE_VARIANT = "variant"
 _ACTION_VARIANT_CREATED = "variant.created"
 _RESOURCE_CATEGORY = "category"
 _ACTION_CATEGORY_CREATED = "category.created"
+_ACTION_PRODUCT_CATEGORIES_CHANGED = "product.categories_changed"
+
+# Membership is recorded in the audit trail as a deterministic, comma-joined slug
+# string (AuditValue is a flat scalar, never a list).
+_CATEGORY_JOIN = ","
+
+
+def _join_categories(categories: tuple[CategorySlug, ...]) -> str:
+    return _CATEGORY_JOIN.join(category.value for category in categories)
 
 
 @dataclass(frozen=True)
@@ -343,8 +357,7 @@ class CreateProduct:
         # order), then let the domain service decide value conformance.
         product_type = self._product_types.get_by_code(product.product_type.value)
         definitions = [
-            self._attributes.get_by_code(attribute.value)
-            for attribute in product_type.attributes
+            self._attributes.get_by_code(attribute.value) for attribute in product_type.attributes
         ]
         product.values = normalize_attribute_values(definitions, product.values)
 
@@ -455,9 +468,7 @@ class CreateVariant:
                 AttributeValue(attribute=AttributeCode(item.attribute), value=item.value)
                 for item in command.values
             ),
-            media=tuple(
-                MediaAsset(url=item.url, alt_text=item.alt_text) for item in command.media
-            ),
+            media=tuple(MediaAsset(url=item.url, alt_text=item.alt_text) for item in command.media),
         )
         product_code = variant.product.value
         sku = variant.sku.value
@@ -628,4 +639,102 @@ class ListCategories:
     def execute(self) -> list[Category]:
         categories = self._repository.list_all()
         logger.debug("categories_listed", count=len(categories))
+        return categories
+
+
+@dataclass(frozen=True)
+class SetProductCategoriesCommand:
+    """Input for replacing a product's category membership (raw slug strings)."""
+
+    product: str
+    categories: tuple[str, ...] = field(default_factory=tuple)
+
+
+class SetProductCategories:
+    """Replace a product's whole category membership (an idempotent set operation).
+
+    The product, the categories, and the join all live in different aggregates, so
+    this use case loads/validates them and delegates the replace to the repository
+    (which performs it atomically). It owns the orchestration only: build, verify
+    the product and every referenced category exist, reject duplicates, replace,
+    and record a before/after audit entry.
+    """
+
+    def __init__(
+        self,
+        repository: ProductCategoryRepository,
+        products: ProductRepository,
+        categories: CategoryRepository,
+        audit: AuditRecorder,
+    ) -> None:
+        self._repository = repository
+        self._products = products
+        self._categories = categories
+        self._audit = audit
+
+    def execute(
+        self, command: SetProductCategoriesCommand, *, actor: str | None = None
+    ) -> tuple[CategorySlug, ...]:
+        # Build value objects first: a malformed or duplicated slug fails fast,
+        # before any I/O.
+        requested = reject_duplicate_categories(
+            tuple(CategorySlug(slug) for slug in command.categories)
+        )
+        product_code = command.product
+
+        # The product must exist (a 404 at the edge); its id anchors the audit entry.
+        product = self._products.get_by_code(product_code)
+        # Every referenced category must exist (a 400 at the edge); the repository
+        # defends the concurrent-deletion race too.
+        self._reject_unknown_categories(requested, actor=actor)
+
+        before = self._repository.list_for_product(product_code)
+        persisted = self._repository.replace(product_code, requested)
+        logger.info(
+            "product_categories_set",
+            product_id=product.id,
+            product=product_code,
+            count=len(persisted),
+            actor=actor,
+        )
+        self._audit.record(
+            action=_ACTION_PRODUCT_CATEGORIES_CHANGED,
+            resource_type=_RESOURCE_PRODUCT,
+            resource_id=str(product.id),
+            actor=actor,
+            changes=(
+                FieldChange(
+                    field="categories",
+                    before=_join_categories(before),
+                    after=_join_categories(persisted),
+                ),
+            ),
+        )
+        return persisted
+
+    def _reject_unknown_categories(
+        self, categories: tuple[CategorySlug, ...], *, actor: str | None
+    ) -> None:
+        for category in categories:
+            if not self._categories.exists_by_slug(category.value):
+                logger.warning(
+                    "product_categories_rejected_unknown_category",
+                    category=category.value,
+                    actor=actor,
+                )
+                raise UnknownCategoryError(category.value)
+
+
+class GetProductCategories:
+    """List a product's categories (404 if the product does not exist)."""
+
+    def __init__(self, repository: ProductCategoryRepository, products: ProductRepository) -> None:
+        self._repository = repository
+        self._products = products
+
+    def execute(self, *, product_code: str) -> tuple[CategorySlug, ...]:
+        # Confirm the product exists so an unknown product is a 404, not an empty set.
+        self._products.get_by_code(product_code)
+        categories = self._repository.list_for_product(product_code)
+        logger.debug("product_categories_listed", product=product_code, count=len(categories))
         return categories

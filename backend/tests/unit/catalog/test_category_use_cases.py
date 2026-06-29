@@ -181,18 +181,14 @@ class TestCreateCategory:
 
 
 class TestGetCategory:
-    def test_returns_a_seeded_category(
-        self, repository: FakeCategoryRepository
-    ) -> None:
+    def test_returns_a_seeded_category(self, repository: FakeCategoryRepository) -> None:
         repository.seed(Category(slug=CategorySlug("coffee"), name="Coffee"))
 
         category = GetCategory(repository).execute(slug="coffee")
 
         assert category.name == "Coffee"
 
-    def test_raises_for_an_unknown_slug(
-        self, repository: FakeCategoryRepository
-    ) -> None:
+    def test_raises_for_an_unknown_slug(self, repository: FakeCategoryRepository) -> None:
         with pytest.raises(CategoryNotFoundError):
             GetCategory(repository).execute(slug="ghost")
 

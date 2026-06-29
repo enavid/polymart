@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 import structlog
 from django.db import IntegrityError, transaction
 
 from src.application.catalog.ports import (
     AttributeRepository,
     CategoryRepository,
+    ProductCategoryRepository,
     ProductRepository,
     ProductTypeRepository,
     VariantRepository,
@@ -30,10 +33,11 @@ from src.domain.catalog.exceptions import (
     ProductTypeAlreadyExistsError,
     ProductTypeNotFoundError,
     UnknownAttributeError,
+    UnknownCategoryError,
     VariantAlreadyExistsError,
     VariantNotFoundError,
 )
-from src.domain.catalog.value_objects import AttributeCode
+from src.domain.catalog.value_objects import AttributeCode, CategorySlug
 from src.infrastructure.catalog.mappers import (
     apply_category_scalar_fields,
     apply_product_scalar_fields,
@@ -53,6 +57,7 @@ from src.infrastructure.catalog.models import (
     AttributeModel,
     CategoryModel,
     ProductAttributeValueModel,
+    ProductCategoryModel,
     ProductModel,
     ProductTypeAttributeModel,
     ProductTypeModel,
@@ -394,3 +399,53 @@ class DjangoCategoryRepository(CategoryRepository):
     def list_all(self) -> list[Category]:
         models = CategoryModel.objects.select_related("parent").all()
         return [category_to_domain(model) for model in models]
+
+
+class DjangoProductCategoryRepository(ProductCategoryRepository):
+    """Persist a product's category membership with the Django ORM."""
+
+    def replace(
+        self, product_code: str, categories: Sequence[CategorySlug]
+    ) -> tuple[CategorySlug, ...]:
+        # Replacing the membership (clear + reinsert) must be all-or-nothing, so a
+        # failed reinsert never leaves the product with a half-updated set. The
+        # product row is locked so two concurrent replaces of the same product
+        # serialize instead of interleaving into a unique-constraint error.
+        with transaction.atomic():
+            product = self._lock_product(product_code)
+            ProductCategoryModel.objects.filter(product=product).delete()
+            self._insert_links(product, categories)
+        return self.list_for_product(product_code)
+
+    @staticmethod
+    def _lock_product(product_code: str) -> ProductModel:
+        try:
+            return ProductModel.objects.select_for_update().get(code=product_code)
+        except ProductModel.DoesNotExist as exc:
+            raise ProductNotFoundError(product_code) from exc
+
+    @staticmethod
+    def _insert_links(product: ProductModel, categories: Sequence[CategorySlug]) -> None:
+        # Resolve every referenced slug to a row in one query, preserving the
+        # requested order via the link position.
+        slugs = [category.value for category in categories]
+        by_slug = {c.slug: c for c in CategoryModel.objects.filter(slug__in=slugs)}
+        rows = []
+        for position, category in enumerate(categories):
+            category_model = by_slug.get(category.value)
+            if category_model is None:
+                # The use case validated existence; reaching here means the category
+                # vanished concurrently. Surface it as a domain error and roll back.
+                raise UnknownCategoryError(category.value)
+            rows.append(
+                ProductCategoryModel(product=product, category=category_model, position=position)
+            )
+        ProductCategoryModel.objects.bulk_create(rows)
+
+    def list_for_product(self, product_code: str) -> tuple[CategorySlug, ...]:
+        links = (
+            ProductCategoryModel.objects.select_related("category")
+            .filter(product__code=product_code)
+            .order_by("position")
+        )
+        return tuple(CategorySlug(link.category.slug) for link in links)

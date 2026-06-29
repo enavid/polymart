@@ -155,9 +155,7 @@ class TestCreate:
     def test_duplicate_sku_returns_409(self, auth_client: APIClient) -> None:
         _create_product(auth_client)
         body = {"sku": "coffee-250", "name": "250g Bag"}
-        auth_client.post(
-            "/api/v1/catalog/products/house-blend/variants/", body, format="json"
-        )
+        auth_client.post("/api/v1/catalog/products/house-blend/variants/", body, format="json")
 
         response = auth_client.post(
             "/api/v1/catalog/products/house-blend/variants/", body, format="json"

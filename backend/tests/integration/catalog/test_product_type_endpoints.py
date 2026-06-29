@@ -89,9 +89,7 @@ class TestCreate:
         assert response.data["attributes"] == []
         assert response.data["variant_attributes"] == []
 
-    def test_creates_a_type_with_variant_attributes_in_order(
-        self, auth_client: APIClient
-    ) -> None:
+    def test_creates_a_type_with_variant_attributes_in_order(self, auth_client: APIClient) -> None:
         _create_attribute(auth_client, "origin")
         _create_attribute(auth_client, "weight")
         _create_attribute(auth_client, "grind")
