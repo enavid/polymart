@@ -310,6 +310,29 @@ class CategoryModel(models.Model):
         return self.slug
 
 
+class CollectionModel(models.Model):
+    """A curated grouping of products, identified by a stable, unique slug.
+
+    Flat (no parent): unlike a category it is a merchandising grouping, not a
+    taxonomy node. Its membership lives in a separate slice.
+    """
+
+    slug = models.SlugField(max_length=_CODE_MAX_LENGTH, unique=True)
+    name = models.CharField(max_length=_NAME_MAX_LENGTH)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        app_label = "catalog"
+        db_table = "catalog_collection"
+        ordering = ("slug",)
+        verbose_name = "collection"
+        verbose_name_plural = "collections"
+
+    def __str__(self) -> str:
+        return self.slug
+
+
 class ProductVariantMediaModel(models.Model):
     """One image attached to a variant (a URL reference, not a stored file)."""
 

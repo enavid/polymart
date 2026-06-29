@@ -13,6 +13,7 @@ from src.domain.catalog.exceptions import (
     InvalidAttributeChoiceError,
     InvalidAttributeCodeError,
     InvalidCategorySlugError,
+    InvalidCollectionSlugError,
     InvalidMediaAssetError,
     InvalidProductCodeError,
     InvalidProductTypeCodeError,
@@ -93,6 +94,22 @@ class CategorySlug:
         normalized = self.value.strip()
         if len(normalized) > _SLUG_MAX_LENGTH or not _SLUG_RE.match(normalized):
             raise InvalidCategorySlugError(self.value)
+        object.__setattr__(self, "value", normalized)
+
+    def __str__(self) -> str:
+        return self.value
+
+
+@dataclass(frozen=True)
+class CollectionSlug:
+    """A stable, URL-safe identifier for a collection (a curated grouping)."""
+
+    value: str
+
+    def __post_init__(self) -> None:
+        normalized = self.value.strip()
+        if len(normalized) > _SLUG_MAX_LENGTH or not _SLUG_RE.match(normalized):
+            raise InvalidCollectionSlugError(self.value)
         object.__setattr__(self, "value", normalized)
 
     def __str__(self) -> str:

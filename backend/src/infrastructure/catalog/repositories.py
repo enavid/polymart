@@ -10,6 +10,7 @@ from django.db import IntegrityError, transaction
 from src.application.catalog.ports import (
     AttributeRepository,
     CategoryRepository,
+    CollectionRepository,
     ProductCategoryRepository,
     ProductRepository,
     ProductTypeRepository,
@@ -18,6 +19,7 @@ from src.application.catalog.ports import (
 from src.domain.catalog.entities import (
     Attribute,
     Category,
+    Collection,
     Product,
     ProductType,
     ProductVariant,
@@ -27,6 +29,8 @@ from src.domain.catalog.exceptions import (
     AttributeNotFoundError,
     CategoryAlreadyExistsError,
     CategoryNotFoundError,
+    CollectionAlreadyExistsError,
+    CollectionNotFoundError,
     ParentCategoryNotFoundError,
     ProductAlreadyExistsError,
     ProductNotFoundError,
@@ -40,11 +44,13 @@ from src.domain.catalog.exceptions import (
 from src.domain.catalog.value_objects import AttributeCode, CategorySlug
 from src.infrastructure.catalog.mappers import (
     apply_category_scalar_fields,
+    apply_collection_scalar_fields,
     apply_product_scalar_fields,
     apply_product_type_scalar_fields,
     apply_scalar_fields,
     apply_variant_scalar_fields,
     category_to_domain,
+    collection_to_domain,
     product_to_domain,
     product_type_to_domain,
     to_domain,
@@ -56,6 +62,7 @@ from src.infrastructure.catalog.models import (
     AttributeChoiceModel,
     AttributeModel,
     CategoryModel,
+    CollectionModel,
     ProductAttributeValueModel,
     ProductCategoryModel,
     ProductModel,
@@ -399,6 +406,36 @@ class DjangoCategoryRepository(CategoryRepository):
     def list_all(self) -> list[Category]:
         models = CategoryModel.objects.select_related("parent").all()
         return [category_to_domain(model) for model in models]
+
+
+class DjangoCollectionRepository(CollectionRepository):
+    """Persist catalog collections with the Django ORM, returning domain entities."""
+
+    def add(self, collection: Collection) -> Collection:
+        # A collection is a single row (no child tables), so no transaction wrapper
+        # is needed: the one INSERT is already atomic.
+        model = apply_collection_scalar_fields(collection, CollectionModel())
+        try:
+            model.save()
+        except IntegrityError as exc:
+            # Unique-constraint violation on slug -> domain-level conflict (a
+            # concurrent insert won the race after the use case's pre-check).
+            logger.warning("collection_insert_race_lost", slug=collection.slug.value)
+            raise CollectionAlreadyExistsError(collection.slug.value) from exc
+        return collection_to_domain(model)
+
+    def get_by_slug(self, slug: str) -> Collection:
+        try:
+            model = CollectionModel.objects.get(slug=slug)
+        except CollectionModel.DoesNotExist as exc:
+            raise CollectionNotFoundError(slug) from exc
+        return collection_to_domain(model)
+
+    def exists_by_slug(self, slug: str) -> bool:
+        return CollectionModel.objects.filter(slug=slug).exists()
+
+    def list_all(self) -> list[Collection]:
+        return [collection_to_domain(model) for model in CollectionModel.objects.all()]
 
 
 class DjangoProductCategoryRepository(ProductCategoryRepository):

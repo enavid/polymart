@@ -135,3 +135,18 @@ class ProductCategoriesSerializer(serializers.Serializer):
     """Response/request projection of a product's category membership (ordered slugs)."""
 
     categories = serializers.ListField(child=serializers.CharField())
+
+
+class CollectionSerializer(serializers.Serializer):
+    """Response projection of a collection (a curated grouping)."""
+
+    id = serializers.IntegerField(read_only=True)
+    slug = serializers.CharField()
+    name = serializers.CharField()
+
+
+class CreateCollectionSerializer(serializers.Serializer):
+    """Request body for creating a collection."""
+
+    slug = serializers.CharField()
+    name = serializers.CharField()

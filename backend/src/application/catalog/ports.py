@@ -13,6 +13,7 @@ from collections.abc import Sequence
 from src.domain.catalog.entities import (
     Attribute,
     Category,
+    Collection,
     Product,
     ProductType,
     ProductVariant,
@@ -188,3 +189,31 @@ class ProductCategoryRepository(ABC):
     @abstractmethod
     def list_for_product(self, product_code: str) -> tuple[CategorySlug, ...]:
         """Return a product's categories in assignment order (empty if none)."""
+
+
+class CollectionRepository(ABC):
+    """Persistence boundary for the Collection aggregate.
+
+    Implementations MUST translate storage-specific failures into domain
+    exceptions (``CollectionNotFoundError``, ``CollectionAlreadyExistsError``) so
+    callers never see infrastructure leaks.
+    """
+
+    @abstractmethod
+    def add(self, collection: Collection) -> Collection:
+        """Persist a new collection and return it with its assigned identity.
+
+        Raises ``CollectionAlreadyExistsError`` if the slug is already taken.
+        """
+
+    @abstractmethod
+    def get_by_slug(self, slug: str) -> Collection:
+        """Return the collection with this slug or raise ``CollectionNotFoundError``."""
+
+    @abstractmethod
+    def exists_by_slug(self, slug: str) -> bool:
+        """Return whether a collection with this slug already exists."""
+
+    @abstractmethod
+    def list_all(self) -> list[Collection]:
+        """Return every collection, ordered by slug for deterministic output."""

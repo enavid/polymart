@@ -5,6 +5,7 @@ from __future__ import annotations
 from src.domain.catalog.entities import (
     Attribute,
     Category,
+    Collection,
     Product,
     ProductType,
     ProductVariant,
@@ -15,6 +16,7 @@ from src.domain.catalog.value_objects import (
     AttributeCode,
     AttributeValue,
     CategorySlug,
+    CollectionSlug,
     MediaAsset,
     ProductCode,
     ProductTypeCode,
@@ -24,6 +26,7 @@ from src.infrastructure.catalog.models import (
     VARIANT_ATTRIBUTE_KIND,
     AttributeModel,
     CategoryModel,
+    CollectionModel,
     ProductModel,
     ProductTypeModel,
     ProductVariantModel,
@@ -180,4 +183,18 @@ def apply_category_scalar_fields(category: Category, model: CategoryModel) -> Ca
     """
     model.slug = category.slug.value
     model.name = category.name
+    return model
+
+
+def collection_to_domain(model: CollectionModel) -> Collection:
+    """Rebuild a collection from a persisted row."""
+    return Collection(id=model.pk, slug=CollectionSlug(model.slug), name=model.name)
+
+
+def apply_collection_scalar_fields(
+    collection: Collection, model: CollectionModel
+) -> CollectionModel:
+    """Copy the collection's own fields onto an ORM instance."""
+    model.slug = collection.slug.value
+    model.name = collection.name
     return model

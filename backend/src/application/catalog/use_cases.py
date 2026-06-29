@@ -20,6 +20,7 @@ from src.application.audit.ports import AuditRecorder
 from src.application.catalog.ports import (
     AttributeRepository,
     CategoryRepository,
+    CollectionRepository,
     ProductCategoryRepository,
     ProductRepository,
     ProductTypeRepository,
@@ -29,6 +30,7 @@ from src.domain.audit.entities import FieldChange
 from src.domain.catalog.entities import (
     Attribute,
     Category,
+    Collection,
     Product,
     ProductType,
     ProductVariant,
@@ -37,6 +39,7 @@ from src.domain.catalog.enums import AttributeInputType
 from src.domain.catalog.exceptions import (
     AttributeAlreadyExistsError,
     CategoryAlreadyExistsError,
+    CollectionAlreadyExistsError,
     InvalidAttributeInputTypeError,
     ParentCategoryNotFoundError,
     ProductAlreadyExistsError,
@@ -54,6 +57,7 @@ from src.domain.catalog.value_objects import (
     AttributeCode,
     AttributeValue,
     CategorySlug,
+    CollectionSlug,
     MediaAsset,
     ProductCode,
     ProductTypeCode,
@@ -75,6 +79,8 @@ _ACTION_VARIANT_CREATED = "variant.created"
 _RESOURCE_CATEGORY = "category"
 _ACTION_CATEGORY_CREATED = "category.created"
 _ACTION_PRODUCT_CATEGORIES_CHANGED = "product.categories_changed"
+_RESOURCE_COLLECTION = "collection"
+_ACTION_COLLECTION_CREATED = "collection.created"
 
 # Membership is recorded in the audit trail as a deterministic, comma-joined slug
 # string (AuditValue is a flat scalar, never a list).
@@ -738,3 +744,75 @@ class GetProductCategories:
         categories = self._repository.list_for_product(product_code)
         logger.debug("product_categories_listed", product=product_code, count=len(categories))
         return categories
+
+
+@dataclass(frozen=True)
+class CreateCollectionCommand:
+    """Input for creating a collection. Raw strings are validated by the domain."""
+
+    slug: str
+    name: str
+
+
+class CreateCollection:
+    """Create a manual collection (a curated grouping of products).
+
+    The entity owns the structural rules (name); this use case owns the
+    orchestration: reject a duplicate slug, persist, and observe.
+    """
+
+    def __init__(self, repository: CollectionRepository, audit: AuditRecorder) -> None:
+        self._repository = repository
+        self._audit = audit
+
+    def execute(self, command: CreateCollectionCommand, *, actor: str | None = None) -> Collection:
+        # Build value objects first: a malformed slug or blank name fails fast,
+        # before any I/O.
+        collection = Collection(slug=CollectionSlug(command.slug), name=command.name)
+        slug = collection.slug.value
+
+        # Pre-check for a clean error; the repository remains the source of truth
+        # and will still raise on a concurrent insert.
+        if self._repository.exists_by_slug(slug):
+            logger.warning("collection_create_rejected_duplicate", slug=slug, actor=actor)
+            raise CollectionAlreadyExistsError(slug)
+
+        persisted = self._repository.add(collection)
+        logger.info(
+            "collection_created",
+            collection_id=persisted.id,
+            slug=slug,
+            actor=actor,
+        )
+        self._audit.record(
+            action=_ACTION_COLLECTION_CREATED,
+            resource_type=_RESOURCE_COLLECTION,
+            resource_id=str(persisted.id),
+            actor=actor,
+            changes=(FieldChange(field="slug", after=slug),),
+        )
+        return persisted
+
+
+class GetCollection:
+    """Retrieve a single collection by slug."""
+
+    def __init__(self, repository: CollectionRepository) -> None:
+        self._repository = repository
+
+    def execute(self, *, slug: str) -> Collection:
+        collection = self._repository.get_by_slug(slug)
+        logger.debug("collection_retrieved", slug=slug)
+        return collection
+
+
+class ListCollections:
+    """List every collection."""
+
+    def __init__(self, repository: CollectionRepository) -> None:
+        self._repository = repository
+
+    def execute(self) -> list[Collection]:
+        collections = self._repository.list_all()
+        logger.debug("collections_listed", count=len(collections))
+        return collections

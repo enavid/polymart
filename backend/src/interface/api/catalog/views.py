@@ -21,6 +21,7 @@ from src.application.catalog.use_cases import (
     AttributeValueInput,
     CreateAttributeCommand,
     CreateCategoryCommand,
+    CreateCollectionCommand,
     CreateProductCommand,
     CreateProductTypeCommand,
     CreateVariantCommand,
@@ -30,6 +31,7 @@ from src.application.catalog.use_cases import (
 from src.domain.catalog.entities import (
     Attribute,
     Category,
+    Collection,
     Product,
     ProductType,
     ProductVariant,
@@ -40,6 +42,8 @@ from src.domain.catalog.exceptions import (
     CatalogError,
     CategoryAlreadyExistsError,
     CategoryNotFoundError,
+    CollectionAlreadyExistsError,
+    CollectionNotFoundError,
     ProductAlreadyExistsError,
     ProductNotFoundError,
     ProductTypeAlreadyExistsError,
@@ -52,17 +56,20 @@ from src.interface.api.access.permissions import CatalogManagePermission
 from src.interface.api.catalog.container import (
     build_create_attribute,
     build_create_category,
+    build_create_collection,
     build_create_product,
     build_create_product_type,
     build_create_variant,
     build_get_attribute,
     build_get_category,
+    build_get_collection,
     build_get_product,
     build_get_product_categories,
     build_get_product_type,
     build_get_variant,
     build_list_attributes,
     build_list_categories,
+    build_list_collections,
     build_list_product_types,
     build_list_product_variants,
     build_list_products,
@@ -71,8 +78,10 @@ from src.interface.api.catalog.container import (
 from src.interface.api.catalog.serializers import (
     AttributeSerializer,
     CategorySerializer,
+    CollectionSerializer,
     CreateAttributeSerializer,
     CreateCategorySerializer,
+    CreateCollectionSerializer,
     CreateProductSerializer,
     CreateProductTypeSerializer,
     CreateVariantSerializer,
@@ -489,3 +498,60 @@ class ProductCategoriesView(APIView):
             # A malformed/duplicate slug, or a referenced category that does not exist.
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         return Response(_categories_payload(categories))
+
+
+def _collection_payload(collection: Collection) -> dict[str, object]:
+    """Project a collection entity to the response body."""
+    return {
+        "id": collection.id,
+        "slug": collection.slug.value,
+        "name": collection.name,
+    }
+
+
+class CollectionListCreateView(APIView):
+    """List collections or create a new one."""
+
+    permission_classes: ClassVar = [CatalogManagePermission]
+
+    @extend_schema(responses=CollectionSerializer(many=True))
+    def get(self, request: Request) -> Response:
+        collections = build_list_collections().execute()
+        return Response([_collection_payload(collection) for collection in collections])
+
+    @extend_schema(
+        request=CreateCollectionSerializer,
+        responses={
+            201: CollectionSerializer,
+            400: ErrorSerializer,
+            403: ErrorSerializer,
+            409: ErrorSerializer,
+        },
+    )
+    def post(self, request: Request) -> Response:
+        serializer = CreateCollectionSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        command = CreateCollectionCommand(slug=data["slug"], name=data["name"])
+        try:
+            collection = build_create_collection().execute(command, actor=_actor(request))
+        except CollectionAlreadyExistsError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
+        except CatalogError as exc:
+            # Invalid slug or blank name surfaced from the domain.
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(_collection_payload(collection), status=status.HTTP_201_CREATED)
+
+
+class CollectionDetailView(APIView):
+    """Retrieve a single collection by slug."""
+
+    permission_classes: ClassVar = [CatalogManagePermission]
+
+    @extend_schema(responses={200: CollectionSerializer, 404: ErrorSerializer})
+    def get(self, request: Request, slug: str) -> Response:
+        try:
+            collection = build_get_collection().execute(slug=slug)
+        except CollectionNotFoundError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_404_NOT_FOUND)
+        return Response(_collection_payload(collection))

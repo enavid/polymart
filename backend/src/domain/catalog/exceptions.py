@@ -314,3 +314,35 @@ class UnknownCategoryError(CatalogError):
     def __init__(self, slug: str) -> None:
         super().__init__(f"unknown category: {slug!r}")
         self.slug = slug
+
+
+class InvalidCollectionSlugError(CatalogError):
+    """Raised when a collection slug is empty, too long, or not a slug."""
+
+    def __init__(self, value: str) -> None:
+        super().__init__(f"invalid collection slug: {value!r}")
+        self.value = value
+
+
+class InvalidCollectionNameError(CatalogError):
+    """Raised when a collection display name is blank or exceeds the length limit."""
+
+    def __init__(self, value: str) -> None:
+        super().__init__(f"invalid collection name: {value!r}")
+        self.value = value
+
+
+class CollectionNotFoundError(CatalogError):
+    """Raised when a collection cannot be located by its slug."""
+
+    def __init__(self, slug: str) -> None:
+        super().__init__(f"collection not found: {slug!r}")
+        self.slug = slug
+
+
+class CollectionAlreadyExistsError(CatalogError):
+    """Raised when creating a collection whose slug is already taken."""
+
+    def __init__(self, slug: str) -> None:
+        super().__init__(f"collection already exists: {slug!r}")
+        self.slug = slug

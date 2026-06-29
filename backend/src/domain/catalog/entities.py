@@ -23,6 +23,7 @@ from src.domain.catalog.exceptions import (
     DuplicateMediaAssetError,
     InvalidAttributeNameError,
     InvalidCategoryNameError,
+    InvalidCollectionNameError,
     InvalidProductMetadataError,
     InvalidProductNameError,
     InvalidProductTypeNameError,
@@ -34,6 +35,7 @@ from src.domain.catalog.value_objects import (
     AttributeCode,
     AttributeValue,
     CategorySlug,
+    CollectionSlug,
     MediaAsset,
     ProductCode,
     ProductTypeCode,
@@ -285,3 +287,29 @@ class Category:
     def _reject_self_parenting(self) -> None:
         if self.parent is not None and self.parent == self.slug:
             raise SelfParentingCategoryError(self.slug.value)
+
+
+@dataclass
+class Collection:
+    """A curated grouping of products, identified by a stable slug.
+
+    Unlike a category, a collection is not a taxonomy node: it is a flat
+    merchandising grouping (``Featured``, ``Summer Sale``) whose membership is
+    hand-picked. This entity owns only *structural* rules: a non-blank, bounded
+    display name. Which products belong to it is a separate, membership concern
+    decided in the application layer.
+    """
+
+    slug: CollectionSlug
+    name: str
+    id: int | None = field(default=None)
+
+    def __post_init__(self) -> None:
+        self.name = self._validated_name(self.name)
+
+    @staticmethod
+    def _validated_name(raw: str) -> str:
+        name = raw.strip()
+        if not name or len(name) > _NAME_MAX_LENGTH:
+            raise InvalidCollectionNameError(raw)
+        return name
