@@ -10,12 +10,14 @@ from django.db import IntegrityError, transaction
 from src.application.catalog.ports import (
     AttributeRepository,
     CategoryRepository,
+    ChannelReader,
     CollectionProductRepository,
     CollectionRepository,
     CollectionRuleRepository,
     ProductCategoryRepository,
     ProductRepository,
     ProductTypeRepository,
+    VariantPriceRepository,
     VariantRepository,
 )
 from src.domain.catalog.entities import (
@@ -48,6 +50,8 @@ from src.domain.catalog.exceptions import (
 from src.domain.catalog.value_objects import (
     AttributeCode,
     CategorySlug,
+    ChannelPrice,
+    Money,
     ProductCode,
     RuleCondition,
 )
@@ -82,7 +86,9 @@ from src.infrastructure.catalog.models import (
     ProductVariantAttributeValueModel,
     ProductVariantMediaModel,
     ProductVariantModel,
+    VariantPriceModel,
 )
+from src.infrastructure.channel.models import ChannelModel
 
 logger = structlog.get_logger(__name__)
 
@@ -613,4 +619,59 @@ class DjangoCollectionRuleRepository(CollectionRuleRepository):
                 value=condition.value,
             )
             for condition in conditions
+        )
+
+
+class DjangoVariantPriceRepository(VariantPriceRepository):
+    """Persist a variant's per-channel base prices with the Django ORM."""
+
+    def replace(self, sku: str, prices: Sequence[ChannelPrice]) -> tuple[ChannelPrice, ...]:
+        # Replacing the prices (clear + reinsert) must be all-or-nothing, so a failed
+        # reinsert never leaves the variant with a half-updated price set. The variant
+        # row is locked so two concurrent replaces of the same variant serialize
+        # instead of interleaving into a unique-constraint error.
+        with transaction.atomic():
+            variant = self._lock_variant(sku)
+            VariantPriceModel.objects.filter(variant=variant).delete()
+            self._insert_prices(variant, prices)
+        return self.list_for_variant(sku)
+
+    @staticmethod
+    def _lock_variant(sku: str) -> ProductVariantModel:
+        try:
+            return ProductVariantModel.objects.select_for_update().get(sku=sku)
+        except ProductVariantModel.DoesNotExist as exc:
+            raise VariantNotFoundError(sku) from exc
+
+    @staticmethod
+    def _insert_prices(variant: ProductVariantModel, prices: Sequence[ChannelPrice]) -> None:
+        VariantPriceModel.objects.bulk_create(
+            VariantPriceModel(
+                variant=variant,
+                channel_slug=price.channel,
+                currency_code=price.money.currency,
+                amount=price.money.amount,
+            )
+            for price in prices
+        )
+
+    def list_for_variant(self, sku: str) -> tuple[ChannelPrice, ...]:
+        rows = VariantPriceModel.objects.filter(variant__sku=sku).order_by("channel_slug")
+        return tuple(
+            ChannelPrice(
+                channel=row.channel_slug,
+                money=Money(amount=row.amount, currency=row.currency_code),
+            )
+            for row in rows
+        )
+
+
+class DjangoChannelReader(ChannelReader):
+    """Read a channel's currency from the channel context, for catalog pricing."""
+
+    def currency_of(self, channel_slug: str) -> str | None:
+        return (
+            ChannelModel.objects.filter(slug=channel_slug)
+            .values_list("currency_code", flat=True)
+            .first()
         )

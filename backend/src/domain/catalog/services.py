@@ -11,6 +11,7 @@ collection) and so belongs to none of them. Two live here:
 - *rule-condition uniqueness*: a rule-based collection lists each condition once.
 - *rule matching*: which products a conjunction of rule conditions selects -- a
   rule that spans many products and their attribute values, owned by no entity.
+- *channel-price uniqueness*: a variant has at most one base price per channel.
 
 The application layer fetches the data and calls these services; the rules
 themselves stay in the domain.
@@ -25,6 +26,7 @@ from src.domain.catalog.entities import Attribute, Product
 from src.domain.catalog.enums import AttributeInputType, RuleOperator
 from src.domain.catalog.exceptions import (
     DuplicateCategoryAssignmentError,
+    DuplicateChannelPriceError,
     DuplicateProductMembershipError,
     DuplicateRuleConditionError,
     InvalidAttributeValueError,
@@ -34,6 +36,7 @@ from src.domain.catalog.exceptions import (
 from src.domain.catalog.value_objects import (
     AttributeValue,
     CategorySlug,
+    ChannelPrice,
     ProductCode,
     RuleCondition,
 )
@@ -182,6 +185,23 @@ def reject_duplicate_conditions(
             raise DuplicateRuleConditionError(":".join(key))
         seen.add(key)
     return tuple(conditions)
+
+
+def reject_duplicate_channel_prices(
+    prices: Sequence[ChannelPrice],
+) -> tuple[ChannelPrice, ...]:
+    """Return the prices unchanged, rejecting two prices for the same channel.
+
+    A variant has at most one base price per channel; a repeated channel is a
+    malformed request, not a silently last-wins overwrite, so it is surfaced as a
+    domain error.
+    """
+    seen: set[str] = set()
+    for price in prices:
+        if price.channel in seen:
+            raise DuplicateChannelPriceError(price.channel)
+        seen.add(price.channel)
+    return tuple(prices)
 
 
 def match_products(

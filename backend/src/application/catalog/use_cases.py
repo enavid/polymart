@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from decimal import Decimal
 
 import structlog
 
@@ -20,12 +21,14 @@ from src.application.audit.ports import AuditRecorder
 from src.application.catalog.ports import (
     AttributeRepository,
     CategoryRepository,
+    ChannelReader,
     CollectionProductRepository,
     CollectionRepository,
     CollectionRuleRepository,
     ProductCategoryRepository,
     ProductRepository,
     ProductTypeRepository,
+    VariantPriceRepository,
     VariantRepository,
 )
 from src.domain.audit.entities import FieldChange
@@ -49,6 +52,7 @@ from src.domain.catalog.exceptions import (
     ProductTypeAlreadyExistsError,
     UnknownAttributeError,
     UnknownCategoryError,
+    UnknownChannelError,
     UnknownProductError,
     VariantAlreadyExistsError,
 )
@@ -56,6 +60,7 @@ from src.domain.catalog.services import (
     match_products,
     normalize_attribute_values,
     reject_duplicate_categories,
+    reject_duplicate_channel_prices,
     reject_duplicate_conditions,
     reject_duplicate_products,
 )
@@ -64,8 +69,10 @@ from src.domain.catalog.value_objects import (
     AttributeCode,
     AttributeValue,
     CategorySlug,
+    ChannelPrice,
     CollectionSlug,
     MediaAsset,
+    Money,
     ProductCode,
     ProductTypeCode,
     RuleCondition,
@@ -91,12 +98,15 @@ _RESOURCE_COLLECTION = "collection"
 _ACTION_COLLECTION_CREATED = "collection.created"
 _ACTION_COLLECTION_PRODUCTS_CHANGED = "collection.products_changed"
 _ACTION_COLLECTION_RULE_CHANGED = "collection.rule_changed"
+_ACTION_VARIANT_PRICE_CHANGED = "variant.price_changed"
 
 # Membership is recorded in the audit trail as a deterministic, comma-joined slug
 # string (AuditValue is a flat scalar, never a list).
 _MEMBERSHIP_JOIN = ","
 # A single rule condition renders as "attribute:operator:value" for the audit trail.
 _CONDITION_JOIN = ":"
+# A single channel price renders as "channel=amount currency" for the audit trail.
+_PRICE_ASSIGN = "="
 
 
 def _join_categories(categories: tuple[CategorySlug, ...]) -> str:
@@ -110,6 +120,15 @@ def _join_products(products: tuple[ProductCode, ...]) -> str:
 def _join_conditions(conditions: tuple[RuleCondition, ...]) -> str:
     return _MEMBERSHIP_JOIN.join(
         _CONDITION_JOIN.join((c.attribute.value, c.operator.value, c.value)) for c in conditions
+    )
+
+
+def _join_prices(prices: tuple[ChannelPrice, ...]) -> str:
+    # Money values are recorded in full in the audit trail (the one place they
+    # belong); the structured logs deliberately carry only counts.
+    return _MEMBERSHIP_JOIN.join(
+        f"{price.channel}{_PRICE_ASSIGN}{price.money.amount} {price.money.currency}"
+        for price in prices
     )
 
 
@@ -1099,3 +1118,109 @@ class GetCollectionRuleMembers:
             count=len(members),
         )
         return members
+
+
+@dataclass(frozen=True)
+class ChannelPriceInput:
+    """Raw input for one channel price. The currency is derived from the channel."""
+
+    channel: str
+    amount: Decimal
+
+
+@dataclass(frozen=True)
+class SetVariantPricesCommand:
+    """Input for replacing a variant's per-channel base prices."""
+
+    variant: str
+    prices: tuple[ChannelPriceInput, ...] = field(default_factory=tuple)
+
+
+class SetVariantPrices:
+    """Replace a variant's whole set of per-channel base prices (idempotent).
+
+    A price is money-sensitive, so the design removes a whole class of error: the
+    currency is never supplied by the caller but **derived from the channel**, so a
+    price can never be recorded in the wrong currency. The use case confirms the
+    variant exists, resolves each channel's currency (an unknown channel is a 400),
+    builds a positive ``Decimal`` ``Money`` (the domain rejects floats, zero, and
+    over-precision), rejects two prices for one channel, delegates the atomic replace
+    to the repository, and records a before/after audit entry carrying the amounts.
+    An empty set clears all prices.
+    """
+
+    def __init__(
+        self,
+        repository: VariantPriceRepository,
+        variants: VariantRepository,
+        channels: ChannelReader,
+        audit: AuditRecorder,
+    ) -> None:
+        self._repository = repository
+        self._variants = variants
+        self._channels = channels
+        self._audit = audit
+
+    def execute(
+        self, command: SetVariantPricesCommand, *, actor: str | None = None
+    ) -> tuple[ChannelPrice, ...]:
+        sku = command.variant
+
+        # The variant must exist (a 404 at the edge); its id anchors the audit entry.
+        # The repository defends the concurrent-deletion race too.
+        variant = self._variants.get_by_sku(sku)
+
+        # Build each price, deriving its currency from the channel. An unknown channel
+        # is a 400; a malformed amount fails in the Money value object (also a 400).
+        requested = reject_duplicate_channel_prices(
+            tuple(self._to_channel_price(item, actor=actor) for item in command.prices)
+        )
+
+        before = self._repository.list_for_variant(sku)
+        persisted = self._repository.replace(sku, requested)
+        logger.info(
+            "variant_prices_set",
+            variant_id=variant.id,
+            sku=sku,
+            count=len(persisted),
+            actor=actor,
+        )
+        self._audit.record(
+            action=_ACTION_VARIANT_PRICE_CHANGED,
+            resource_type=_RESOURCE_VARIANT,
+            resource_id=str(variant.id),
+            actor=actor,
+            changes=(
+                FieldChange(
+                    field="prices",
+                    before=_join_prices(before),
+                    after=_join_prices(persisted),
+                ),
+            ),
+        )
+        return persisted
+
+    def _to_channel_price(self, item: ChannelPriceInput, *, actor: str | None) -> ChannelPrice:
+        currency = self._channels.currency_of(item.channel)
+        if currency is None:
+            logger.warning(
+                "variant_price_rejected_unknown_channel", channel=item.channel, actor=actor
+            )
+            raise UnknownChannelError(item.channel)
+        money = Money(amount=item.amount, currency=currency)
+        return ChannelPrice(channel=item.channel, money=money)
+
+
+class GetVariantPrices:
+    """List a variant's per-channel base prices (404 if the variant does not exist)."""
+
+    def __init__(self, repository: VariantPriceRepository, variants: VariantRepository) -> None:
+        self._repository = repository
+        self._variants = variants
+
+    def execute(self, *, sku: str) -> tuple[ChannelPrice, ...]:
+        # Confirm the variant exists so an unknown SKU is a 404, not an empty set.
+        self._variants.get_by_sku(sku)
+        prices = self._repository.list_for_variant(sku)
+        logger.debug("variant_prices_listed", sku=sku, count=len(prices))
+        return prices

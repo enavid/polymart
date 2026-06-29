@@ -21,6 +21,11 @@ _KIND_MAX_LENGTH = 16
 _URL_MAX_LENGTH = 2048
 _OPERATOR_MAX_LENGTH = 16
 _RULE_VALUE_MAX_LENGTH = 1024
+_CURRENCY_CODE_MAX_LENGTH = 3
+# Fixed-point money column: 18 total digits, 4 of them fractional (matches the
+# Money value object's bounds).
+_AMOUNT_MAX_DIGITS = 18
+_AMOUNT_DECIMAL_PLACES = 4
 
 # Discriminates how a product type assigns an attribute: product-level (shared by
 # every variant) vs variant-level (an option that distinguishes variants). Stored
@@ -429,3 +434,39 @@ class ProductVariantMediaModel(models.Model):
 
     def __str__(self) -> str:
         return f"{self.variant_id}:{self.url}"
+
+
+class VariantPriceModel(models.Model):
+    """A variant's base price in one channel (a row keyed by channel slug).
+
+    Pricing is per-channel; the channel lives in a separate bounded context and is
+    referenced by its slug rather than a cross-app foreign key, so the catalog schema
+    stays decoupled (channels are not deletable in the current model, and existence is
+    enforced at the use-case layer via the ChannelReader port). The ``currency_code``
+    is a snapshot taken from the channel at write time, so a stored price stays
+    self-describing. ``amount`` is a fixed-point ``Decimal`` -- never a float.
+    """
+
+    variant = models.ForeignKey(
+        ProductVariantModel, related_name="prices", on_delete=models.CASCADE
+    )
+    channel_slug = models.SlugField(max_length=_CODE_MAX_LENGTH)
+    currency_code = models.CharField(max_length=_CURRENCY_CODE_MAX_LENGTH)
+    amount = models.DecimalField(
+        max_digits=_AMOUNT_MAX_DIGITS, decimal_places=_AMOUNT_DECIMAL_PLACES
+    )
+
+    class Meta:
+        app_label = "catalog"
+        db_table = "catalog_variant_price"
+        ordering = ("channel_slug",)
+        # A variant has at most one base price per channel.
+        constraints: ClassVar[list[models.BaseConstraint]] = [
+            models.UniqueConstraint(
+                fields=["variant", "channel_slug"],
+                name="uniq_price_per_variant_channel",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.variant_id}:{self.channel_slug}:{self.amount} {self.currency_code}"

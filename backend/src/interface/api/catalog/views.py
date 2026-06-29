@@ -19,6 +19,7 @@ from rest_framework.views import APIView
 from src.application.catalog.use_cases import (
     AttributeChoiceInput,
     AttributeValueInput,
+    ChannelPriceInput,
     CreateAttributeCommand,
     CreateCategoryCommand,
     CreateCollectionCommand,
@@ -30,6 +31,7 @@ from src.application.catalog.use_cases import (
     SetCollectionProductsCommand,
     SetCollectionRuleCommand,
     SetProductCategoriesCommand,
+    SetVariantPricesCommand,
 )
 from src.domain.catalog.entities import (
     Attribute,
@@ -54,7 +56,12 @@ from src.domain.catalog.exceptions import (
     VariantAlreadyExistsError,
     VariantNotFoundError,
 )
-from src.domain.catalog.value_objects import CategorySlug, ProductCode, RuleCondition
+from src.domain.catalog.value_objects import (
+    CategorySlug,
+    ChannelPrice,
+    ProductCode,
+    RuleCondition,
+)
 from src.interface.api.access.permissions import CatalogManagePermission
 from src.interface.api.catalog.container import (
     build_create_attribute,
@@ -73,6 +80,7 @@ from src.interface.api.catalog.container import (
     build_get_product_categories,
     build_get_product_type,
     build_get_variant,
+    build_get_variant_prices,
     build_list_attributes,
     build_list_categories,
     build_list_collections,
@@ -82,6 +90,7 @@ from src.interface.api.catalog.container import (
     build_set_collection_products,
     build_set_collection_rule,
     build_set_product_categories,
+    build_set_variant_prices,
 )
 from src.interface.api.catalog.serializers import (
     AttributeSerializer,
@@ -99,6 +108,8 @@ from src.interface.api.catalog.serializers import (
     ProductCategoriesSerializer,
     ProductSerializer,
     ProductTypeSerializer,
+    SetVariantPricesSerializer,
+    VariantPricesSerializer,
     VariantSerializer,
 )
 from src.interface.api.common import ErrorSerializer
@@ -685,3 +696,65 @@ class CollectionRuleMembersView(APIView):
         except CollectionNotFoundError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_404_NOT_FOUND)
         return Response(_collection_products_payload(products))
+
+
+def _variant_prices_payload(prices: tuple[ChannelPrice, ...]) -> dict[str, object]:
+    """Project a variant's per-channel prices to the response body.
+
+    The amount is rendered as a string so the exact Decimal survives JSON (a float
+    would reintroduce the rounding error Decimal exists to avoid); the currency is
+    the one derived from each channel.
+    """
+    return {
+        "prices": [
+            {
+                "channel": price.channel,
+                "amount": str(price.money.amount),
+                "currency": price.money.currency,
+            }
+            for price in prices
+        ]
+    }
+
+
+class VariantPricesView(APIView):
+    """List or replace a variant's per-channel base prices (nested under the variant)."""
+
+    permission_classes: ClassVar = [CatalogManagePermission]
+
+    @extend_schema(responses={200: VariantPricesSerializer, 404: ErrorSerializer})
+    def get(self, request: Request, sku: str) -> Response:
+        try:
+            prices = build_get_variant_prices().execute(sku=sku)
+        except VariantNotFoundError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_404_NOT_FOUND)
+        return Response(_variant_prices_payload(prices))
+
+    @extend_schema(
+        request=SetVariantPricesSerializer,
+        responses={
+            200: VariantPricesSerializer,
+            400: ErrorSerializer,
+            403: ErrorSerializer,
+            404: ErrorSerializer,
+        },
+    )
+    def put(self, request: Request, sku: str) -> Response:
+        serializer = SetVariantPricesSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        command = SetVariantPricesCommand(
+            variant=sku,
+            prices=tuple(
+                ChannelPriceInput(channel=item["channel"], amount=item["amount"])
+                for item in serializer.validated_data["prices"]
+            ),
+        )
+        try:
+            prices = build_set_variant_prices().execute(command, actor=_actor(request))
+        except VariantNotFoundError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_404_NOT_FOUND)
+        except CatalogError as exc:
+            # A malformed/zero/negative amount, an unknown channel, or a duplicate
+            # channel price surfaced from the domain.
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(_variant_prices_payload(prices))

@@ -23,6 +23,7 @@ from src.application.catalog.use_cases import (
     GetProductCategories,
     GetProductType,
     GetVariant,
+    GetVariantPrices,
     ListAttributes,
     ListCategories,
     ListCollections,
@@ -32,16 +33,19 @@ from src.application.catalog.use_cases import (
     SetCollectionProducts,
     SetCollectionRule,
     SetProductCategories,
+    SetVariantPrices,
 )
 from src.infrastructure.catalog.repositories import (
     DjangoAttributeRepository,
     DjangoCategoryRepository,
+    DjangoChannelReader,
     DjangoCollectionProductRepository,
     DjangoCollectionRepository,
     DjangoCollectionRuleRepository,
     DjangoProductCategoryRepository,
     DjangoProductRepository,
     DjangoProductTypeRepository,
+    DjangoVariantPriceRepository,
     DjangoVariantRepository,
 )
 from src.interface.api.audit.container import build_audit_recorder
@@ -177,3 +181,16 @@ def build_get_collection_rule_members() -> GetCollectionRuleMembers:
         DjangoCollectionRepository(),
         DjangoProductRepository(),
     )
+
+
+def build_set_variant_prices() -> SetVariantPrices:
+    return SetVariantPrices(
+        DjangoVariantPriceRepository(),
+        DjangoVariantRepository(),
+        DjangoChannelReader(),
+        build_audit_recorder(),
+    )
+
+
+def build_get_variant_prices() -> GetVariantPrices:
+    return GetVariantPrices(DjangoVariantPriceRepository(), DjangoVariantRepository())

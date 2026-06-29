@@ -386,3 +386,40 @@ class DuplicateRuleConditionError(CatalogError):
     def __init__(self, detail: str) -> None:
         super().__init__(f"duplicate rule condition: {detail}")
         self.detail = detail
+
+
+class InvalidMoneyError(CatalogError):
+    """Raised when a money amount or currency is malformed.
+
+    Covers a non-Decimal or non-finite amount, a non-positive base price, an
+    amount that exceeds the stored precision/scale, or a currency that is not a
+    three-letter alpha code.
+    """
+
+    def __init__(self, detail: str) -> None:
+        super().__init__(f"invalid money: {detail}")
+        self.detail = detail
+
+
+class InvalidChannelReferenceError(CatalogError):
+    """Raised when a price references a channel with a blank or overlong slug."""
+
+    def __init__(self, value: str) -> None:
+        super().__init__(f"invalid channel reference: {value!r}")
+        self.value = value
+
+
+class UnknownChannelError(CatalogError):
+    """Raised when a price references a channel that does not exist."""
+
+    def __init__(self, slug: str) -> None:
+        super().__init__(f"unknown channel: {slug!r}")
+        self.slug = slug
+
+
+class DuplicateChannelPriceError(CatalogError):
+    """Raised when a variant is given more than one price for the same channel."""
+
+    def __init__(self, channel: str) -> None:
+        super().__init__(f"duplicate channel price: {channel!r}")
+        self.channel = channel

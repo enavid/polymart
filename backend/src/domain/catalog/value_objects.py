@@ -8,14 +8,17 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from decimal import Decimal
 
 from src.domain.catalog.enums import RuleOperator
 from src.domain.catalog.exceptions import (
     InvalidAttributeChoiceError,
     InvalidAttributeCodeError,
     InvalidCategorySlugError,
+    InvalidChannelReferenceError,
     InvalidCollectionSlugError,
     InvalidMediaAssetError,
+    InvalidMoneyError,
     InvalidProductCodeError,
     InvalidProductTypeCodeError,
     InvalidRuleConditionError,
@@ -40,6 +43,16 @@ _RULE_VALUE_MAX_LENGTH = 1024
 # A media URL is either absolute (a CDN/object-store link) or site-relative (a
 # path served by the platform), so themes can point at either without code changes.
 _URL_PREFIXES = ("http://", "https://", "/")
+# Money bounds. A base price is stored as a fixed-point Decimal: at most 18 total
+# significant digits (matching the DB column) and 4 decimal places -- enough for
+# every circulating ISO 4217 currency (including the three-decimal dinars) with a
+# margin. Currency-exact rounding to each currency's own exponent is a follow-up.
+_MONEY_MAX_DIGITS = 18
+_MONEY_MAX_DECIMAL_PLACES = 4
+# A currency is an ISO 4217 alpha code (three upper-case letters). Full membership
+# (IRR/USD/...) is validated by the channel context; a price always derives its
+# currency from a persisted channel, so here we only enforce the structural shape.
+_CURRENCY_RE = re.compile(r"^[A-Z]{3}$")
 
 
 @dataclass(frozen=True)
@@ -226,3 +239,66 @@ class AttributeChoice:
             raise InvalidAttributeChoiceError(f"label {self.label!r}")
         object.__setattr__(self, "value", value)
         object.__setattr__(self, "label", label)
+
+
+@dataclass(frozen=True)
+class Money:
+    """A monetary amount in a single currency.
+
+    Money is always a fixed-point ``Decimal`` -- never a binary ``float`` -- so the
+    rounding surprises that make floats unfit for money cannot occur. A base price
+    is strictly positive (zero/free is a promotion concern, not a base price), finite,
+    and bounded to the stored precision. ``currency`` is a three-letter ISO 4217 code;
+    a price always derives it from a persisted channel, so equality across currencies
+    is never silently assumed.
+    """
+
+    amount: Decimal
+    currency: str
+
+    def __post_init__(self) -> None:
+        self._validate_amount(self.amount)
+        currency = self.currency.strip().upper()
+        if not _CURRENCY_RE.match(currency):
+            raise InvalidMoneyError(f"currency {self.currency!r}")
+        object.__setattr__(self, "currency", currency)
+
+    @staticmethod
+    def _validate_amount(amount: Decimal) -> None:
+        # bool is an int subclass; Decimal is not -- reject anything that is not a
+        # genuine Decimal so a float (or int) never silently becomes a price.
+        if not isinstance(amount, Decimal):
+            raise InvalidMoneyError(f"amount must be a Decimal, got {type(amount).__name__}")
+        if not amount.is_finite():
+            raise InvalidMoneyError(f"amount not finite: {amount!r}")
+        if amount <= 0:
+            raise InvalidMoneyError(f"amount must be positive: {amount!r}")
+        _sign, digits, exponent = amount.as_tuple()
+        # ``exponent`` is the (negated) number of decimal places for a fractional
+        # value; it is non-negative for a whole number, which never over-scales.
+        if isinstance(exponent, int) and -exponent > _MONEY_MAX_DECIMAL_PLACES:
+            raise InvalidMoneyError(
+                f"amount has more than {_MONEY_MAX_DECIMAL_PLACES} decimal places: {amount!r}"
+            )
+        if len(digits) > _MONEY_MAX_DIGITS:
+            raise InvalidMoneyError(f"amount has more than {_MONEY_MAX_DIGITS} digits: {amount!r}")
+
+
+@dataclass(frozen=True)
+class ChannelPrice:
+    """A variant's base price in one channel: a channel reference paired with money.
+
+    The channel is referenced by its slug (the channel lives in another bounded
+    context); whether it exists, and which currency it uses, are application-layer
+    concerns resolved against the channel. This value object owns only the structural
+    rule that the channel reference is a non-blank, bounded string.
+    """
+
+    channel: str
+    money: Money
+
+    def __post_init__(self) -> None:
+        channel = self.channel.strip()
+        if not channel or len(channel) > _SLUG_MAX_LENGTH:
+            raise InvalidChannelReferenceError(self.channel)
+        object.__setattr__(self, "channel", channel)

@@ -18,7 +18,12 @@ from src.domain.catalog.entities import (
     ProductType,
     ProductVariant,
 )
-from src.domain.catalog.value_objects import CategorySlug, ProductCode, RuleCondition
+from src.domain.catalog.value_objects import (
+    CategorySlug,
+    ChannelPrice,
+    ProductCode,
+    RuleCondition,
+)
 
 
 class AttributeRepository(ABC):
@@ -269,3 +274,39 @@ class CollectionRuleRepository(ABC):
     @abstractmethod
     def list_for_collection(self, collection_slug: str) -> tuple[RuleCondition, ...]:
         """Return a collection's rule conditions in order (empty if no rule)."""
+
+
+class VariantPriceRepository(ABC):
+    """Persistence boundary for a variant's per-channel base prices.
+
+    A variant's prices are a set keyed by channel (a separate facet from the
+    variant's own attributes/media). Implementations MUST translate storage-specific
+    failures into domain exceptions (``VariantNotFoundError`` for a missing variant)
+    so callers never see infrastructure leaks.
+    """
+
+    @abstractmethod
+    def replace(self, sku: str, prices: Sequence[ChannelPrice]) -> tuple[ChannelPrice, ...]:
+        """Replace a variant's whole set of channel prices atomically.
+
+        Returns the stored prices ordered by channel for deterministic output.
+        Raises ``VariantNotFoundError`` if the variant does not exist (the whole
+        replace then rolls back).
+        """
+
+    @abstractmethod
+    def list_for_variant(self, sku: str) -> tuple[ChannelPrice, ...]:
+        """Return a variant's channel prices, ordered by channel (empty if none)."""
+
+
+class ChannelReader(ABC):
+    """Read-only boundary onto the channel context for the catalog.
+
+    Pricing is per-channel and the currency is the channel's, so the catalog must
+    learn a channel's currency without depending on the channel domain. This narrow
+    port exposes exactly that; the adapter bridges to the channel context.
+    """
+
+    @abstractmethod
+    def currency_of(self, channel_slug: str) -> str | None:
+        """Return the channel's ISO 4217 currency code, or ``None`` if it does not exist."""

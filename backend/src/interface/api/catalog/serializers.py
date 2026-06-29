@@ -9,6 +9,12 @@ from __future__ import annotations
 
 from rest_framework import serializers
 
+# Fixed-point money bounds for transport validation (mirrors the Money value object
+# and the stored column). The domain remains the source of truth for the positivity
+# and currency rules; these only shape/reject the request at the edge.
+_AMOUNT_MAX_DIGITS = 18
+_AMOUNT_DECIMAL_PLACES = 4
+
 
 class AttributeChoiceSerializer(serializers.Serializer):
     """One option of a choice-type attribute."""
@@ -176,3 +182,33 @@ class CollectionRuleMembersSerializer(serializers.Serializer):
     """Response projection of the products a rule-based collection currently selects."""
 
     products = serializers.ListField(child=serializers.CharField())
+
+
+class ChannelPriceInputSerializer(serializers.Serializer):
+    """One channel price in a replace request (the currency is derived from the channel)."""
+
+    channel = serializers.CharField()
+    amount = serializers.DecimalField(
+        max_digits=_AMOUNT_MAX_DIGITS, decimal_places=_AMOUNT_DECIMAL_PLACES
+    )
+
+
+class SetVariantPricesSerializer(serializers.Serializer):
+    """Request body for replacing a variant's per-channel base prices (empty clears)."""
+
+    prices = ChannelPriceInputSerializer(many=True)
+
+
+class ChannelPriceSerializer(serializers.Serializer):
+    """One channel price in a response, with the currency derived from the channel."""
+
+    channel = serializers.CharField()
+    # Serialized as a string to preserve the exact Decimal (never a float).
+    amount = serializers.CharField()
+    currency = serializers.CharField()
+
+
+class VariantPricesSerializer(serializers.Serializer):
+    """Response projection of a variant's per-channel base prices."""
+
+    prices = ChannelPriceSerializer(many=True)
