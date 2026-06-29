@@ -28,6 +28,7 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     "rest_framework",
     "drf_spectacular",
+    "corsheaders",
     "guardian",
     # Tracks issued refresh tokens so they can be revoked (logout, password reset).
     "rest_framework_simplejwt.token_blacklist",
@@ -44,6 +45,9 @@ AUTH_USER_MODEL = "identity.User"
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    # CorsMiddleware must sit above CommonMiddleware so it can answer preflight
+    # OPTIONS requests and attach the Access-Control-* headers to every response.
+    "corsheaders.middleware.CorsMiddleware",
     "config.middleware.RequestIDMiddleware",
     "django.middleware.common.CommonMiddleware",
 ]
@@ -138,6 +142,16 @@ AUTH_COOKIE_SECURE = not DEBUG
 AUTH_COOKIE_HTTPONLY = True
 AUTH_COOKIE_SAMESITE = "Lax"
 AUTH_COOKIE_PATH = "/"
+
+# --- CORS -------------------------------------------------------------------
+# The storefront is always a different origin than the API (different port in
+# local dev, different host in prod), so the browser makes cross-origin requests.
+# Cookie-JWT auth means those requests are credentialed, which requires an
+# explicit per-origin allow-list (wildcards are forbidden with credentials).
+# Secure-by-default: no origins are allowed unless an environment opts in.
+# dev.py whitelists localhost; prod reads CORS_ALLOWED_ORIGINS from the env.
+CORS_ALLOWED_ORIGINS = env.list("CORS_ALLOWED_ORIGINS", default=[])
+CORS_ALLOW_CREDENTIALS = True
 
 SPECTACULAR_SETTINGS = {
     "TITLE": "Polymart API",
