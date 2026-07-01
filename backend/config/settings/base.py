@@ -39,6 +39,10 @@ INSTALLED_APPS = [
     "src.infrastructure.audit.apps.AuditConfig",
     "src.infrastructure.catalog.apps.CatalogConfig",
     "src.infrastructure.cart.apps.CartConfig",
+    # Developer/E2E tooling (the seed_e2e management command). It carries no
+    # models; its one command refuses to run unless DEBUG, so it is inert in
+    # production even though it is installed everywhere.
+    "src.infrastructure.devtools.apps.DevtoolsConfig",
 ]
 
 # Phone-first custom user (see src/infrastructure/identity/models.py).
