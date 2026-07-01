@@ -30,8 +30,10 @@ export const PRODUCTS = {
     code: "house-blend",
     name: "House Blend",
     variants: [
-      { sku: "HB-250", name: "250g", price: "120000.0000" },
-      { sku: "HB-500", name: "500g", price: "200000.0000" },
+      { sku: "HB-250", name: "250g", price: "120000.0000" as string | null },
+      { sku: "HB-500", name: "500g", price: "200000.0000" as string | null },
+      // Priced only in another channel -> unavailable (not purchasable) here.
+      { sku: "HB-1000", name: "1kg", price: null as string | null },
     ],
   },
   darkRoast: {
@@ -47,6 +49,9 @@ export const PRODUCTS = {
 } as const;
 
 export const PUBLISHED_PRODUCT_COUNT = 3;
+
+/** A variant that is priced only in another channel, so it is unavailable here. */
+export const UNAVAILABLE_VARIANT = { sku: "HB-1000", productCode: "house-blend" };
 
 export const PRODUCT_TYPE_CODE = "coffee";
 export const CATEGORY = { root: "hot-drinks", child: "coffee-beans" };

@@ -91,12 +91,20 @@ CATEGORY_CHILD = "coffee-beans"
 COLLECTION_SLUG = "featured"
 
 
+# A channel the storefront is NOT viewed in, used to seed a variant that is
+# priced somewhere but unavailable in the main channel.
+OTHER_CHANNEL_SLUG = "ir-secondary"
+
+
 @dataclass(frozen=True)
 class _Variant:
     sku: str
     name: str
     price: str
     stock: int
+    # The channel the price is written in. A variant priced in a channel other
+    # than the storefront's is "unavailable in this channel" on the PDP.
+    channel: str = CHANNEL_SLUG
 
 
 @dataclass(frozen=True)
@@ -115,6 +123,15 @@ PRODUCTS: tuple[_Product, ...] = (
         variants=(
             _Variant(sku="HB-250", name="250g", price="120000.00", stock=30),
             _Variant(sku="HB-500", name="500g", price="200000.00", stock=10),
+            # Priced only in another channel, so it is unavailable (not
+            # purchasable) in the storefront's channel -- exercises that UI path.
+            _Variant(
+                sku="HB-1000",
+                name="1kg",
+                price="360000.00",
+                stock=8,
+                channel=OTHER_CHANNEL_SLUG,
+            ),
         ),
     ),
     _Product(
@@ -258,7 +275,7 @@ class Command(BaseCommand):
                     variant.sku,
                     (
                         ChannelPrice(
-                            channel=CHANNEL_SLUG,
+                            channel=variant.channel,
                             money=Money(amount=Decimal(variant.price), currency=CHANNEL_CURRENCY),
                         ),
                     ),
