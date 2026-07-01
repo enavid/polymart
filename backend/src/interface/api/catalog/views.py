@@ -12,7 +12,7 @@ from typing import ClassVar
 import structlog
 from django.http import HttpResponse
 from drf_spectacular.types import OpenApiTypes
-from drf_spectacular.utils import OpenApiResponse, extend_schema
+from drf_spectacular.utils import OpenApiParameter, OpenApiResponse, extend_schema
 from rest_framework import status
 from rest_framework.parsers import MultiPartParser
 from rest_framework.permissions import AllowAny
@@ -42,6 +42,7 @@ from src.application.catalog.use_cases import (
     SetProductPublishedCommand,
     SetVariantPricesCommand,
     SetVariantStockCommand,
+    StorefrontVariant,
 )
 from src.domain.catalog.entities import (
     Attribute,
@@ -93,6 +94,7 @@ from src.interface.api.catalog.container import (
     build_get_product_categories,
     build_get_product_type,
     build_get_published_product,
+    build_get_storefront_product_variants,
     build_get_variant,
     build_get_variant_prices,
     build_get_variant_stock,
@@ -137,6 +139,8 @@ from src.interface.api.catalog.serializers import (
     StorefrontProductPageSerializer,
     StorefrontProductQuerySerializer,
     StorefrontProductSerializer,
+    StorefrontProductVariantsSerializer,
+    StorefrontVariantsQuerySerializer,
     VariantPricesSerializer,
     VariantSerializer,
     VariantStockSerializer,
@@ -971,6 +975,64 @@ class StorefrontProductDetailView(APIView):
         except ProductNotFoundError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_404_NOT_FOUND)
         return Response(_storefront_product_payload(product))
+
+
+def _storefront_variant_payload(item: StorefrontVariant) -> dict[str, object]:
+    """Project a published variant plus its channel price for the storefront.
+
+    Omits the internal ``id`` (the public key is the SKU). The price amount is a
+    string so the exact Decimal survives JSON; ``price`` is null when the variant has
+    no base price in the requested channel.
+    """
+    variant = item.variant
+    return {
+        "sku": variant.sku.value,
+        "name": variant.name,
+        "values": [
+            {"attribute": value.attribute.value, "value": value.value} for value in variant.values
+        ],
+        "media": [{"url": asset.url, "alt_text": asset.alt_text} for asset in variant.media],
+        "price": (
+            None
+            if item.price is None
+            else {"amount": str(item.price.money.amount), "currency": item.price.money.currency}
+        ),
+    }
+
+
+class StorefrontProductVariantsView(APIView):
+    """Public list of a published product's purchasable variants, priced for a channel.
+
+    The PDP's add-to-cart surface. A draft or unknown product is a 404 (its existence
+    is never revealed); a variant with no price in the channel is returned with a null
+    price so it can be shown but not purchased there.
+    """
+
+    permission_classes: ClassVar = [AllowAny]
+
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                name="channel", type=str, location=OpenApiParameter.QUERY, required=True
+            )
+        ],
+        responses={
+            200: StorefrontProductVariantsSerializer,
+            400: ErrorSerializer,
+            404: ErrorSerializer,
+        },
+    )
+    def get(self, request: Request, code: str) -> Response:
+        params = StorefrontVariantsQuerySerializer(data=request.query_params)
+        params.is_valid(raise_exception=True)
+        channel = params.validated_data["channel"]
+        try:
+            variants = build_get_storefront_product_variants().execute(code=code, channel=channel)
+        except ProductNotFoundError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_404_NOT_FOUND)
+        return Response(
+            {"channel": channel, "variants": [_storefront_variant_payload(v) for v in variants]}
+        )
 
 
 class ProductExportView(APIView):

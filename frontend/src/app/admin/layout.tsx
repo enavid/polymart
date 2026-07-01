@@ -17,6 +17,9 @@ export default async function AdminLayout({
         <Link href="/admin/channels" className="hover:underline">
           {t("channels")}
         </Link>
+        <Link href="/admin/catalog" className="hover:underline">
+          {t("catalog")}
+        </Link>
         <Link href="/admin/audit" className="hover:underline">
           {t("audit")}
         </Link>

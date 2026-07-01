@@ -1514,6 +1514,60 @@ class GetPublishedProduct:
 
 
 @dataclass(frozen=True)
+class StorefrontVariant:
+    """A published product's variant projected for the storefront: it plus its price.
+
+    ``price`` is the variant's base price in the requested channel, or ``None`` when
+    it has none there (it is shown but not purchasable in that channel).
+    """
+
+    variant: ProductVariant
+    price: ChannelPrice | None
+
+
+class GetStorefrontProductVariants:
+    """List a published product's variants with each one's price in a channel.
+
+    This is the storefront's purchasable surface: the PDP uses it to offer variants
+    a shopper can add to the cart. Publication is enforced through the read
+    repository (a draft is a 404, never leaked), so only variants of a public product
+    are ever returned. Resolution is read-only (no persistence, no audit).
+    """
+
+    def __init__(
+        self,
+        products: ProductQueryRepository,
+        variants: VariantRepository,
+        prices: VariantPriceRepository,
+    ) -> None:
+        self._products = products
+        self._variants = variants
+        self._prices = prices
+
+    def execute(self, *, code: str, channel: str) -> tuple[StorefrontVariant, ...]:
+        # A draft (or unknown) product is a 404: its variants are never exposed.
+        self._products.get_published_by_code(code)
+        variants = self._variants.list_for_product(code)
+        result = tuple(
+            StorefrontVariant(variant=variant, price=self._price_in_channel(variant, channel))
+            for variant in variants
+        )
+        logger.debug(
+            "storefront_product_variants_listed",
+            code=code,
+            channel=channel,
+            count=len(result),
+        )
+        return result
+
+    def _price_in_channel(self, variant: ProductVariant, channel: str) -> ChannelPrice | None:
+        for price in self._prices.list_for_variant(variant.sku.value):
+            if price.channel == channel:
+                return price
+        return None
+
+
+@dataclass(frozen=True)
 class ProductRow:
     """A flat, format-agnostic representation of one product for CSV import/export.
 

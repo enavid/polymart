@@ -1,0 +1,228 @@
+"use client";
+
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import Link from "next/link";
+import { useTranslations } from "next-intl";
+import { useState } from "react";
+
+import { Alert } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import {
+  getCart,
+  removeCartItem,
+  updateCartItem,
+  type Cart,
+} from "@/lib/api/cart";
+import { ApiError } from "@/lib/api/client";
+import { formatMoneyString } from "@/lib/format";
+import { useCurrentUser } from "@/lib/hooks/use-auth";
+import { STOREFRONT_CHANNEL } from "@/lib/storefront/channel";
+
+const CART_KEY = (channel: string) => ["cart", channel] as const;
+
+/** The shopper's cart for the active channel: line editing + server-computed totals. */
+export function CartView() {
+  const t = useTranslations("cart");
+  const tCommon = useTranslations("common");
+  const channel = STOREFRONT_CHANNEL;
+  const queryClient = useQueryClient();
+
+  const { data: user, isLoading: userLoading } = useCurrentUser();
+
+  const query = useQuery({
+    queryKey: CART_KEY(channel),
+    queryFn: () => getCart(channel),
+    // The cart lives behind auth; only fetch it once we know there is a user.
+    enabled: Boolean(user),
+  });
+
+  function onMutated(cart: Cart) {
+    queryClient.setQueryData(CART_KEY(channel), cart);
+  }
+
+  if (userLoading) {
+    return <p>{tCommon("loading")}</p>;
+  }
+
+  if (!user) {
+    return (
+      <div className="flex flex-col gap-4">
+        <h1 className="text-xl font-semibold">{t("title")}</h1>
+        <Alert>{t("loginRequired")}</Alert>
+        <Link href="/login" className="text-sm text-primary hover:underline">
+          {t("goLogin")}
+        </Link>
+      </div>
+    );
+  }
+
+  const cart = query.data;
+  const hasUnavailable = (cart?.items ?? []).some((line) => !line.available);
+
+  return (
+    <div className="flex flex-col gap-6">
+      <h1 className="text-xl font-semibold">{t("title")}</h1>
+
+      {query.isLoading ? <p>{tCommon("loading")}</p> : null}
+
+      {query.isError ? (
+        <Alert variant="destructive">
+          {query.error instanceof ApiError
+            ? query.error.detail
+            : tCommon("genericError")}
+        </Alert>
+      ) : null}
+
+      {cart && cart.items.length === 0 ? (
+        <div className="flex flex-col gap-4">
+          <p className="text-muted-foreground">{t("empty")}</p>
+          <Link href="/products" className="text-sm text-primary hover:underline">
+            {t("continueShopping")}
+          </Link>
+        </div>
+      ) : null}
+
+      {cart && cart.items.length > 0 ? (
+        <>
+          {hasUnavailable ? <Alert variant="destructive">{t("unavailable")}</Alert> : null}
+
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>{t("product")}</TableHead>
+                <TableHead>{t("unitPrice")}</TableHead>
+                <TableHead>{t("quantity")}</TableHead>
+                <TableHead>{t("lineTotal")}</TableHead>
+                <TableHead />
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {cart.items.map((line) => (
+                <CartLineRow
+                  key={line.sku}
+                  line={line}
+                  channel={channel}
+                  currency={cart.currency}
+                  onMutated={onMutated}
+                />
+              ))}
+            </TableBody>
+          </Table>
+
+          <div className="flex items-center justify-between border-t border-border pt-4">
+            <span className="font-medium">{t("total")}</span>
+            <span className="text-lg font-semibold">
+              {formatMoneyString(cart.total, cart.currency)}
+            </span>
+          </div>
+
+          <Link href="/products" className="text-sm text-primary hover:underline">
+            {t("continueShopping")}
+          </Link>
+        </>
+      ) : null}
+    </div>
+  );
+}
+
+interface CartLineRowProps {
+  line: Cart["items"][number];
+  channel: string;
+  currency: string;
+  onMutated: (cart: Cart) => void;
+}
+
+function CartLineRow({ line, channel, currency, onMutated }: CartLineRowProps) {
+  const t = useTranslations("cart");
+  const tCommon = useTranslations("common");
+  const [quantity, setQuantity] = useState(String(line.quantity));
+
+  function mapError(error: unknown): string {
+    if (error instanceof ApiError) {
+      return error.status === 404 ? t("notFound") : error.detail;
+    }
+    return tCommon("genericError");
+  }
+
+  const update = useMutation({
+    mutationFn: () => updateCartItem(line.sku, channel, Number(quantity)),
+    onSuccess: onMutated,
+  });
+
+  const remove = useMutation({
+    mutationFn: () => removeCartItem(line.sku, channel),
+    onSuccess: onMutated,
+  });
+
+  const error = update.isError
+    ? mapError(update.error)
+    : remove.isError
+      ? mapError(remove.error)
+      : null;
+
+  return (
+    <>
+      <TableRow>
+        <TableCell className="font-medium">
+          <div className="flex flex-col">
+            <span>{line.sku}</span>
+            {!line.available ? (
+              <span className="text-xs text-destructive">{t("lineUnavailable")}</span>
+            ) : null}
+          </div>
+        </TableCell>
+        <TableCell>{formatMoneyString(line.unit_price, currency)}</TableCell>
+        <TableCell>
+          <div className="flex items-center gap-2">
+            <Input
+              id={`cart_qty_${line.sku}`}
+              name={`cart_qty_${line.sku}`}
+              type="number"
+              aria-label={t("quantity")}
+              value={quantity}
+              onChange={(e) => setQuantity(e.target.value)}
+              className="w-20"
+            />
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => update.mutate()}
+              disabled={update.isPending}
+            >
+              {t("update")}
+            </Button>
+          </div>
+        </TableCell>
+        <TableCell>{formatMoneyString(line.line_total, currency)}</TableCell>
+        <TableCell>
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            onClick={() => remove.mutate()}
+            disabled={remove.isPending}
+          >
+            {t("remove")}
+          </Button>
+        </TableCell>
+      </TableRow>
+      {error ? (
+        <TableRow>
+          <TableCell colSpan={5}>
+            <Alert variant="destructive">{error}</Alert>
+          </TableCell>
+        </TableRow>
+      ) : null}
+    </>
+  );
+}

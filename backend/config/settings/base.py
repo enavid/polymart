@@ -38,6 +38,7 @@ INSTALLED_APPS = [
     "src.infrastructure.access.apps.AccessConfig",
     "src.infrastructure.audit.apps.AuditConfig",
     "src.infrastructure.catalog.apps.CatalogConfig",
+    "src.infrastructure.cart.apps.CartConfig",
 ]
 
 # Phone-first custom user (see src/infrastructure/identity/models.py).

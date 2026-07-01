@@ -12,6 +12,7 @@ api_v1_patterns = [
     path("", include("src.interface.api.access.urls")),
     path("", include("src.interface.api.audit.urls")),
     path("", include("src.interface.api.catalog.urls")),
+    path("", include("src.interface.api.cart.urls")),
 ]
 
 urlpatterns = [

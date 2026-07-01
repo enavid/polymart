@@ -18,3 +18,18 @@ export function formatCurrency(amount: number, currency: string): string {
     currency,
   }).format(amount);
 }
+
+/**
+ * Format a money amount that arrived as an exact string (the backend's Decimal).
+ *
+ * The conversion to a number is for *display only*: the source of truth is the
+ * server string, and the UI never recomputes line totals or the cart total -- it
+ * only renders what the backend already computed. A blank/`null` amount (an
+ * unavailable line) renders as an em dash.
+ */
+export function formatMoneyString(amount: string | null, currency: string): string {
+  if (amount === null || amount === "") {
+    return "—";
+  }
+  return formatCurrency(Number(amount), currency);
+}

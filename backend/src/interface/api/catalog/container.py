@@ -25,6 +25,7 @@ from src.application.catalog.use_cases import (
     GetProductCategories,
     GetProductType,
     GetPublishedProduct,
+    GetStorefrontProductVariants,
     GetVariant,
     GetVariantPrices,
     GetVariantStock,
@@ -233,6 +234,14 @@ def build_search_catalog_products() -> SearchCatalogProducts:
 
 def build_get_published_product() -> GetPublishedProduct:
     return GetPublishedProduct(DjangoProductQueryRepository())
+
+
+def build_get_storefront_product_variants() -> GetStorefrontProductVariants:
+    return GetStorefrontProductVariants(
+        DjangoProductQueryRepository(),
+        DjangoVariantRepository(),
+        DjangoVariantPriceRepository(),
+    )
 
 
 def build_export_catalog_products() -> ExportCatalogProducts:

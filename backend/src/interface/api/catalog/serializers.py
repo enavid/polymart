@@ -152,6 +152,39 @@ class VariantSerializer(serializers.Serializer):
     media = VariantMediaSerializer(many=True)
 
 
+class StorefrontVariantPriceSerializer(serializers.Serializer):
+    """A variant's storefront price (amount as an exact string, currency from the channel)."""
+
+    amount = serializers.CharField()
+    currency = serializers.CharField()
+
+
+class StorefrontVariantSerializer(serializers.Serializer):
+    """A published product's variant projected for the storefront (no internal id).
+
+    ``price`` is ``null`` when the variant has no base price in the requested channel.
+    """
+
+    sku = serializers.CharField()
+    name = serializers.CharField()
+    values = AttributeValueSerializer(many=True)
+    media = VariantMediaSerializer(many=True)
+    price = StorefrontVariantPriceSerializer(allow_null=True)
+
+
+class StorefrontProductVariantsSerializer(serializers.Serializer):
+    """Response projection of a published product's purchasable variants in a channel."""
+
+    channel = serializers.CharField()
+    variants = StorefrontVariantSerializer(many=True)
+
+
+class StorefrontVariantsQuerySerializer(serializers.Serializer):
+    """Query parameter selecting the channel a product's variants are priced in."""
+
+    channel = serializers.CharField()
+
+
 class CreateVariantSerializer(serializers.Serializer):
     """Request body for creating a variant (the parent product comes from the URL)."""
 

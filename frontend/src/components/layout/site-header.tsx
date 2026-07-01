@@ -20,8 +20,14 @@ export function SiteHeader() {
           {tCommon("appName")}
         </Link>
         <nav className="flex items-center gap-2 text-sm">
+          <Link href="/products" className="px-2 hover:underline">
+            {t("storefront")}
+          </Link>
           {user ? (
             <>
+              <Link href="/cart" className="px-2 hover:underline">
+                {t("cart")}
+              </Link>
               <Link href="/account" className="px-2 hover:underline">
                 {t("account")}
               </Link>
