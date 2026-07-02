@@ -2,12 +2,11 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { useState } from "react";
 
 import { Alert } from "@/components/ui/alert";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
   Table,
@@ -24,7 +23,6 @@ import {
   type Cart,
 } from "@/lib/api/cart";
 import { ApiError } from "@/lib/api/client";
-import { placeOrder } from "@/lib/api/orders";
 import { formatMoneyString } from "@/lib/format";
 import { useCurrentUser } from "@/lib/hooks/use-auth";
 import { STOREFRONT_CHANNEL } from "@/lib/storefront/channel";
@@ -37,19 +35,8 @@ export function CartView() {
   const tCommon = useTranslations("common");
   const channel = STOREFRONT_CHANNEL;
   const queryClient = useQueryClient();
-  const router = useRouter();
 
   const { data: user, isLoading: userLoading } = useCurrentUser();
-
-  const checkout = useMutation({
-    mutationFn: () => placeOrder(channel),
-    onSuccess: (order) => {
-      // The cart is now consumed; drop the cached copy so a revisit refetches the
-      // (empty) cart rather than showing stale lines.
-      queryClient.removeQueries({ queryKey: CART_KEY(channel) });
-      router.push(`/orders/${order.number}`);
-    },
-  });
 
   const query = useQuery({
     queryKey: CART_KEY(channel),
@@ -138,13 +125,6 @@ export function CartView() {
             </span>
           </div>
 
-          {checkout.isError ? (
-            // A checkout conflict (oversell, a line that lost its price, an empty
-            // cart) surfaces as a localized message -- the backend detail is English
-            // and not shopper-appropriate. The specific reason is on the audit trail.
-            <Alert variant="destructive">{t("checkoutError")}</Alert>
-          ) : null}
-
           {hasUnavailable ? (
             <p className="text-sm text-muted-foreground">{t("checkoutUnavailable")}</p>
           ) : null}
@@ -153,13 +133,18 @@ export function CartView() {
             <Link href="/products" className="text-sm text-primary hover:underline">
               {t("continueShopping")}
             </Link>
-            <Button
-              type="button"
-              onClick={() => checkout.mutate()}
-              disabled={checkout.isPending || hasUnavailable}
-            >
-              {t("checkout")}
-            </Button>
+            {/* Checkout is a multi-step flow (choose address, then review + place);
+                the cart just navigates into it. Disabled while a line is unavailable
+                so the shopper resolves it before checkout. */}
+            {hasUnavailable ? (
+              <Button type="button" disabled>
+                {t("checkout")}
+              </Button>
+            ) : (
+              <Link href="/checkout" className={buttonVariants()}>
+                {t("checkout")}
+              </Link>
+            )}
           </div>
         </>
       ) : null}

@@ -1,37 +1,34 @@
 /**
  * The authenticated shopper's address book, end to end against the real backend.
- * Like the cart/checkout journey, the seeded shopper's saved addresses are one shared
- * resource (reset to empty by `seed_e2e` before every run), so these run **serially in
- * one worker** -- parallel tests would race on that shared state.
  *
- *   book:      empty -> add first (becomes default) -> add second (not default) ->
- *              set second as default (swaps exclusively) -> edit (default untouched) ->
- *              delete via inline confirmation (no browser dialog).
- *   boundary:  an invalid postal code is rejected with a validation message, nothing
- *              is created; the per-owner cap (20) is enforced with a conflict, and the
- *              21st address is refused.
+ * The seeded shopper starts each run with exactly one address: the persistent default
+ * "home" address (`SHOPPER_ADDRESS`) that `seed_e2e` writes and that checkout ships to.
+ * This spec works *relative to that baseline* and **never deletes the seeded address**,
+ * so it can run alongside the checkout spec (which targets the seeded address) without
+ * racing on a shared, deleted address. These run serially in one worker.
+ *
+ *   book:      baseline (1, default) -> add a second (not default) -> set it default
+ *              (swaps exclusively) -> restore the seed as default -> edit -> delete it.
+ *   boundary:  an invalid postal code is rejected; the per-owner cap (20) is enforced
+ *              and the 21st address is refused.
  *   ownership: a different account (staff) never sees the shopper's saved addresses.
  */
 
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
 import messages from "../../../src/i18n/messages/fa.json";
-import { ADDRESS, ADDRESS_LIMIT, STAFF_STATE } from "../fixtures/seed";
+import { ADDRESS, ADDRESS_LIMIT, SHOPPER_ADDRESS, STAFF_STATE } from "../fixtures/seed";
 
 const addresses = messages.addresses;
+const SEED = SHOPPER_ADDRESS.recipientName;
+const SECOND = "Reza Karimi";
 
-/**
- * Navigate to the address book and wait for the list to settle into either its empty
- * state or at least one rendered card, so a subsequent `.count()` (which does not
- * auto-retry, unlike `expect(...)`) reads the committed DOM instead of racing the
- * initial fetch/render.
- */
+/** Navigate to the address book and wait for the seeded card to render. */
 async function gotoAddresses(page: Page): Promise<void> {
   await page.goto("/addresses");
-  await page.getByText(addresses.empty).or(page.getByTestId("address-card").first()).waitFor();
+  await page.getByTestId("address-card").first().waitFor();
 }
 
-/** The card for the address with the given recipient name (there is exactly one). */
 function cardFor(page: Page, recipientName: string): Locator {
   return page.getByTestId("address-card").filter({ hasText: recipientName });
 }
@@ -67,56 +64,49 @@ async function addAddressExpectingError(
   await page.getByRole("button", { name: addresses.cancel }).click();
 }
 
-/** Delete every saved address via the inline confirm (never a browser dialog). */
-async function deleteAllAddresses(page: Page): Promise<void> {
+/** Delete every card **except** the seeded address, leaving the book at its baseline. */
+async function resetToBaseline(page: Page): Promise<void> {
   await gotoAddresses(page);
-  // gotoAddresses already waited for the list to settle, so this first read is
-  // accurate; each iteration below re-verifies the new count with an auto-retrying
-  // `expect` (the delete mutation's refetch is async, so a raw `.count()` right
-  // after clicking would race it).
-  let remaining = await page.getByTestId("address-card").count();
-  while (remaining > 0) {
-    await page.getByRole("button", { name: addresses.delete }).first().click();
-    await expect(page.getByText(addresses.deleteConfirm)).toBeVisible();
-    await page.getByRole("button", { name: addresses.delete }).first().click();
-    remaining -= 1;
-    await expect(page.getByTestId("address-card")).toHaveCount(remaining);
+  let count = await page.getByTestId("address-card").count();
+  while (count > 1) {
+    // Delete the first non-seed card.
+    const target = page.getByTestId("address-card").filter({ hasNotText: SEED }).first();
+    await target.getByRole("button", { name: addresses.delete }).click();
+    await target.getByRole("button", { name: addresses.delete }).click();
+    count -= 1;
+    await expect(page.getByTestId("address-card")).toHaveCount(count);
   }
-  await expect(page.getByText(addresses.empty)).toBeVisible();
+  await expect(cardFor(page, SEED)).toHaveCount(1);
 }
 
 test.describe.serial("shopper address book", () => {
-  test("book: empty, add the first (default), add a second (not default)", async ({ page }) => {
+  test("book: the seeded default is shown, and a new address is not default", async ({ page }) => {
     await gotoAddresses(page);
-    await expect(page.getByText(addresses.empty)).toBeVisible();
+    await expect(cardFor(page, SEED).getByText(addresses.default, { exact: true })).toBeVisible();
+    await expect(page.getByTestId("address-card")).toHaveCount(1);
 
-    await addAddress(page);
-    await expect(
-      cardFor(page, ADDRESS.recipientName).getByText(addresses.default, { exact: true }),
-    ).toBeVisible();
-
-    await addAddress(page, { recipientName: "Reza Karimi", city: "Shiraz" });
+    await addAddress(page, { recipientName: SECOND, city: "Shiraz" });
     await expect(page.getByTestId("address-card")).toHaveCount(2);
-    // Only the first address is default; the second is not.
+    // Only the seeded address is default; the new one is not.
     await expect(page.getByText(addresses.default, { exact: true })).toHaveCount(1);
-    await expect(
-      cardFor(page, "Reza Karimi").getByText(addresses.default, { exact: true }),
-    ).toHaveCount(0);
+    await expect(cardFor(page, SECOND).getByText(addresses.default, { exact: true })).toHaveCount(
+      0,
+    );
   });
 
-  test("book: setting the non-default address as default swaps exclusively", async ({ page }) => {
+  test("book: setting a non-default address as default swaps exclusively", async ({ page }) => {
     await gotoAddresses(page);
 
-    await cardFor(page, "Reza Karimi").getByRole("button", { name: addresses.setDefault }).click();
+    await cardFor(page, SECOND).getByRole("button", { name: addresses.setDefault }).click();
 
-    // Exactly one address is ever default, and it is now Reza Karimi's.
+    // Exactly one address is ever default, and it is now the new one.
     await expect(page.getByText(addresses.default, { exact: true })).toHaveCount(1);
-    await expect(
-      cardFor(page, "Reza Karimi").getByText(addresses.default, { exact: true }),
-    ).toBeVisible();
-    await expect(
-      cardFor(page, ADDRESS.recipientName).getByText(addresses.default, { exact: true }),
-    ).toHaveCount(0);
+    await expect(cardFor(page, SECOND).getByText(addresses.default, { exact: true })).toBeVisible();
+    await expect(cardFor(page, SEED).getByText(addresses.default, { exact: true })).toHaveCount(0);
+
+    // Restore the seed as the default so the checkout spec's preselect stays stable.
+    await cardFor(page, SEED).getByRole("button", { name: addresses.setDefault }).click();
+    await expect(cardFor(page, SEED).getByText(addresses.default, { exact: true })).toBeVisible();
   });
 
   test("book: editing an address changes its details but never its default status", async ({
@@ -124,26 +114,21 @@ test.describe.serial("shopper address book", () => {
   }) => {
     await gotoAddresses(page);
 
-    await cardFor(page, ADDRESS.recipientName)
-      .getByRole("button", { name: addresses.edit })
-      .click();
-    await expect(page.getByLabel(addresses.recipientName)).toHaveValue(ADDRESS.recipientName);
+    await cardFor(page, SECOND).getByRole("button", { name: addresses.edit }).click();
+    await expect(page.getByLabel(addresses.recipientName)).toHaveValue(SECOND);
     await page.getByLabel(addresses.city).fill("Isfahan");
     await page.getByRole("button", { name: addresses.save }).click();
 
-    await expect(cardFor(page, ADDRESS.recipientName).getByText("Tehran، Isfahan")).toBeVisible();
-    // Reza Karimi is still the sole default; editing Sara's address did not touch it.
+    await expect(cardFor(page, SECOND).getByText("Tehran، Isfahan")).toBeVisible();
+    // The seed is still the sole default; editing the other address did not touch it.
     await expect(page.getByText(addresses.default, { exact: true })).toHaveCount(1);
-    await expect(
-      cardFor(page, "Reza Karimi").getByText(addresses.default, { exact: true }),
-    ).toBeVisible();
+    await expect(cardFor(page, SEED).getByText(addresses.default, { exact: true })).toBeVisible();
   });
 
   test("boundary: an invalid postal code is rejected without creating an address", async ({
     page,
   }) => {
     await gotoAddresses(page);
-    // Two addresses (Sara, Reza) are on the books from the previous test.
     await expect(page.getByTestId("address-card")).toHaveCount(2);
 
     await addAddressExpectingError(page, addresses.validationError, { postalCode: "123" });
@@ -155,28 +140,29 @@ test.describe.serial("shopper address book", () => {
     page,
   }) => {
     await gotoAddresses(page);
-    // Two addresses (Sara, Reza) are on the books from the previous tests.
     await expect(page.getByTestId("address-card")).toHaveCount(2);
-    const rezaCard = cardFor(page, "Reza Karimi");
+    const secondCard = cardFor(page, SECOND);
 
-    await rezaCard.getByRole("button", { name: addresses.delete }).click();
+    await secondCard.getByRole("button", { name: addresses.delete }).click();
     await expect(page.getByText(addresses.deleteConfirm)).toBeVisible();
     // Cancelling the confirmation leaves the address in place.
     await page.getByRole("button", { name: addresses.cancel }).click();
-    await expect(cardFor(page, "Reza Karimi")).toHaveCount(1);
+    await expect(cardFor(page, SECOND)).toHaveCount(1);
 
-    await rezaCard.getByRole("button", { name: addresses.delete }).click();
-    await rezaCard.getByRole("button", { name: addresses.delete }).click();
+    await secondCard.getByRole("button", { name: addresses.delete }).click();
+    await secondCard.getByRole("button", { name: addresses.delete }).click();
 
-    await expect(cardFor(page, "Reza Karimi")).toHaveCount(0);
-    await expect(page.getByTestId("address-card")).toHaveCount(1);
+    // Back to the seeded baseline; the seed itself is never deleted.
+    await expect(cardFor(page, SECOND)).toHaveCount(0);
+    await expect(cardFor(page, SEED)).toHaveCount(1);
   });
 
   test("boundary: a shopper cannot save more than the per-owner limit", async ({ page }) => {
-    await deleteAllAddresses(page);
+    await resetToBaseline(page);
 
-    for (let i = 0; i < ADDRESS_LIMIT; i++) {
-      await addAddress(page, { city: `City ${i}` });
+    // The seed already occupies one slot; fill the rest up to the cap.
+    for (let i = 0; i < ADDRESS_LIMIT - 1; i++) {
+      await addAddress(page, { recipientName: SECOND, city: `City ${i}` });
     }
     await expect(page.getByTestId("address-card")).toHaveCount(ADDRESS_LIMIT);
 
@@ -184,8 +170,8 @@ test.describe.serial("shopper address book", () => {
     await addAddressExpectingError(page, addresses.limitExceeded);
     await expect(page.getByTestId("address-card")).toHaveCount(ADDRESS_LIMIT);
 
-    // Clean up so a later run starts from an empty address book again.
-    await deleteAllAddresses(page);
+    // Clean up the added addresses so a later run/spec starts from the baseline.
+    await resetToBaseline(page);
   });
 
   test("ownership: a different account never sees the shopper's saved addresses", async ({
@@ -195,11 +181,11 @@ test.describe.serial("shopper address book", () => {
     const staffPage = await staffContext.newPage();
     await staffPage.goto("/addresses");
 
-    // The staff account has never saved an address of its own -- if the list were
-    // not owner-scoped, the shopper's data seeded/added by earlier tests would leak
-    // in here.
+    // The staff account has never saved an address of its own -- if the list were not
+    // owner-scoped, the shopper's seeded/added addresses would leak in here.
     await expect(staffPage.getByText(addresses.empty)).toBeVisible();
     await expect(staffPage.getByTestId("address-card")).toHaveCount(0);
+    await expect(staffPage.getByText(SEED)).toHaveCount(0);
 
     await staffContext.close();
   });

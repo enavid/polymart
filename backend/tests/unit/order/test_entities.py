@@ -20,6 +20,7 @@ from src.domain.order.value_objects import (
     OrderNumber,
     OrderQuantity,
     OrderStatus,
+    ShippingAddress,
     Sku,
 )
 
@@ -39,6 +40,20 @@ def _line(sku: str, qty: int, unit: str) -> OrderLine:
     )
 
 
+def _shipping_address(**overrides: str | None) -> ShippingAddress:
+    fields = {
+        "recipient_name": "Sara Ahmadi",
+        "phone_number": "+989123456789",
+        "province": "Tehran",
+        "city": "Tehran",
+        "postal_code": "1234567890",
+        "line1": "Valiasr St, No. 1",
+        "line2": None,
+        **overrides,
+    }
+    return ShippingAddress(**fields)  # type: ignore[arg-type]
+
+
 def _order(lines: tuple[OrderLine, ...], status: OrderStatus = OrderStatus.PENDING) -> Order:
     total = Money.zero("IRR")
     for line in lines:
@@ -52,6 +67,7 @@ def _order(lines: tuple[OrderLine, ...], status: OrderStatus = OrderStatus.PENDI
         total=total,
         status=status,
         placed_at=datetime(2026, 7, 2, tzinfo=UTC),
+        shipping_address=_shipping_address(),
     )
 
 
@@ -85,6 +101,16 @@ class TestOrderInvariants:
         assert order.total.amount == Decimal("390000.00")
         assert order.status is OrderStatus.PENDING
 
+    def test_carries_the_captured_shipping_address(self) -> None:
+        order = _order((_line("HB-250", 1, "120000.00"),))
+        assert order.shipping_address.recipient_name == "Sara Ahmadi"
+        assert order.shipping_address.city == "Tehran"
+
+    def test_a_status_transition_preserves_the_shipping_address(self) -> None:
+        order = _order((_line("HB-250", 1, "120000.00"),))
+        moved = order.transition_to(OrderStatus.PAID)
+        assert moved.shipping_address == order.shipping_address
+
     def test_rejects_an_order_with_no_lines(self) -> None:
         with pytest.raises(EmptyOrderError):
             _order(())
@@ -101,6 +127,7 @@ class TestOrderInvariants:
                 total=_money("999.00"),
                 status=OrderStatus.PENDING,
                 placed_at=datetime(2026, 7, 2, tzinfo=UTC),
+                shipping_address=_shipping_address(),
             )
 
     def test_rejects_a_line_in_another_currency(self) -> None:
@@ -120,6 +147,7 @@ class TestOrderInvariants:
                 total=_money("120000.00", "IRR"),
                 status=OrderStatus.PENDING,
                 placed_at=datetime(2026, 7, 2, tzinfo=UTC),
+                shipping_address=_shipping_address(),
             )
 
 

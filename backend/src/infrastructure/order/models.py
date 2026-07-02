@@ -23,6 +23,14 @@ _STATUS_MAX_LENGTH = 16
 # persisted losslessly (18 total digits, 4 decimal places).
 _AMOUNT_MAX_DIGITS = 18
 _AMOUNT_DECIMAL_PLACES = 4
+# Shipping-address field lengths mirror the address context's stored precision (the
+# value is a snapshot copied from an already-validated Address row).
+_RECIPIENT_NAME_MAX_LENGTH = 200
+_PHONE_NUMBER_MAX_LENGTH = 20
+_PROVINCE_MAX_LENGTH = 100
+_CITY_MAX_LENGTH = 100
+_POSTAL_CODE_MAX_LENGTH = 10
+_ADDRESS_LINE_MAX_LENGTH = 255
 
 
 class OrderModel(models.Model):
@@ -36,7 +44,9 @@ class OrderModel(models.Model):
 
     number = models.CharField(max_length=_ORDER_NUMBER_MAX_LENGTH, unique=True)
     owner = models.ForeignKey(
-        settings.AUTH_USER_MODEL, related_name="orders", on_delete=models.CASCADE
+        settings.AUTH_USER_MODEL,
+        related_name="orders",
+        on_delete=models.CASCADE,
     )
     channel_slug = models.SlugField(max_length=_CHANNEL_SLUG_MAX_LENGTH)
     currency_code = models.CharField(max_length=_CURRENCY_CODE_MAX_LENGTH)
@@ -47,6 +57,20 @@ class OrderModel(models.Model):
     placed_at = models.DateTimeField()
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+    # Shipping address, captured at placement (copied from the address book, not a
+    # foreign key -- a later edit/deletion of the saved address must never rewrite a
+    # placed order's history). ``shipping_line2`` is the only optional field. Every new
+    # order supplies a real captured address (enforced by the domain aggregate and the
+    # repository), so these are NOT NULL with no model-level default; the initial
+    # migration backfills any pre-existing rows with "" one-off (preserve_default=False).
+    shipping_recipient_name = models.CharField(max_length=_RECIPIENT_NAME_MAX_LENGTH)
+    shipping_phone_number = models.CharField(max_length=_PHONE_NUMBER_MAX_LENGTH)
+    shipping_province = models.CharField(max_length=_PROVINCE_MAX_LENGTH)
+    shipping_city = models.CharField(max_length=_CITY_MAX_LENGTH)
+    shipping_postal_code = models.CharField(max_length=_POSTAL_CODE_MAX_LENGTH)
+    shipping_line1 = models.CharField(max_length=_ADDRESS_LINE_MAX_LENGTH)
+    shipping_line2 = models.CharField(max_length=_ADDRESS_LINE_MAX_LENGTH, blank=True, default="")
 
     class Meta:
         app_label = "order"

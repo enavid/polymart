@@ -1,8 +1,9 @@
 """Django ORM implementation of the order ports.
 
 The order repository persists and reloads the aggregate; the narrow adapters bridge to
-the neighbouring cart, catalog, and channel contexts. All reads that a use case uses to
-resolve an order are owner-scoped, so one shopper can never reach another's order.
+the neighbouring cart, catalog, channel, and address contexts. All reads that a use
+case uses to resolve an order are owner-scoped, so one shopper can never reach another's
+order (or, via the address reader, capture another shopper's saved address).
 """
 
 from __future__ import annotations
@@ -13,11 +14,13 @@ import structlog
 from django.db import transaction
 
 from src.application.order.ports import (
+    AddressReader,
     CartForCheckout,
     ChannelReader,
     CheckoutLine,
     Inventory,
     OrderRepository,
+    OwnedAddress,
     PricingReader,
     UnitOfWork,
 )
@@ -30,6 +33,7 @@ from src.domain.order.exceptions import (
     VariantNotFoundError,
 )
 from src.domain.order.value_objects import Money, OrderStatus
+from src.infrastructure.address.models import AddressModel
 from src.infrastructure.cart.models import CartLineModel, CartModel
 from src.infrastructure.catalog.models import VariantPriceModel
 from src.infrastructure.catalog.repositories import DjangoStockRepository
@@ -49,6 +53,7 @@ class DjangoOrderRepository(OrderRepository):
     """Persist orders with the Django ORM, returning domain aggregates."""
 
     def add(self, order: Order) -> Order:
+        address = order.shipping_address
         model = OrderModel.objects.create(
             number=order.number.value,
             owner_id=_owner_pk(order.owner),
@@ -57,6 +62,13 @@ class DjangoOrderRepository(OrderRepository):
             total=order.total.amount,
             status=order.status.value,
             placed_at=order.placed_at,
+            shipping_recipient_name=address.recipient_name,
+            shipping_phone_number=address.phone_number,
+            shipping_province=address.province,
+            shipping_city=address.city,
+            shipping_postal_code=address.postal_code,
+            shipping_line1=address.line1,
+            shipping_line2=address.line2 or "",
         )
         OrderLineModel.objects.bulk_create(
             OrderLineModel(
@@ -135,6 +147,29 @@ class DjangoPricingReader(PricingReader):
         if row is None:
             return None
         return Money(amount=row.amount, currency=row.currency_code)
+
+
+class DjangoAddressReader(AddressReader):
+    """Read a shopper's saved address from the address context, for checkout capture.
+
+    Owner-scoped: an address_id belonging to another owner (or that does not exist at
+    all) resolves to ``None``, exactly like a wrong-shaped one, so checkout can never
+    ship to someone else's saved address.
+    """
+
+    def get_for_owner(self, owner: str, address_id: str) -> OwnedAddress | None:
+        row = AddressModel.objects.filter(address_id=address_id, owner_id=_owner_pk(owner)).first()
+        if row is None:
+            return None
+        return OwnedAddress(
+            recipient_name=row.recipient_name,
+            phone_number=row.phone_number,
+            province=row.province,
+            city=row.city,
+            postal_code=row.postal_code,
+            line1=row.line1,
+            line2=row.line2 or None,
+        )
 
 
 class DjangoChannelReader(ChannelReader):

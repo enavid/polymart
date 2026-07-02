@@ -23,6 +23,17 @@ export interface OrderLine {
   line_total: string;
 }
 
+/** The shipping address captured on an order (a snapshot taken at placement). */
+export interface OrderShippingAddress {
+  recipient_name: string;
+  phone_number: string;
+  province: string;
+  city: string;
+  postal_code: string;
+  line1: string;
+  line2: string | null;
+}
+
 /** A placed order. */
 export interface Order {
   number: string;
@@ -33,6 +44,7 @@ export interface Order {
   total: string;
   placed_at: string;
   items: OrderLine[];
+  shipping_address: OrderShippingAddress;
 }
 
 /** One page of a shopper's orders. */
@@ -43,9 +55,12 @@ export interface OrderPage {
   results: Order[];
 }
 
-/** Place an order by checking out the given channel's cart. */
-export function placeOrder(channel: string): Promise<Order> {
-  return apiPost<Order>("/orders/", { channel });
+/**
+ * Place an order by checking out the given channel's cart, shipping to the shopper's
+ * saved address `addressId`. The order captures a snapshot of that address.
+ */
+export function placeOrder(channel: string, addressId: string): Promise<Order> {
+  return apiPost<Order>("/orders/", { channel, address_id: addressId });
 }
 
 /** List the authenticated shopper's own orders (newest first). */

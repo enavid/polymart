@@ -126,49 +126,15 @@ describe("CartView", () => {
     await waitFor(() => expect(putBody).toEqual({ channel: "ir-main", quantity: 5 }));
   });
 
-  it("checks out and navigates to the new order", async () => {
+  it("links to the multi-step checkout page", async () => {
     authed();
-    server.use(
-      http.get("*/cart/", () => HttpResponse.json(cartWithLine)),
-      http.post("*/orders/", () =>
-        HttpResponse.json(
-          {
-            number: "ORD-ABC123XYZ0",
-            channel: "ir-main",
-            currency: "IRR",
-            status: "pending",
-            total: "240000.0000",
-            placed_at: "2026-07-02T12:00:00Z",
-            items: [],
-          },
-          { status: 201 },
-        ),
-      ),
-    );
+    server.use(http.get("*/cart/", () => HttpResponse.json(cartWithLine)));
 
     renderWithProviders(<CartView />);
-    const checkout = await screen.findByRole("button", { name: messages.cart.checkout });
-    await userEvent.click(checkout);
-
-    await waitFor(() => expect(push).toHaveBeenCalledWith("/orders/ORD-ABC123XYZ0"));
-  });
-
-  it("surfaces a checkout conflict (e.g. oversell) without navigating", async () => {
-    authed();
-    server.use(
-      http.get("*/cart/", () => HttpResponse.json(cartWithLine)),
-      http.post("*/orders/", () =>
-        HttpResponse.json({ detail: "insufficient stock" }, { status: 409 }),
-      ),
-    );
-
-    renderWithProviders(<CartView />);
-    const checkout = await screen.findByRole("button", { name: messages.cart.checkout });
-    await userEvent.click(checkout);
-
-    // A conflict shows the localized checkout error, not the raw backend detail.
-    expect(await screen.findByText(messages.cart.checkoutError)).toBeInTheDocument();
-    expect(push).not.toHaveBeenCalled();
+    // Checkout is now a multi-step flow on its own page; the cart just links into it
+    // (address selection + place-order live there, not in the cart).
+    const checkout = await screen.findByRole("link", { name: messages.cart.checkout });
+    expect(checkout.getAttribute("href")).toBe("/checkout");
   });
 
   it("disables checkout when a line is unavailable", async () => {
@@ -193,8 +159,11 @@ describe("CartView", () => {
     );
 
     renderWithProviders(<CartView />);
+    // While a line is unavailable, checkout is a disabled button (not a link), so the
+    // shopper cannot proceed to checkout until they resolve it.
     const checkout = await screen.findByRole("button", { name: messages.cart.checkout });
     expect(checkout).toBeDisabled();
+    expect(screen.queryByRole("link", { name: messages.cart.checkout })).not.toBeInTheDocument();
   });
 
   it("warns and excludes an unavailable line", async () => {

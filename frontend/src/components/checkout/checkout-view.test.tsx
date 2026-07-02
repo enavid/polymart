@@ -1,0 +1,207 @@
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { setupServer } from "msw/node";
+import { http, HttpResponse } from "msw";
+
+import { CheckoutView } from "@/components/checkout/checkout-view";
+import { markSignedIn } from "@/lib/auth/session-hint";
+import messages from "@/i18n/messages/fa.json";
+import { renderWithProviders } from "@/test/utils";
+
+const { push } = vi.hoisted(() => ({ push: vi.fn() }));
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push }) }));
+
+const server = setupServer();
+beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
+afterEach(() => {
+  server.resetHandlers();
+  window.localStorage.clear();
+  push.mockReset();
+});
+afterAll(() => server.close());
+
+function authed() {
+  markSignedIn();
+  server.use(
+    http.get("*/auth/me/", () =>
+      HttpResponse.json({
+        id: 7,
+        phone_number: "+989120000001",
+        email: "",
+        full_name: "Shopper",
+        is_staff: false,
+      }),
+    ),
+  );
+}
+
+const cartWithLine = {
+  channel: "ir-main",
+  currency: "IRR",
+  items: [
+    {
+      sku: "HB-250",
+      quantity: 2,
+      unit_price: "120000.0000",
+      line_total: "240000.0000",
+      available: true,
+    },
+  ],
+  total: "240000.0000",
+};
+
+const savedAddress = {
+  id: "ADDR-HOME000001",
+  recipient_name: "Sara Ahmadi",
+  phone_number: "+989123456789",
+  province: "Tehran",
+  city: "Tehran",
+  postal_code: "1234567890",
+  line1: "Valiasr St, No. 1",
+  line2: null,
+  is_default: true,
+  created_at: "2026-07-02T12:00:00Z",
+};
+
+const checkout = messages.checkout;
+
+describe("CheckoutView", () => {
+  it("prompts to log in when unauthenticated", async () => {
+    server.use(
+      http.get("*/auth/me/", () => HttpResponse.json({ detail: "no" }, { status: 401 })),
+    );
+
+    renderWithProviders(<CheckoutView />);
+
+    expect(await screen.findByText(checkout.loginRequired)).toBeInTheDocument();
+  });
+
+  it("shows the empty-cart state", async () => {
+    authed();
+    server.use(
+      http.get("*/cart/", () =>
+        HttpResponse.json({ channel: "ir-main", currency: "IRR", items: [], total: "0" }),
+      ),
+      http.get("*/addresses/", () => HttpResponse.json([savedAddress])),
+    );
+
+    renderWithProviders(<CheckoutView />);
+
+    expect(await screen.findByText(checkout.emptyCart)).toBeInTheDocument();
+  });
+
+  it("preselects the default address and places an order to it", async () => {
+    authed();
+    let placedBody: unknown;
+    server.use(
+      http.get("*/cart/", () => HttpResponse.json(cartWithLine)),
+      http.get("*/addresses/", () => HttpResponse.json([savedAddress])),
+      http.post("*/orders/", async ({ request }) => {
+        placedBody = await request.json();
+        return HttpResponse.json(
+          {
+            number: "ORD-ABC123XYZ0",
+            channel: "ir-main",
+            currency: "IRR",
+            status: "pending",
+            total: "240000.0000",
+            placed_at: "2026-07-02T12:00:00Z",
+            items: [],
+            shipping_address: { ...savedAddress },
+          },
+          { status: 201 },
+        );
+      }),
+    );
+
+    renderWithProviders(<CheckoutView />);
+
+    // The saved address is shown and preselected; continue to review.
+    await screen.findByText("Sara Ahmadi");
+    await userEvent.click(screen.getByRole("button", { name: checkout.continue }));
+
+    // Review step: place the order.
+    const placeButton = await screen.findByRole("button", { name: checkout.placeOrder });
+    await userEvent.click(placeButton);
+
+    await waitFor(() => expect(push).toHaveBeenCalledWith("/orders/ORD-ABC123XYZ0"));
+    // The chosen saved address id is what was submitted (a snapshot is captured server-side).
+    expect(placedBody).toEqual({ channel: "ir-main", address_id: "ADDR-HOME000001" });
+  });
+
+  it("surfaces a place-order conflict (e.g. oversell) without navigating", async () => {
+    authed();
+    server.use(
+      http.get("*/cart/", () => HttpResponse.json(cartWithLine)),
+      http.get("*/addresses/", () => HttpResponse.json([savedAddress])),
+      http.post("*/orders/", () =>
+        HttpResponse.json({ detail: "insufficient stock" }, { status: 409 }),
+      ),
+    );
+
+    renderWithProviders(<CheckoutView />);
+    await screen.findByText("Sara Ahmadi");
+    await userEvent.click(screen.getByRole("button", { name: checkout.continue }));
+    await userEvent.click(await screen.findByRole("button", { name: checkout.placeOrder }));
+
+    // The raw backend detail is not shopper-appropriate; a localized message is shown.
+    expect(await screen.findByText(checkout.placeError)).toBeInTheDocument();
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  it("forces the add-address form when the shopper has no saved addresses", async () => {
+    authed();
+    let created = false;
+    server.use(
+      http.get("*/cart/", () => HttpResponse.json(cartWithLine)),
+      http.get("*/addresses/", () => HttpResponse.json(created ? [savedAddress] : [])),
+      http.post("*/addresses/", () => {
+        created = true;
+        return HttpResponse.json(savedAddress, { status: 201 });
+      }),
+    );
+
+    renderWithProviders(<CheckoutView />);
+
+    // With no saved addresses, the form is shown directly (no continue yet).
+    const nameField = await screen.findByLabelText(messages.addresses.recipientName);
+    expect(screen.queryByRole("button", { name: checkout.continue })).not.toBeInTheDocument();
+
+    await userEvent.type(nameField, "Sara Ahmadi");
+    await userEvent.type(screen.getByLabelText(messages.addresses.phoneNumber), "09123456789");
+    await userEvent.type(screen.getByLabelText(messages.addresses.province), "Tehran");
+    await userEvent.type(screen.getByLabelText(messages.addresses.city), "Tehran");
+    await userEvent.type(screen.getByLabelText(messages.addresses.postalCode), "1234567890");
+    await userEvent.type(screen.getByLabelText(messages.addresses.line1), "Valiasr St, No. 1");
+    await userEvent.click(screen.getByRole("button", { name: messages.addresses.save }));
+
+    // After saving, the address appears as a selectable option and we can continue.
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: checkout.continue })).toBeInTheDocument(),
+    );
+  });
+
+  it("blocks checkout when a cart line is unavailable", async () => {
+    authed();
+    server.use(
+      http.get("*/cart/", () =>
+        HttpResponse.json({
+          channel: "ir-main",
+          currency: "IRR",
+          items: [
+            { sku: "HB-250", quantity: 1, unit_price: null, line_total: null, available: false },
+          ],
+          total: "0",
+        }),
+      ),
+      http.get("*/addresses/", () => HttpResponse.json([savedAddress])),
+    );
+
+    renderWithProviders(<CheckoutView />);
+
+    expect(await screen.findByText(checkout.unavailableBlocked)).toBeInTheDocument();
+    // Cannot continue to review while a line is unavailable.
+    expect(screen.getByRole("button", { name: checkout.continue })).toBeDisabled();
+  });
+});

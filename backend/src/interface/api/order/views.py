@@ -37,6 +37,7 @@ from src.domain.order.exceptions import (
     OrderNotFoundError,
     OutOfStockError,
     UnknownChannelError,
+    UnknownShippingAddressError,
     VariantNotFoundError,
     VariantNotPurchasableError,
 )
@@ -80,6 +81,15 @@ def _order_payload(order: Order) -> dict[str, object]:
             }
             for line in order.lines
         ],
+        "shipping_address": {
+            "recipient_name": order.shipping_address.recipient_name,
+            "phone_number": order.shipping_address.phone_number,
+            "province": order.shipping_address.province,
+            "city": order.shipping_address.city,
+            "postal_code": order.shipping_address.postal_code,
+            "line1": order.shipping_address.line1,
+            "line2": order.shipping_address.line2,
+        },
     }
 
 
@@ -131,11 +141,17 @@ class OrderCollectionView(APIView):
         serializer = PlaceOrderSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         command = PlaceOrderCommand(
-            owner=_owner(request), channel=serializer.validated_data["channel"]
+            owner=_owner(request),
+            channel=serializer.validated_data["channel"],
+            address_id=serializer.validated_data["address_id"],
         )
         try:
             order = build_place_order().execute(command)
-        except UnknownChannelError as exc:
+        except (UnknownChannelError, UnknownShippingAddressError) as exc:
+            # A well-formed request-body reference (channel or saved address) that does
+            # not resolve for this shopper. A not-owned address resolves to the same
+            # error as a nonexistent one, so checkout never reveals whether another
+            # shopper's address id exists.
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         except VariantNotFoundError as exc:  # pragma: no cover - defensive
             # Unreachable in practice: the price check precedes the stock deduction, and

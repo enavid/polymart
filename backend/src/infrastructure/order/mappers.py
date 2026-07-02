@@ -9,6 +9,7 @@ from src.domain.order.value_objects import (
     OrderNumber,
     OrderQuantity,
     OrderStatus,
+    ShippingAddress,
     Sku,
 )
 from src.infrastructure.order.models import OrderLineModel, OrderModel
@@ -20,6 +21,18 @@ def _line_to_domain(model: OrderLineModel, currency: str) -> OrderLine:
         quantity=OrderQuantity(model.quantity),
         unit_price=Money(amount=model.unit_price, currency=currency),
         line_total=Money(amount=model.line_total, currency=currency),
+    )
+
+
+def _shipping_address_to_domain(model: OrderModel) -> ShippingAddress:
+    return ShippingAddress(
+        recipient_name=model.shipping_recipient_name,
+        phone_number=model.shipping_phone_number,
+        province=model.shipping_province,
+        city=model.shipping_city,
+        postal_code=model.shipping_postal_code,
+        line1=model.shipping_line1,
+        line2=model.shipping_line2 or None,
     )
 
 
@@ -40,5 +53,6 @@ def order_to_domain(model: OrderModel) -> Order:
         total=Money(amount=model.total, currency=currency),
         status=OrderStatus(model.status),
         placed_at=model.placed_at,
+        shipping_address=_shipping_address_to_domain(model),
         id=model.pk,
     )

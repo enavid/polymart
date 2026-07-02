@@ -106,6 +106,27 @@ class ChannelReader(ABC):
         """Return the channel's ISO 4217 currency code, or ``None`` if it does not exist."""
 
 
+@dataclass(frozen=True)
+class OwnedAddress:
+    """A shopper's saved address, flattened for checkout (no address-domain types leak here)."""
+
+    recipient_name: str
+    phone_number: str
+    province: str
+    city: str
+    postal_code: str
+    line1: str
+    line2: str | None
+
+
+class AddressReader(ABC):
+    """Narrow read boundary onto the address context for capturing a checkout's shipping address."""
+
+    @abstractmethod
+    def get_for_owner(self, owner: str, address_id: str) -> OwnedAddress | None:
+        """Return the owner's saved address, or ``None`` if it does not exist or isn't theirs."""
+
+
 class Inventory(ABC):
     """Boundary for moving on-hand stock as orders are placed and cancelled.
 

@@ -14,6 +14,21 @@ class PlaceOrderSerializer(serializers.Serializer):
     """Request body for placing an order (checking out the channel's cart)."""
 
     channel = serializers.CharField()
+    # The shopper picks one of their saved addresses; the order captures a snapshot of
+    # it. Owner-scoping and shape are checked by the use case, so this stays thin.
+    address_id = serializers.CharField()
+
+
+class ShippingAddressSerializer(serializers.Serializer):
+    """Response projection of an order's captured shipping address."""
+
+    recipient_name = serializers.CharField()
+    phone_number = serializers.CharField()
+    province = serializers.CharField()
+    city = serializers.CharField()
+    postal_code = serializers.CharField()
+    line1 = serializers.CharField()
+    line2 = serializers.CharField(allow_null=True)
 
 
 class OrderListQuerySerializer(serializers.Serializer):
@@ -42,6 +57,7 @@ class OrderSerializer(serializers.Serializer):
     total = serializers.CharField()
     placed_at = serializers.DateTimeField()
     items = OrderLineSerializer(many=True)
+    shipping_address = ShippingAddressSerializer()
 
 
 class OrderPageSerializer(serializers.Serializer):

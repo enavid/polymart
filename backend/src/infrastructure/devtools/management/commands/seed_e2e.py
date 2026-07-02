@@ -17,6 +17,7 @@ mirrored in ``frontend/tests/e2e/fixtures/seed.ts``; the two must stay in sync.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from decimal import Decimal
 
 import structlog
@@ -85,6 +86,13 @@ SHOPPER_PHONE = "09120000001"
 SHOPPER_PASSWORD = "shopper-pass-123"
 STAFF_PHONE = "09120000009"
 STAFF_PASSWORD = "staff-pass-123"
+
+# A persistent default shipping address for the shopper. Checkout selects it, and the
+# address-book spec is written to preserve it (never deleting this recipient), so the
+# checkout and address-book specs can share the one seeded shopper without racing on a
+# shared, deleted address.
+SHOPPER_ADDRESS_ID = "ADDR-SHOPPERHOME"
+SHOPPER_ADDRESS_RECIPIENT = "خانهٔ شاپر"
 
 PRODUCT_TYPE_CODE = "coffee"
 
@@ -195,13 +203,30 @@ class Command(BaseCommand):
             build_assign_role().execute(user_id=staff.pk, role_name=role)
 
         # Start every E2E run from an empty shopper cart, no prior orders, and an
-        # empty address book, so the cart/checkout/address specs assert against a
-        # known state regardless of what a previous run left behind. Stock is
-        # re-set to the fixture values below in _seed_products, so deleting orders
-        # (which never restores stock) is safe.
+        # address book reset to exactly one known default address (the checkout
+        # target), so the cart/checkout/address specs assert against a known state
+        # regardless of what a previous run left behind. Stock is re-set to the
+        # fixture values below in _seed_products, so deleting orders (which never
+        # restores stock) is safe.
         CartModel.objects.filter(owner_id=shopper.pk).delete()
         OrderModel.objects.filter(owner_id=shopper.pk).delete()
         AddressModel.objects.filter(owner_id=shopper.pk).delete()
+        self._seed_shopper_address(shopper.pk)
+
+    @staticmethod
+    def _seed_shopper_address(shopper_pk: int) -> None:
+        AddressModel.objects.create(
+            address_id=SHOPPER_ADDRESS_ID,
+            owner_id=shopper_pk,
+            recipient_name=SHOPPER_ADDRESS_RECIPIENT,
+            phone_number="+989120000001",
+            province="تهران",
+            city="تهران",
+            postal_code="1234567890",
+            line1="خیابان ولیعصر، پلاک 1",
+            is_default=True,
+            created_at=datetime(2026, 7, 2, tzinfo=UTC),
+        )
 
     @staticmethod
     def _ensure_user(phone: str, password: str, full_name: str) -> tuple[User, bool]:

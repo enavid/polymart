@@ -36,6 +36,10 @@ class InvalidOrderNumberError(OrderError):
     """Raised when an order number is structurally malformed."""
 
 
+class InvalidShippingAddressError(OrderError):
+    """Raised when a captured shipping address is missing a required field."""
+
+
 class EmptyOrderError(OrderError):
     """Raised when an order would have no lines -- an order must sell something."""
 
@@ -63,6 +67,10 @@ class EmptyCartError(OrderError):
 
 class UnknownChannelError(OrderError):
     """Raised when checkout references a channel that does not exist."""
+
+
+class UnknownShippingAddressError(OrderError):
+    """Raised when checkout references an address that is not one of the owner's own."""
 
 
 class VariantNotFoundError(OrderError):

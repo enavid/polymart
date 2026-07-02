@@ -22,6 +22,7 @@ from src.domain.order.exceptions import (
     InvalidMoneyError,
     InvalidOrderNumberError,
     InvalidOrderQuantityError,
+    InvalidShippingAddressError,
     InvalidSkuError,
 )
 
@@ -45,6 +46,16 @@ _MAX_QUANTITY = 1_000_000
 _MONEY_MAX_DIGITS = 18
 _MONEY_MAX_DECIMAL_PLACES = 4
 _CURRENCY_RE = re.compile(r"^[A-Z]{3}$")
+# Shipping-address field bounds mirror the address context's stored precision, since
+# the value is a snapshot copied from an already-validated Address -- but the order
+# context does not re-enforce Iran-specific phone/postal *formats* (that is the
+# address context's concern, not the order context's).
+_RECIPIENT_NAME_MAX_LENGTH = 200
+_PHONE_NUMBER_MAX_LENGTH = 20
+_PROVINCE_MAX_LENGTH = 100
+_CITY_MAX_LENGTH = 100
+_POSTAL_CODE_MAX_LENGTH = 10
+_ADDRESS_LINE_MAX_LENGTH = 255
 
 
 @dataclass(frozen=True)
@@ -192,3 +203,42 @@ class OrderStatus(StrEnum):
     PAID = "paid"
     FULFILLED = "fulfilled"
     CANCELLED = "cancelled"
+
+
+@dataclass(frozen=True)
+class ShippingAddress:
+    """Where a placed order ships, captured at checkout.
+
+    Like a line's unit price, this is a *snapshot*: it is copied from one of the
+    owner's address-book entries at placement time, not referenced by id, so a later
+    edit or deletion of that saved address never rewrites a placed order's history.
+    """
+
+    recipient_name: str
+    phone_number: str
+    province: str
+    city: str
+    postal_code: str
+    line1: str
+    line2: str | None
+
+    def __post_init__(self) -> None:
+        required = (
+            ("recipient_name", self.recipient_name, _RECIPIENT_NAME_MAX_LENGTH),
+            ("phone_number", self.phone_number, _PHONE_NUMBER_MAX_LENGTH),
+            ("province", self.province, _PROVINCE_MAX_LENGTH),
+            ("city", self.city, _CITY_MAX_LENGTH),
+            ("postal_code", self.postal_code, _POSTAL_CODE_MAX_LENGTH),
+            ("line1", self.line1, _ADDRESS_LINE_MAX_LENGTH),
+        )
+        for name, value, limit in required:
+            normalized = value.strip()
+            if not normalized or len(normalized) > limit:
+                raise InvalidShippingAddressError(f"{name}: {value!r}")
+            object.__setattr__(self, name, normalized)
+
+        if self.line2 is not None:
+            normalized_line2 = self.line2.strip()
+            if not normalized_line2 or len(normalized_line2) > _ADDRESS_LINE_MAX_LENGTH:
+                raise InvalidShippingAddressError(f"line2: {self.line2!r}")
+            object.__setattr__(self, "line2", normalized_line2)

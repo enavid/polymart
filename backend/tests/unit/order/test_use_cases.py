@@ -17,6 +17,7 @@ from structlog.testing import capture_logs
 
 from src.application.audit.ports import AuditRecorder
 from src.application.order.ports import (
+    AddressReader,
     CartForCheckout,
     ChannelReader,
     CheckoutLine,
@@ -24,6 +25,7 @@ from src.application.order.ports import (
     Inventory,
     OrderNumberGenerator,
     OrderRepository,
+    OwnedAddress,
     PricingReader,
     UnitOfWork,
 )
@@ -45,6 +47,7 @@ from src.domain.order.exceptions import (
     OrderNotFoundError,
     OutOfStockError,
     UnknownChannelError,
+    UnknownShippingAddressError,
     VariantNotPurchasableError,
 )
 from src.domain.order.value_objects import Money, OrderNumber, OrderStatus
@@ -101,6 +104,35 @@ class FakeChannels(ChannelReader):
 
     def currency_of(self, channel: str) -> str | None:
         return self._currency
+
+
+_DEFAULT_OWNED_ADDRESS = OwnedAddress(
+    recipient_name="Sara Ahmadi",
+    phone_number="+989123456789",
+    province="Tehran",
+    city="Tehran",
+    postal_code="1234567890",
+    line1="Valiasr St, No. 1",
+    line2=None,
+)
+
+
+_DEFAULT_ADDRESS_ID = "ADDR-TEST01"
+
+
+class FakeAddresses(AddressReader):
+    """Defaults to letting *any* owner resolve the default address id, so tests that
+    are not specifically about address ownership (pagination across owners, etc.)
+    don't need to wire it up explicitly. Pass an explicit mapping to test ownership.
+    """
+
+    def __init__(self, addresses: dict[tuple[str, str], OwnedAddress] | None = None) -> None:
+        self._addresses = addresses
+
+    def get_for_owner(self, owner: str, address_id: str) -> OwnedAddress | None:
+        if self._addresses is not None:
+            return self._addresses.get((owner, address_id))
+        return _DEFAULT_OWNED_ADDRESS if address_id == _DEFAULT_ADDRESS_ID else None
 
 
 class FakeInventory(Inventory):
@@ -216,6 +248,7 @@ def _build_place_order(
     uow: FakeUnitOfWork | None = None,
     inventory: FakeInventory | None = None,
     orders: FakeOrders | None = None,
+    addresses: FakeAddresses | None = None,
     audit: RecordingAudit | None = None,
 ) -> PlaceOrder:
     return PlaceOrder(
@@ -223,6 +256,7 @@ def _build_place_order(
         carts=FakeCart(cart_items),
         pricing=FakePricing(prices),
         channels=FakeChannels(currency),
+        addresses=addresses or FakeAddresses(),
         inventory=inventory or FakeInventory(stock),
         orders=orders or FakeOrders(),
         numbers=FakeNumbers(),
@@ -242,12 +276,57 @@ class TestPlaceOrder:
             stock={"HB-250": 5, "DR-250": 5},
         )
 
-        order = place.execute(PlaceOrderCommand(owner="7", channel="ir-main"))
+        order = place.execute(
+            PlaceOrderCommand(owner="7", channel="ir-main", address_id="ADDR-TEST01")
+        )
 
         assert order.total.amount == Decimal("390000.00")
         assert order.status is OrderStatus.PENDING
         assert order.currency == "IRR"
         assert order.id is not None
+
+    def test_captures_the_shipping_address_from_the_address_book(self) -> None:
+        place = _build_place_order(
+            cart_items=(CheckoutLine("HB-250", 1),),
+            prices={"HB-250": _money("120000.00")},
+            stock={"HB-250": 5},
+        )
+
+        order = place.execute(
+            PlaceOrderCommand(owner="7", channel="ir-main", address_id="ADDR-TEST01")
+        )
+
+        assert order.shipping_address.recipient_name == "Sara Ahmadi"
+        assert order.shipping_address.city == "Tehran"
+
+    def test_an_unknown_address_is_rejected_and_rolls_back(self) -> None:
+        uow = FakeUnitOfWork()
+        place = _build_place_order(
+            cart_items=(CheckoutLine("HB-250", 1),),
+            prices={"HB-250": _money("120000.00")},
+            stock={"HB-250": 5},
+            uow=uow,
+        )
+
+        with pytest.raises(UnknownShippingAddressError):
+            place.execute(PlaceOrderCommand(owner="7", channel="ir-main", address_id="ADDR-NOPE99"))
+        # Never entered the transaction at all (resolved before the unit of work).
+        assert uow.committed is False
+        assert uow.rolled_back is False
+
+    def test_cannot_checkout_with_another_owners_address(self) -> None:
+        # Owned only by "8"; "7" checking out with it must be refused, exactly like an
+        # unknown channel -- never silently ship to someone else's saved address.
+        addresses = FakeAddresses({("8", "ADDR-OTHER0"): _DEFAULT_OWNED_ADDRESS})
+        place = _build_place_order(
+            cart_items=(CheckoutLine("HB-250", 1),),
+            prices={"HB-250": _money("120000.00")},
+            stock={"HB-250": 5},
+            addresses=addresses,
+        )
+
+        with pytest.raises(UnknownShippingAddressError):
+            place.execute(PlaceOrderCommand(owner="7", channel="ir-main", address_id="ADDR-OTHER0"))
 
     def test_deducts_stock_for_each_line(self) -> None:
         inventory = FakeInventory({"HB-250": 5})
@@ -258,7 +337,7 @@ class TestPlaceOrder:
             inventory=inventory,
         )
 
-        place.execute(PlaceOrderCommand(owner="7", channel="ir-main"))
+        place.execute(PlaceOrderCommand(owner="7", channel="ir-main", address_id="ADDR-TEST01"))
 
         assert inventory.stock["HB-250"] == 3
 
@@ -269,6 +348,7 @@ class TestPlaceOrder:
             carts=cart,
             pricing=FakePricing({"HB-250": _money("120000.00")}),
             channels=FakeChannels("IRR"),
+            addresses=FakeAddresses(),
             inventory=FakeInventory({"HB-250": 5}),
             orders=FakeOrders(),
             numbers=FakeNumbers(),
@@ -276,7 +356,7 @@ class TestPlaceOrder:
             audit=RecordingAudit(),
         )
 
-        place.execute(PlaceOrderCommand(owner="7", channel="ir-main"))
+        place.execute(PlaceOrderCommand(owner="7", channel="ir-main", address_id="ADDR-TEST01"))
 
         assert cart.cleared is True
 
@@ -289,7 +369,7 @@ class TestPlaceOrder:
             audit=audit,
         )
 
-        place.execute(PlaceOrderCommand(owner="7", channel="ir-main"))
+        place.execute(PlaceOrderCommand(owner="7", channel="ir-main", address_id="ADDR-TEST01"))
 
         record = audit.records[-1]
         assert record["action"] == "order.placed"
@@ -305,7 +385,7 @@ class TestPlaceOrder:
         )
 
         with capture_logs() as logs:
-            place.execute(PlaceOrderCommand(owner="7", channel="ir-main"))
+            place.execute(PlaceOrderCommand(owner="7", channel="ir-main", address_id="ADDR-TEST01"))
 
         assert not any("120000" in str(event) for event in logs)
 
@@ -314,7 +394,7 @@ class TestPlaceOrder:
         place = _build_place_order(cart_items=(), prices={}, stock={}, uow=uow)
 
         with pytest.raises(EmptyCartError):
-            place.execute(PlaceOrderCommand(owner="7", channel="ir-main"))
+            place.execute(PlaceOrderCommand(owner="7", channel="ir-main", address_id="ADDR-TEST01"))
         assert uow.rolled_back is True
         assert uow.committed is False
 
@@ -327,7 +407,7 @@ class TestPlaceOrder:
         )
 
         with pytest.raises(UnknownChannelError):
-            place.execute(PlaceOrderCommand(owner="7", channel="ghost"))
+            place.execute(PlaceOrderCommand(owner="7", channel="ghost", address_id="ADDR-TEST01"))
 
     def test_an_unpriced_line_is_rejected(self) -> None:
         place = _build_place_order(
@@ -337,7 +417,7 @@ class TestPlaceOrder:
         )
 
         with pytest.raises(VariantNotPurchasableError):
-            place.execute(PlaceOrderCommand(owner="7", channel="ir-main"))
+            place.execute(PlaceOrderCommand(owner="7", channel="ir-main", address_id="ADDR-TEST01"))
 
     def test_an_oversell_rolls_the_whole_order_back(self) -> None:
         # Two lines: the first deducts, the second oversells. The whole placement must
@@ -355,7 +435,7 @@ class TestPlaceOrder:
         )
 
         with pytest.raises(OutOfStockError):
-            place.execute(PlaceOrderCommand(owner="7", channel="ir-main"))
+            place.execute(PlaceOrderCommand(owner="7", channel="ir-main", address_id="ADDR-TEST01"))
         assert uow.rolled_back is True
         # No order was persisted.
         assert orders.list_for_owner("7", limit=10, offset=0) == ((), 0)
@@ -372,12 +452,13 @@ class TestListMyOrders:
                 carts=FakeCart((CheckoutLine("HB-250", 1),)),
                 pricing=FakePricing({"HB-250": _money("120000.00")}),
                 channels=FakeChannels("IRR"),
+                addresses=FakeAddresses(),
                 inventory=FakeInventory({"HB-250": 1000}),
                 orders=orders,
                 numbers=FakeNumbers(f"ORD-N{i:04d}"),
                 clock=FixedClock(),
                 audit=RecordingAudit(),
-            ).execute(PlaceOrderCommand(owner=owner, channel="ir-main"))
+            ).execute(PlaceOrderCommand(owner=owner, channel="ir-main", address_id="ADDR-TEST01"))
 
     def test_lists_only_the_owners_orders(self) -> None:
         orders = FakeOrders()
@@ -416,7 +497,7 @@ class TestGetMyOrder:
             prices={"HB-250": _money("120000.00")},
             stock={"HB-250": 5},
             orders=orders,
-        ).execute(PlaceOrderCommand(owner="7", channel="ir-main"))
+        ).execute(PlaceOrderCommand(owner="7", channel="ir-main", address_id="ADDR-TEST01"))
 
         order = GetMyOrder(orders).execute(owner="7", number="ORD-TEST01")
 
@@ -429,7 +510,7 @@ class TestGetMyOrder:
             prices={"HB-250": _money("120000.00")},
             stock={"HB-250": 5},
             orders=orders,
-        ).execute(PlaceOrderCommand(owner="7", channel="ir-main"))
+        ).execute(PlaceOrderCommand(owner="7", channel="ir-main", address_id="ADDR-TEST01"))
 
         with pytest.raises(OrderNotFoundError):
             GetMyOrder(orders).execute(owner="8", number="ORD-TEST01")
@@ -449,13 +530,16 @@ class TestCancelMyOrder:
             carts=FakeCart((CheckoutLine("HB-250", 2),)),
             pricing=FakePricing({"HB-250": _money("120000.00")}),
             channels=FakeChannels("IRR"),
+            addresses=FakeAddresses(),
             inventory=inventory,
             orders=orders,
             numbers=FakeNumbers(),
             clock=FixedClock(),
             audit=RecordingAudit(),
         )
-        return place.execute(PlaceOrderCommand(owner="7", channel="ir-main"))
+        return place.execute(
+            PlaceOrderCommand(owner="7", channel="ir-main", address_id="ADDR-TEST01")
+        )
 
     def test_cancels_a_pending_order_and_restocks(self) -> None:
         orders = FakeOrders()

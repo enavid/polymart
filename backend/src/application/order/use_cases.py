@@ -18,6 +18,7 @@ import structlog
 
 from src.application.audit.ports import AuditRecorder
 from src.application.order.ports import (
+    AddressReader,
     CartForCheckout,
     ChannelReader,
     CheckoutLine,
@@ -26,6 +27,7 @@ from src.application.order.ports import (
     OrderNumberGenerator,
     OrderPage,
     OrderRepository,
+    OwnedAddress,
     PricingReader,
     UnitOfWork,
 )
@@ -35,10 +37,18 @@ from src.domain.order.exceptions import (
     EmptyCartError,
     OrderNotCancellableError,
     UnknownChannelError,
+    UnknownShippingAddressError,
     VariantNotPurchasableError,
 )
 from src.domain.order.services import PricedItem, build_order_lines, order_total
-from src.domain.order.value_objects import ChannelRef, OrderNumber, OrderQuantity, OrderStatus, Sku
+from src.domain.order.value_objects import (
+    ChannelRef,
+    OrderNumber,
+    OrderQuantity,
+    OrderStatus,
+    ShippingAddress,
+    Sku,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -63,18 +73,41 @@ def _resolve_currency(channels: ChannelReader, channel: str) -> str:
     return currency
 
 
+def _resolve_shipping_address(
+    addresses: AddressReader, owner: str, address_id: str
+) -> ShippingAddress:
+    owned = addresses.get_for_owner(owner, address_id)
+    if owned is None:
+        raise UnknownShippingAddressError(address_id)
+    return _to_shipping_address(owned)
+
+
+def _to_shipping_address(owned: OwnedAddress) -> ShippingAddress:
+    return ShippingAddress(
+        recipient_name=owned.recipient_name,
+        phone_number=owned.phone_number,
+        province=owned.province,
+        city=owned.city,
+        postal_code=owned.postal_code,
+        line1=owned.line1,
+        line2=owned.line2,
+    )
+
+
 @dataclass(frozen=True)
 class PlaceOrderCommand:
     """Input for turning a shopper's cart into a placed order."""
 
     owner: str
     channel: str
+    address_id: str
 
 
 class PlaceOrder:
     """Convert the owner's cart in a channel into a placed order, atomically.
 
-    Prices are *captured* from the current catalog price (a snapshot), stock is
+    Prices are *captured* from the current catalog price (a snapshot), the shipping
+    address is *captured* from the owner's address book (also a snapshot), stock is
     deducted (refusing an oversell), the order is persisted, the cart is cleared, and
     the placement is audited -- all inside one transaction, so any failure leaves stock,
     cart, and trail exactly as they were.
@@ -87,6 +120,7 @@ class PlaceOrder:
         carts: CartForCheckout,
         pricing: PricingReader,
         channels: ChannelReader,
+        addresses: AddressReader,
         inventory: Inventory,
         orders: OrderRepository,
         numbers: OrderNumberGenerator,
@@ -97,6 +131,7 @@ class PlaceOrder:
         self._carts = carts
         self._pricing = pricing
         self._channels = channels
+        self._addresses = addresses
         self._inventory = inventory
         self._orders = orders
         self._numbers = numbers
@@ -106,6 +141,9 @@ class PlaceOrder:
     def execute(self, command: PlaceOrderCommand) -> Order:
         channel = ChannelRef(command.channel)
         currency = _resolve_currency(self._channels, channel.value)
+        shipping_address = _resolve_shipping_address(
+            self._addresses, command.owner, command.address_id
+        )
 
         with self._uow.atomic():
             items = self._carts.line_items(command.owner, channel.value)
@@ -124,6 +162,7 @@ class PlaceOrder:
                 total=total,
                 status=OrderStatus.PENDING,
                 placed_at=self._clock.now(),
+                shipping_address=shipping_address,
             )
             saved = self._orders.add(order)
             self._carts.clear(command.owner, channel.value)

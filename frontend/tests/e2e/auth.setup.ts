@@ -44,6 +44,7 @@ const WARM_ROUTES = [
   "/products",
   "/products/house-blend",
   "/cart",
+  "/checkout",
   "/account",
   "/addresses",
   "/admin/catalog/products",

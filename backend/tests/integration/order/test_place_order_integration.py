@@ -48,6 +48,7 @@ from src.infrastructure.catalog.repositories import (
 from src.infrastructure.channel.repositories import DjangoChannelRepository
 from src.infrastructure.order.clock import SystemClock
 from src.infrastructure.order.repositories import (
+    DjangoAddressReader,
     DjangoCartForCheckout,
     DjangoChannelReader,
     DjangoInventory,
@@ -56,10 +57,12 @@ from src.infrastructure.order.repositories import (
     DjangoUnitOfWork,
 )
 from src.interface.api.audit.container import build_audit_recorder
+from tests.integration.order.factories import seed_address
 
 pytestmark = [pytest.mark.django_db, pytest.mark.integration]
 
 _CHANNEL = "ir-main"
+_ADDRESS_ID = "ADDR-SHIP000001"
 
 
 class _FixedNumbers(OrderNumberGenerator):
@@ -114,6 +117,7 @@ def _place_order(numbers: OrderNumberGenerator | None = None) -> PlaceOrder:
         carts=DjangoCartForCheckout(),
         pricing=DjangoPricingReader(),
         channels=DjangoChannelReader(),
+        addresses=DjangoAddressReader(),
         inventory=DjangoInventory(),
         orders=DjangoOrderRepository(),
         numbers=numbers or _FixedNumbers(),
@@ -122,20 +126,27 @@ def _place_order(numbers: OrderNumberGenerator | None = None) -> PlaceOrder:
     )
 
 
+def _checkout_command(owner: str) -> PlaceOrderCommand:
+    return PlaceOrderCommand(owner=owner, channel=_CHANNEL, address_id=_ADDRESS_ID)
+
+
 class TestCheckoutHappyPath:
     def test_places_an_order_deducts_stock_clears_cart_and_audits(self) -> None:
         _seed_catalog()
         user = get_user_model().objects.create_user(phone_number="09120000001", password="pw")
         owner = str(user.pk)
+        seed_address(user.pk)
         _add_to_cart(owner, "HB-250", 2)
         _add_to_cart(owner, "DR-250", 1)
 
-        order = _place_order().execute(PlaceOrderCommand(owner=owner, channel=_CHANNEL))
+        order = _place_order().execute(_checkout_command(owner))
 
         # Order persisted with the captured total.
         assert order.total.amount == Decimal("390000.00")
         assert order.status is OrderStatus.PENDING
         assert DjangoOrderRepository().get_for_owner(owner, order.number.value).id == order.id
+        # The shipping address was captured from the shopper's address book.
+        assert order.shipping_address.recipient_name == "Sara Ahmadi"
         # Stock deducted for both lines.
         assert DjangoStockRepository().get_quantity("HB-250").value == 3
         assert DjangoStockRepository().get_quantity("DR-250").value == 0
@@ -152,12 +163,13 @@ class TestCheckoutAtomicity:
         _seed_catalog()
         user = get_user_model().objects.create_user(phone_number="09120000001", password="pw")
         owner = str(user.pk)
+        seed_address(user.pk)
         # First line deducts fine; the second oversells DR-250 (only 1 in stock).
         _add_to_cart(owner, "HB-250", 2)
         _add_to_cart(owner, "DR-250", 5)
 
         with pytest.raises(OutOfStockError):
-            _place_order().execute(PlaceOrderCommand(owner=owner, channel=_CHANNEL))
+            _place_order().execute(_checkout_command(owner))
 
         # Nothing committed: no order, the earlier deduction reverted, cart intact.
         assert DjangoOrderRepository().list_for_owner(owner, limit=10, offset=0) == ((), 0)
@@ -170,9 +182,10 @@ class TestCheckoutAtomicity:
         _seed_catalog()
         user = get_user_model().objects.create_user(phone_number="09120000001", password="pw")
         owner = str(user.pk)
+        seed_address(user.pk)
 
         with pytest.raises(EmptyCartError):
-            _place_order().execute(PlaceOrderCommand(owner=owner, channel=_CHANNEL))
+            _place_order().execute(_checkout_command(owner))
         assert DjangoOrderRepository().list_for_owner(owner, limit=10, offset=0) == ((), 0)
 
 
@@ -181,8 +194,9 @@ class TestCancelIntegration:
         _seed_catalog()
         user = get_user_model().objects.create_user(phone_number="09120000001", password="pw")
         owner = str(user.pk)
+        seed_address(user.pk)
         _add_to_cart(owner, "HB-250", 2)
-        order = _place_order().execute(PlaceOrderCommand(owner=owner, channel=_CHANNEL))
+        order = _place_order().execute(_checkout_command(owner))
         assert DjangoStockRepository().get_quantity("HB-250").value == 3
 
         cancel = CancelMyOrder(
@@ -203,8 +217,9 @@ class TestCancelIntegration:
         _seed_catalog()
         owner = get_user_model().objects.create_user(phone_number="09120000001", password="pw")
         intruder = get_user_model().objects.create_user(phone_number="09120000002", password="pw")
+        seed_address(owner.pk)
         _add_to_cart(str(owner.pk), "HB-250", 1)
-        order = _place_order().execute(PlaceOrderCommand(owner=str(owner.pk), channel=_CHANNEL))
+        order = _place_order().execute(_checkout_command(str(owner.pk)))
 
         cancel = CancelMyOrder(
             unit_of_work=DjangoUnitOfWork(),

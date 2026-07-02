@@ -11,6 +11,7 @@ from src.domain.order.exceptions import (
     InvalidMoneyError,
     InvalidOrderNumberError,
     InvalidOrderQuantityError,
+    InvalidShippingAddressError,
     InvalidSkuError,
 )
 from src.domain.order.value_objects import (
@@ -19,6 +20,7 @@ from src.domain.order.value_objects import (
     OrderNumber,
     OrderQuantity,
     OrderStatus,
+    ShippingAddress,
     Sku,
 )
 
@@ -128,3 +130,60 @@ class TestOrderStatus:
     def test_serialises_to_its_string_value(self) -> None:
         assert OrderStatus.PENDING.value == "pending"
         assert OrderStatus("cancelled") is OrderStatus.CANCELLED
+
+
+def _shipping_address(**overrides: str | None) -> ShippingAddress:
+    fields = {
+        "recipient_name": "Sara Ahmadi",
+        "phone_number": "+989123456789",
+        "province": "Tehran",
+        "city": "Tehran",
+        "postal_code": "1234567890",
+        "line1": "Valiasr St, No. 1",
+        "line2": None,
+        **overrides,
+    }
+    return ShippingAddress(**fields)  # type: ignore[arg-type]
+
+
+class TestShippingAddress:
+    def test_builds_with_no_line2(self) -> None:
+        address = _shipping_address()
+        assert address.line2 is None
+
+    def test_builds_with_a_line2(self) -> None:
+        address = _shipping_address(line2="Unit 4")
+        assert address.line2 == "Unit 4"
+
+    def test_strips_surrounding_whitespace(self) -> None:
+        address = _shipping_address(recipient_name="  Sara Ahmadi  ")
+        assert address.recipient_name == "Sara Ahmadi"
+
+    @pytest.mark.parametrize(
+        "field",
+        ["recipient_name", "phone_number", "province", "city", "postal_code", "line1"],
+    )
+    def test_rejects_a_blank_required_field(self, field: str) -> None:
+        with pytest.raises(InvalidShippingAddressError):
+            _shipping_address(**{field: "   "})
+
+    def test_rejects_a_blank_line2_distinctly_from_omitted(self) -> None:
+        # An explicit blank line2 is a malformed request, not "no line2".
+        with pytest.raises(InvalidShippingAddressError):
+            _shipping_address(line2="   ")
+
+    @pytest.mark.parametrize(
+        ("field", "limit"),
+        [
+            ("recipient_name", 200),
+            ("phone_number", 20),
+            ("province", 100),
+            ("city", 100),
+            ("postal_code", 10),
+            ("line1", 255),
+            ("line2", 255),
+        ],
+    )
+    def test_rejects_a_field_beyond_its_bound(self, field: str, limit: int) -> None:
+        with pytest.raises(InvalidShippingAddressError):
+            _shipping_address(**{field: "x" * (limit + 1)})

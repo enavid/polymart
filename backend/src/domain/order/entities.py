@@ -2,10 +2,12 @@
 
 Unlike a cart (a mutable, dynamically priced list of intentions), an order *captures*
 prices at placement time: each line stores the unit price and line total that were in
-force, so a later catalog price change never rewrites history. The aggregate owns two
-invariants -- every line is in the order's currency, and the stated total equals the
-sum of the line totals -- and the lifecycle state machine that governs which status
-changes are legal.
+force, so a later catalog price change never rewrites history. The shipping address is
+captured the same way -- copied from the owner's address book at placement, not
+referenced by id, so a later edit or deletion of that saved address never rewrites a
+placed order's history either. The aggregate owns two invariants -- every line is in
+the order's currency, and the stated total equals the sum of the line totals -- and the
+lifecycle state machine that governs which status changes are legal.
 
 Pure Python -- no Django, no DRF, no ORM.
 """
@@ -27,6 +29,7 @@ from src.domain.order.value_objects import (
     OrderNumber,
     OrderQuantity,
     OrderStatus,
+    ShippingAddress,
     Sku,
 )
 
@@ -86,6 +89,7 @@ class Order:
     total: Money
     status: OrderStatus
     placed_at: datetime
+    shipping_address: ShippingAddress
     id: int | None = field(default=None)
 
     def __post_init__(self) -> None:

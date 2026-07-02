@@ -29,6 +29,7 @@ from src.domain.order.value_objects import (
     OrderNumber,
     OrderQuantity,
     OrderStatus,
+    ShippingAddress,
     Sku,
 )
 from src.infrastructure.catalog.repositories import (
@@ -72,6 +73,18 @@ def _line(sku: str, qty: int, unit: str) -> OrderLine:
     )
 
 
+def _shipping_address() -> ShippingAddress:
+    return ShippingAddress(
+        recipient_name="Sara Ahmadi",
+        phone_number="+989123456789",
+        province="Tehran",
+        city="Tehran",
+        postal_code="1234567890",
+        line1="Valiasr St, No. 1",
+        line2=None,
+    )
+
+
 def _order(owner: str, number: str = "ORD-ABC123XYZ0") -> Order:
     lines = (_line("HB-250", 2, "120000.00"), _line("DR-250", 1, "150000.00"))
     total = Money.zero("IRR")
@@ -86,6 +99,7 @@ def _order(owner: str, number: str = "ORD-ABC123XYZ0") -> Order:
         total=total,
         status=OrderStatus.PENDING,
         placed_at=datetime(2026, 7, 2, tzinfo=UTC),
+        shipping_address=_shipping_address(),
     )
 
 
@@ -102,6 +116,8 @@ class TestOrderRepository:
         assert [line.sku.value for line in reloaded.lines] == ["HB-250", "DR-250"]
         assert reloaded.lines[0].unit_price.amount == Decimal("120000.00")
         assert reloaded.status is OrderStatus.PENDING
+        # The captured shipping address round-trips through the DB losslessly.
+        assert reloaded.shipping_address == _shipping_address()
 
     def test_reads_are_owner_scoped(self) -> None:
         owner = _user("09120000001")

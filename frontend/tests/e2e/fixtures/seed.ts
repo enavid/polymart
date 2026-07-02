@@ -63,6 +63,18 @@ export const ADDRESS = {
 
 export const ADDRESS_LIMIT = 20;
 
+/**
+ * The shopper's persistent default shipping address, seeded by `seed_e2e`. Checkout
+ * ships to it; the address-book spec is written to preserve it (it never deletes this
+ * recipient), so the checkout and address-book specs can share the one seeded shopper
+ * without racing on a shared, deleted address. Mirrors
+ * `SHOPPER_ADDRESS_*` in the backend seed command.
+ */
+export const SHOPPER_ADDRESS = {
+  recipientName: "خانهٔ شاپر",
+  city: "تهران",
+};
+
 /** A variant that is priced only in another channel, so it is unavailable here. */
 export const UNAVAILABLE_VARIANT = { sku: "HB-1000", productCode: "house-blend" };
 

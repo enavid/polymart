@@ -117,6 +117,22 @@ export function OrderDetail({ number }: { number: string }) {
 
       {isCancelled ? <Alert variant="destructive">{t("cancelledNote")}</Alert> : null}
 
+      <section className="flex flex-col gap-2">
+        <h2 className="text-sm font-medium text-muted-foreground">{t("shippingAddress")}</h2>
+        <div className="flex flex-col gap-1 rounded-xl border border-border p-4 text-sm">
+          <span className="font-medium">{order.shipping_address.recipient_name}</span>
+          <span dir="ltr" className="text-muted-foreground">
+            {order.shipping_address.phone_number}
+          </span>
+          <span>{`${order.shipping_address.province}، ${order.shipping_address.city}`}</span>
+          <span>{order.shipping_address.line1}</span>
+          {order.shipping_address.line2 ? <span>{order.shipping_address.line2}</span> : null}
+          <span dir="ltr" className="text-muted-foreground">
+            {order.shipping_address.postal_code}
+          </span>
+        </div>
+      </section>
+
       <Table>
         <TableHeader>
           <TableRow>

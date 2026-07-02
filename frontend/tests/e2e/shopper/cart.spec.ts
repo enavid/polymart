@@ -6,22 +6,26 @@
  *
  *   cart:     empty -> add -> add again (accumulates) -> second line ->
  *             multi-line total -> update quantity -> remove one -> remove last.
- *   checkout: add -> place order -> order confirmation (captured total + status) ->
- *             appears in history -> cancel (restocks) -> IDOR (staff cannot see it).
- *   oversell: a priced-but-zero-stock line cannot be checked out (409 surfaced).
+ *   checkout: add -> choose the seeded address -> place order -> order confirmation
+ *             (captured total + status + captured shipping address) -> appears in
+ *             history -> cancel (restocks) -> IDOR (staff cannot see it).
+ *   oversell: a priced-but-zero-stock line cannot be checked out (409 surfaced on the
+ *             checkout review step).
  *
  * Every money value is asserted by reproducing the UI's own formatting, so we check
  * the *displayed server value* and never a client-side recomputation.
  */
 
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
 import messages from "../../../src/i18n/messages/fa.json";
-import { PRODUCTS, STAFF_STATE } from "../fixtures/seed";
+import { PRODUCTS, SHOPPER_ADDRESS, STAFF_STATE } from "../fixtures/seed";
 
 const cart = messages.cart;
 const store = messages.storefront;
 const orders = messages.orders;
+const checkout = messages.checkout;
+const SEED = SHOPPER_ADDRESS.recipientName;
 const hb250 = PRODUCTS.houseBlend.variants[0]; // 120,000
 const hb500 = PRODUCTS.houseBlend.variants[1]; // 200,000
 const dr250 = PRODUCTS.darkRoast.variants[0]; // 150,000, stock 5
@@ -31,17 +35,27 @@ function money(amount: number): string {
   return new Intl.NumberFormat("fa-IR", { style: "currency", currency: "IRR" }).format(amount);
 }
 
-async function addFromPdp(
-  page: import("@playwright/test").Page,
-  productCode: string,
-  sku: string,
-): Promise<void> {
+async function addFromPdp(page: Page, productCode: string, sku: string): Promise<void> {
   await page.goto(`/products/${productCode}`);
   const qty = page.locator(`#variant_qty_${sku}`);
   await expect(qty).toBeVisible();
   await qty.fill("1");
   await qty.locator("xpath=..").getByRole("button", { name: store.addToCart }).click();
   await expect(page.getByText(store.added)).toBeVisible();
+}
+
+/**
+ * From the cart, run the multi-step checkout: proceed to the checkout page, select the
+ * seeded "home" address explicitly (stable -- the address-book spec never deletes it),
+ * continue to review, and place the order.
+ */
+async function checkoutWithSeededAddress(page: Page): Promise<void> {
+  await page.goto("/cart");
+  await page.getByRole("link", { name: cart.checkout }).click();
+  await expect(page).toHaveURL(/\/checkout/);
+  await page.locator("label").filter({ hasText: SEED }).getByRole("radio").check();
+  await page.getByRole("button", { name: checkout.continue }).click();
+  await page.getByRole("button", { name: checkout.placeOrder }).click();
 }
 
 test.describe.serial("shopper cart & checkout", () => {
@@ -82,19 +96,23 @@ test.describe.serial("shopper cart & checkout", () => {
     await expect(page.getByText(cart.empty)).toBeVisible();
   });
 
-  test("checkout: place an order, see it, and cancel it (restocking)", async ({ page, browser }) => {
-    // Add one DR-250 (150,000, stock 5) and check out.
+  test("checkout: select an address, place an order, see it, and cancel it (restocking)", async ({
+    page,
+    browser,
+  }) => {
+    // Add one DR-250 (150,000, stock 5) and run the multi-step checkout.
     await addFromPdp(page, PRODUCTS.darkRoast.code, dr250.sku);
-    await page.goto("/cart");
-    await expect(page.getByText(money(150000)).first()).toBeVisible();
-    await page.getByRole("button", { name: cart.checkout }).click();
+    await checkoutWithSeededAddress(page);
 
-    // Landed on the order confirmation: captured total + pending status.
+    // Landed on the order confirmation: captured total, pending status, and the
+    // captured shipping address (a snapshot of the seeded home address).
     await expect(page).toHaveURL(/\/orders\/ORD-/);
     const orderNumber = page.url().split("/orders/")[1].replace(/\/$/, "");
     await expect(page.getByText(orderNumber).first()).toBeVisible();
     await expect(page.getByText(orders.statusPending).first()).toBeVisible();
     await expect(page.getByText(money(150000)).first()).toBeVisible();
+    await expect(page.getByRole("heading", { name: orders.shippingAddress })).toBeVisible();
+    await expect(page.getByText(SEED)).toBeVisible();
 
     // The cart is now empty (consumed by checkout).
     await page.goto("/cart");
@@ -122,16 +140,17 @@ test.describe.serial("shopper cart & checkout", () => {
 
   test("checkout: a priced but out-of-stock line cannot be ordered", async ({ page }) => {
     // LR-250 is priced (100,000) but seeded with zero stock: it can be added to the
-    // cart, but checkout must refuse the oversell rather than place an order.
+    // cart and carried through the checkout steps, but placing the order must refuse
+    // the oversell (409) rather than create it.
     await addFromPdp(page, PRODUCTS.lightRoast.code, lr250.sku);
-    await page.goto("/cart");
-    await page.getByRole("button", { name: cart.checkout }).click();
+    await checkoutWithSeededAddress(page);
 
-    // Stays on the cart with a conflict message; no navigation to an order.
-    await expect(page.getByText(cart.checkoutError)).toBeVisible();
-    await expect(page).toHaveURL(/\/cart/);
+    // Stays on the checkout review with a conflict message; no navigation to an order.
+    await expect(page.getByText(checkout.placeError)).toBeVisible();
+    await expect(page).toHaveURL(/\/checkout/);
 
     // Clean up so the shared cart is empty for any later run.
+    await page.goto("/cart");
     await page
       .getByRole("row", { name: new RegExp(lr250.sku) })
       .getByRole("button", { name: cart.remove })

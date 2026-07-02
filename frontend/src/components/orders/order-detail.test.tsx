@@ -45,6 +45,15 @@ function order(overrides: Record<string, unknown> = {}) {
     items: [
       { sku: "HB-250", quantity: 2, unit_price: "120000.0000", line_total: "240000.0000" },
     ],
+    shipping_address: {
+      recipient_name: "Sara Ahmadi",
+      phone_number: "+989123456789",
+      province: "Tehran",
+      city: "Tehran",
+      postal_code: "1234567890",
+      line1: "Valiasr St, No. 1",
+      line2: null,
+    },
     ...overrides,
   };
 }
@@ -60,6 +69,9 @@ describe("OrderDetail", () => {
     // The total shown is the backend string, formatted -- never recomputed client-side.
     expect(screen.getByText(messages.orders.total)).toBeInTheDocument();
     expect(screen.getByText(messages.orders.statusPending)).toBeInTheDocument();
+    // The captured shipping address is shown.
+    expect(screen.getByText(messages.orders.shippingAddress)).toBeInTheDocument();
+    expect(screen.getByText("Sara Ahmadi")).toBeInTheDocument();
   });
 
   it("shows a not-found message for another user's / missing order (404)", async () => {
