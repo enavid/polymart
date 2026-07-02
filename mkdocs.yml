@@ -18,6 +18,31 @@ nav:
       - Clean Architecture layering: adr/0002-clean-architecture-layering.md
       - Observability stack: adr/0003-observability-stack.md
       - Channel as a first-class context: adr/0004-channel-as-first-class-context.md
+      - Phone-first identity and cookie JWT auth: adr/0005-phone-first-identity-and-cookie-jwt-auth.md
+      - OTP registration and password reset: adr/0006-otp-registration-and-password-reset.md
+      - Two-layer RBAC and permission registry: adr/0007-two-layer-rbac-and-permission-registry.md
+      - Basic audit log: adr/0008-audit-log.md
+      - Access administration and audit read API: adr/0009-access-administration-and-audit-read-api.md
+      - Token revocation: adr/0010-token-revocation.md
+      - "Catalog: dynamic attributes": adr/0011-catalog-dynamic-attributes.md
+      - "Catalog: product types": adr/0012-catalog-product-types.md
+      - "Catalog: products": adr/0013-catalog-products.md
+      - "Catalog: variants": adr/0014-catalog-variants.md
+      - "Catalog: product vs variant attributes": adr/0015-catalog-product-vs-variant-attributes.md
+      - "Catalog: variant options": adr/0016-catalog-variant-options.md
+      - "Catalog: variant media": adr/0017-catalog-variant-media.md
+      - "Catalog: hierarchical categories": adr/0018-catalog-categories.md
+      - "Catalog: product-category assignment": adr/0019-catalog-product-category-assignment.md
+      - "Catalog: collections": adr/0020-catalog-collections.md
+      - "Catalog: collection membership": adr/0021-catalog-collection-membership.md
+      - "Catalog: rule-based collections": adr/0022-catalog-rule-based-collections.md
+      - "Catalog: per-channel base price": adr/0023-catalog-per-channel-base-price.md
+      - "Catalog: simple inventory": adr/0024-catalog-simple-inventory.md
+      - "Catalog: storefront read API": adr/0025-catalog-storefront-read-api.md
+      - "Catalog: CSV import/export": adr/0026-catalog-csv-import-export.md
+      - "Cart: persistent cart and pricing": adr/0027-cart-persistent-cart-and-pricing.md
+      - "Storefront: variant read API": adr/0028-storefront-variant-read-api.md
+      - Full-stack E2E harness: adr/0029-full-stack-e2e-harness.md
 
 markdown_extensions:
   - admonition

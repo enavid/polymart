@@ -62,6 +62,20 @@ describe("LoginForm", () => {
     expect(push).not.toHaveBeenCalled();
   });
 
+  it("cannot leak credentials into a URL if the client never hydrates", async () => {
+    // A native fallback submit must be a POST (body, not query string) and the
+    // credential fields must carry no name, so the password can never be
+    // serialized into a URL / browser history / server log.
+    const { container } = renderWithProviders(<LoginForm />);
+
+    const form = container.querySelector("form");
+    expect(form).not.toBeNull();
+    expect(form?.getAttribute("method")).toBe("post");
+
+    expect(screen.getByLabelText(messages.common.password)).not.toHaveAttribute("name");
+    expect(screen.getByLabelText(messages.common.phoneNumber)).not.toHaveAttribute("name");
+  });
+
   it("surfaces the error detail on an unexpected server error", async () => {
     server.use(
       http.post("*/auth/login/", () => new HttpResponse(null, { status: 500 })),

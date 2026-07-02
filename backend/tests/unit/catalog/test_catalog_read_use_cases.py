@@ -14,6 +14,7 @@ from src.application.catalog.ports import (
 )
 from src.application.catalog.use_cases import (
     GetPublishedProduct,
+    GetStorefrontProductImages,
     SearchCatalogProducts,
     SearchCatalogProductsQuery,
     SetProductPublished,
@@ -79,6 +80,8 @@ class FakeProductQueryRepository(ProductQueryRepository):
         self.last_offset: int | None = None
         self.summaries_result: dict[str, object] = {}
         self.last_summary_call: tuple[tuple[str, ...], str] | None = None
+        self.images_result: dict[str, object] = {}
+        self.last_images_call: tuple[str, ...] | None = None
 
     def search(
         self, *, filters: ProductFilters, limit: int, offset: int
@@ -98,6 +101,10 @@ class FakeProductQueryRepository(ProductQueryRepository):
     def price_summaries(self, *, codes, channel):
         self.last_summary_call = (tuple(codes), channel)
         return self.summaries_result
+
+    def primary_images(self, *, codes):
+        self.last_images_call = tuple(codes)
+        return self.images_result
 
 
 class RecordingAudit(AuditRecorder):
@@ -290,3 +297,22 @@ class TestSummariseStorefrontPrices:
 
         assert result == repo.summaries_result
         assert repo.last_summary_call == (("house-blend",), "ir-main")
+
+
+class TestGetStorefrontProductImages:
+    def test_returns_empty_without_calling_the_repo_for_no_codes(self) -> None:
+        repo = FakeProductQueryRepository([])
+
+        result = GetStorefrontProductImages(repo).execute(codes=[])
+
+        assert result == {}
+        assert repo.last_images_call is None
+
+    def test_delegates_codes_to_the_repo(self) -> None:
+        repo = FakeProductQueryRepository([])
+        repo.images_result = {"house-blend": object()}
+
+        result = GetStorefrontProductImages(repo).execute(codes=["house-blend", "espresso"])
+
+        assert result == repo.images_result
+        assert repo.last_images_call == ("house-blend", "espresso")

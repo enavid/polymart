@@ -90,12 +90,21 @@ class SetProductPublishedSerializer(serializers.Serializer):
     is_published = serializers.BooleanField()
 
 
+class StorefrontImageSerializer(serializers.Serializer):
+    """A product's primary storefront image (promoted from one of its variants)."""
+
+    url = serializers.CharField()
+    alt_text = serializers.CharField(allow_blank=True)
+
+
 class StorefrontProductSerializer(serializers.Serializer):
     """Public projection of a published product (no internal ``id``).
 
     ``from_price``/``currency``/``available`` are present only when the list was
     requested for a specific ``channel``; the amount is an exact string (never a
-    float) and is null when the product has no price in that channel.
+    float) and is null when the product has no price in that channel. ``image`` is
+    the product's primary image, or null when it has none (the client then shows a
+    placeholder).
     """
 
     code = serializers.CharField()
@@ -103,6 +112,7 @@ class StorefrontProductSerializer(serializers.Serializer):
     product_type = serializers.CharField()
     values = AttributeValueSerializer(many=True)
     metadata = serializers.DictField(child=serializers.CharField())
+    image = StorefrontImageSerializer(allow_null=True)
     from_price = serializers.CharField(required=False, allow_null=True)
     currency = serializers.CharField(required=False, allow_null=True)
     available = serializers.BooleanField(required=False)

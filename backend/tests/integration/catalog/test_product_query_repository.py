@@ -19,6 +19,7 @@ from src.domain.catalog.value_objects import (
     CategorySlug,
     ChannelPrice,
     CollectionSlug,
+    MediaAsset,
     Money,
     ProductCode,
     ProductTypeCode,
@@ -276,3 +277,67 @@ class TestPriceSummaries:
 
     def test_no_codes_returns_empty(self) -> None:
         assert DjangoProductQueryRepository().price_summaries(codes=[], channel="ir-main") == {}
+
+
+class TestPrimaryImages:
+    @staticmethod
+    def _seed_with_media() -> None:
+        types = DjangoProductTypeRepository()
+        types.add(ProductType(code=ProductTypeCode("coffee"), name="Coffee"))
+        products = DjangoProductRepository()
+        coffee = ProductTypeCode("coffee")
+        products.add(
+            Product(code=ProductCode("house-blend"), name="House Blend", product_type=coffee)
+        )
+        # A product whose variants carry no media at all.
+        products.add(
+            Product(code=ProductCode("dark-roast"), name="Dark Roast", product_type=coffee)
+        )
+
+        variants = DjangoVariantRepository()
+        # The earliest variant by SKU (HB-250) carries two images; its first (lowest
+        # position) is the product's primary image. A later variant's image must not win.
+        variants.add(
+            ProductVariant(
+                product=ProductCode("house-blend"),
+                sku=Sku("HB-250"),
+                name="250g",
+                media=(
+                    MediaAsset(url="https://cdn.example.com/hb-front.jpg", alt_text="front"),
+                    MediaAsset(url="https://cdn.example.com/hb-back.jpg", alt_text="back"),
+                ),
+            )
+        )
+        variants.add(
+            ProductVariant(
+                product=ProductCode("house-blend"),
+                sku=Sku("HB-500"),
+                name="500g",
+                media=(MediaAsset(url="https://cdn.example.com/hb-500.jpg", alt_text="500g"),),
+            )
+        )
+        variants.add(
+            ProductVariant(product=ProductCode("dark-roast"), sku=Sku("DR-250"), name="250g")
+        )
+
+    def test_returns_the_first_variants_first_media_asset(self) -> None:
+        self._seed_with_media()
+
+        images = DjangoProductQueryRepository().primary_images(
+            codes=["house-blend", "dark-roast"]
+        )
+
+        assert images["house-blend"].url == "https://cdn.example.com/hb-front.jpg"
+        assert images["house-blend"].alt_text == "front"
+
+    def test_a_product_without_variant_media_is_absent(self) -> None:
+        self._seed_with_media()
+
+        images = DjangoProductQueryRepository().primary_images(
+            codes=["house-blend", "dark-roast"]
+        )
+
+        assert "dark-roast" not in images
+
+    def test_no_codes_returns_empty(self) -> None:
+        assert DjangoProductQueryRepository().primary_images(codes=[]) == {}

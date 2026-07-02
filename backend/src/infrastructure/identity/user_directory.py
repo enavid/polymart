@@ -9,9 +9,21 @@ from __future__ import annotations
 
 from django.db import IntegrityError, transaction
 
-from src.application.identity.ports import UserDirectory
+from src.application.identity.ports import UserAccount, UserDirectory
 from src.domain.identity.exceptions import UserAlreadyExistsError, UserNotFoundError
 from src.infrastructure.identity.models import User
+
+
+def _to_account(user: User) -> UserAccount:
+    """Project the ORM user to the framework-free administration read shape."""
+    return UserAccount(
+        id=user.pk,
+        phone_number=user.phone_number,
+        full_name=user.full_name,
+        email=user.email,
+        is_staff=user.is_staff,
+        is_active=user.is_active,
+    )
 
 
 class DjangoUserDirectory(UserDirectory):
@@ -20,7 +32,15 @@ class DjangoUserDirectory(UserDirectory):
     def exists(self, phone_number: str) -> bool:
         return User.objects.filter(phone_number=phone_number).exists()
 
-    def create(self, phone_number: str, *, password: str, full_name: str, email: str) -> int:
+    def create(
+        self,
+        phone_number: str,
+        *,
+        password: str,
+        full_name: str,
+        email: str,
+        is_staff: bool = False,
+    ) -> int:
         try:
             with transaction.atomic():
                 user = User.objects.create_user(
@@ -28,11 +48,25 @@ class DjangoUserDirectory(UserDirectory):
                     password=password,
                     full_name=full_name,
                     email=email,
+                    is_staff=is_staff,
                 )
         except IntegrityError as exc:
             # Lost the race to a concurrent registration for the same phone.
             raise UserAlreadyExistsError(phone_number) from exc
         return user.pk
+
+    def list_accounts(self, *, limit: int, offset: int) -> tuple[tuple[UserAccount, ...], int]:
+        queryset = User.objects.all().order_by("id")
+        total = queryset.count()
+        window = queryset[offset : offset + limit]
+        return tuple(_to_account(user) for user in window), total
+
+    def get_account(self, user_id: int) -> UserAccount:
+        try:
+            user = User.objects.get(pk=user_id)
+        except User.DoesNotExist as exc:
+            raise UserNotFoundError(str(user_id)) from exc
+        return _to_account(user)
 
     def set_password(self, phone_number: str, new_password: str) -> int:
         with transaction.atomic():

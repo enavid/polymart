@@ -70,6 +70,7 @@ from src.domain.catalog.exceptions import (
 from src.domain.catalog.value_objects import (
     CategorySlug,
     ChannelPrice,
+    MediaAsset,
     ProductCode,
     RuleCondition,
     StockQuantity,
@@ -94,6 +95,7 @@ from src.interface.api.catalog.container import (
     build_get_product_categories,
     build_get_product_type,
     build_get_published_product,
+    build_get_storefront_product_images,
     build_get_storefront_product_variants,
     build_get_variant,
     build_get_variant_prices,
@@ -899,7 +901,9 @@ class VariantStockView(APIView):
 
 
 def _storefront_product_payload(
-    product: Product, summary: PriceSummary | None = None
+    product: Product,
+    summary: PriceSummary | None = None,
+    image: MediaAsset | None = None,
 ) -> dict[str, object]:
     """Project a published product for the public storefront.
 
@@ -907,7 +911,9 @@ def _storefront_product_payload(
     sequential database id is never exposed to anonymous callers. When a viewing
     channel was supplied, the pricing summary (a "from" price + availability) is
     attached so the PLP can show a price and an out-of-stock flag; the amount is a
-    string so the exact Decimal survives JSON.
+    string so the exact Decimal survives JSON. ``image`` is the product's primary
+    image (promoted from a variant) or ``null`` when it has none -- the storefront
+    then falls back to its monogram placeholder.
     """
     payload: dict[str, object] = {
         "code": product.code.value,
@@ -917,6 +923,7 @@ def _storefront_product_payload(
             {"attribute": value.attribute.value, "value": value.value} for value in product.values
         ],
         "metadata": dict(product.metadata),
+        "image": None if image is None else {"url": image.url, "alt_text": image.alt_text},
     }
     if summary is not None:
         from_price = summary.from_price
@@ -932,6 +939,7 @@ def _storefront_page_payload(
     limit: int,
     offset: int,
     summaries: dict[str, PriceSummary] | None = None,
+    images: dict[str, MediaAsset] | None = None,
 ) -> dict[str, object]:
     """Project a page of storefront products to the response body."""
     return {
@@ -940,7 +948,9 @@ def _storefront_page_payload(
         "offset": offset,
         "results": [
             _storefront_product_payload(
-                product, None if summaries is None else summaries.get(product.code.value)
+                product,
+                None if summaries is None else summaries.get(product.code.value),
+                None if images is None else images.get(product.code.value),
             )
             for product in page.items
         ],
@@ -953,6 +963,7 @@ class StorefrontProductListView(APIView):
     permission_classes: ClassVar = [AllowAny]
 
     @extend_schema(
+        operation_id="storefront_products_list",
         parameters=[StorefrontProductQuerySerializer],
         responses={200: StorefrontProductPageSerializer, 400: ErrorSerializer},
     )
@@ -972,19 +983,21 @@ class StorefrontProductListView(APIView):
         except CatalogError as exc:
             # An out-of-range limit/offset surfaced from the domain.
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        codes = [product.code.value for product in page.items]
         # When a viewing channel is given, enrich each item with its "from" price
         # and availability so the PLP can show pricing without an extra round-trip.
         channel = data.get("channel")
         summaries = (
-            build_summarise_storefront_prices().execute(
-                codes=[product.code.value for product in page.items], channel=channel
-            )
+            build_summarise_storefront_prices().execute(codes=codes, channel=channel)
             if channel
             else None
         )
+        # A primary image (promoted from a variant) is always attached -- it is not
+        # channel-scoped and lets the card render a real photo instead of a placeholder.
+        images = build_get_storefront_product_images().execute(codes=codes)
         return Response(
             _storefront_page_payload(
-                page, limit=query.limit, offset=query.offset, summaries=summaries
+                page, limit=query.limit, offset=query.offset, summaries=summaries, images=images
             )
         )
 
@@ -1008,13 +1021,17 @@ class StorefrontProductDetailView(APIView):
 
     permission_classes: ClassVar = [AllowAny]
 
-    @extend_schema(responses={200: StorefrontProductSerializer, 404: ErrorSerializer})
+    @extend_schema(
+        operation_id="storefront_product_retrieve",
+        responses={200: StorefrontProductSerializer, 404: ErrorSerializer},
+    )
     def get(self, request: Request, code: str) -> Response:
         try:
             product = build_get_published_product().execute(code=code)
         except ProductNotFoundError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_404_NOT_FOUND)
-        return Response(_storefront_product_payload(product))
+        image = build_get_storefront_product_images().execute(codes=[code]).get(code)
+        return Response(_storefront_product_payload(product, image=image))
 
 
 def _storefront_variant_payload(item: StorefrontVariant) -> dict[str, object]:

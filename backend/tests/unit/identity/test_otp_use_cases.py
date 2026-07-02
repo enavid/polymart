@@ -76,7 +76,15 @@ class FakeUserDirectory(UserDirectory):
     def exists(self, phone_number: str) -> bool:
         return phone_number in self._ids
 
-    def create(self, phone_number: str, *, password: str, full_name: str, email: str) -> int:
+    def create(
+        self,
+        phone_number: str,
+        *,
+        password: str,
+        full_name: str,
+        email: str,
+        is_staff: bool = False,
+    ) -> int:
         if phone_number in self._ids:
             raise UserAlreadyExistsError(phone_number)
         self._sequence += 1
@@ -89,6 +97,12 @@ class FakeUserDirectory(UserDirectory):
             raise UserNotFoundError(phone_number)
         self._passwords[phone_number] = new_password
         return self._ids[phone_number]
+
+    def list_accounts(self, *, limit: int, offset: int):  # pragma: no cover - unused here
+        raise NotImplementedError
+
+    def get_account(self, user_id: int):  # pragma: no cover - unused here
+        raise NotImplementedError
 
 
 class RecordingTokenRevoker(TokenRevoker):

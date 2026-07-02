@@ -22,6 +22,7 @@ pytestmark = [pytest.mark.django_db, pytest.mark.integration]
 
 _ROLES_URL = "/api/v1/access/role-assignments/"
 _GRANTS_URL = "/api/v1/access/channel-grants/"
+_USERS_URL = "/api/v1/access/users/"
 
 
 def _user(phone: str) -> AbstractBaseUser:
@@ -115,3 +116,107 @@ class TestChannelGrant:
             _GRANTS_URL, {"user_id": 999999, "channel_slug": "coffee"}, format="json"
         )
         assert response.status_code == 404
+
+
+class TestUserAdminAuthorization:
+    def test_anonymous_is_rejected(self) -> None:
+        assert APIClient().get(_USERS_URL).status_code == 401
+
+    def test_a_non_admin_is_forbidden(self) -> None:
+        client = APIClient()
+        client.force_authenticate(user=_user("09120000007"))
+
+        assert client.get(_USERS_URL).status_code == 403
+
+
+class TestUserList:
+    def test_lists_accounts_with_the_total_count(self, admin_client: APIClient) -> None:
+        # The admin fixture user plus two more.
+        _user("09120000008")
+        _user("09120000009")
+
+        response = admin_client.get(_USERS_URL)
+
+        assert response.status_code == 200
+        assert response.data["count"] == 3
+        assert {row["phone_number"] for row in response.data["results"]} >= {
+            "+989120000008",
+            "+989120000009",
+        }
+        # The list never carries a password field.
+        assert all("password" not in row for row in response.data["results"])
+
+    def test_pagination_windows_the_results(self, admin_client: APIClient) -> None:
+        _user("09120000010")
+
+        response = admin_client.get(_USERS_URL, {"limit": 1, "offset": 0})
+
+        assert len(response.data["results"]) == 1
+        assert response.data["count"] == 2
+        assert response.data["limit"] == 1
+        assert response.data["offset"] == 0
+
+    def test_an_out_of_range_limit_is_a_400(self, admin_client: APIClient) -> None:
+        assert admin_client.get(_USERS_URL, {"limit": 1000}).status_code == 400
+
+
+class TestUserCreate:
+    def test_admin_creates_a_user_and_it_is_audited(self, admin_client: APIClient) -> None:
+        response = admin_client.post(
+            _USERS_URL,
+            {
+                "phone_number": "09121112233",
+                "password": "pw",
+                "full_name": "Sara",
+                "is_staff": True,
+            },
+            format="json",
+        )
+
+        assert response.status_code == 201
+        assert response.data["full_name"] == "Sara"
+        assert response.data["is_staff"] is True
+        assert response.data["phone_number"] == "+989121112233"
+        # The password is write-only; it must never be echoed back.
+        assert "password" not in response.data
+        created = get_user_model().objects.get(phone_number="+989121112233")
+        assert AuditLogModel.objects.filter(
+            action="user.created", resource_id=str(created.pk)
+        ).exists()
+
+    def test_the_created_user_can_authenticate_with_the_password(
+        self, admin_client: APIClient
+    ) -> None:
+        admin_client.post(
+            _USERS_URL,
+            {"phone_number": "09121112244", "password": "s3cret-pw"},
+            format="json",
+        )
+
+        login = APIClient().post(
+            "/api/v1/auth/login/",
+            {"phone_number": "09121112244", "password": "s3cret-pw"},
+            format="json",
+        )
+        assert login.status_code == 200
+
+    def test_a_duplicate_phone_is_a_409(self, admin_client: APIClient) -> None:
+        payload = {"phone_number": "09121112255", "password": "pw"}
+        assert admin_client.post(_USERS_URL, payload, format="json").status_code == 201
+
+        assert admin_client.post(_USERS_URL, payload, format="json").status_code == 409
+
+    def test_an_invalid_phone_is_a_400(self, admin_client: APIClient) -> None:
+        response = admin_client.post(
+            _USERS_URL, {"phone_number": "not-a-phone", "password": "pw"}, format="json"
+        )
+        assert response.status_code == 400
+
+    def test_a_non_admin_cannot_create(self) -> None:
+        client = APIClient()
+        client.force_authenticate(user=_user("09120000011"))
+
+        response = client.post(
+            _USERS_URL, {"phone_number": "09121112266", "password": "pw"}, format="json"
+        )
+        assert response.status_code == 403

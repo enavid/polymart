@@ -25,6 +25,7 @@ from src.application.catalog.use_cases import (
     GetProductCategories,
     GetProductType,
     GetPublishedProduct,
+    GetStorefrontProductImages,
     GetStorefrontProductVariants,
     GetVariant,
     GetVariantPrices,
@@ -239,6 +240,10 @@ def build_summarise_storefront_prices() -> SummariseStorefrontPrices:
 
 def build_get_published_product() -> GetPublishedProduct:
     return GetPublishedProduct(DjangoProductQueryRepository())
+
+
+def build_get_storefront_product_images() -> GetStorefrontProductImages:
+    return GetStorefrontProductImages(DjangoProductQueryRepository())
 
 
 def build_get_storefront_product_variants() -> GetStorefrontProductVariants:

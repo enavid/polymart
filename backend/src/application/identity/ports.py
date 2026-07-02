@@ -9,10 +9,27 @@ inward and the use cases stay testable against fakes.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from datetime import datetime
 
 from src.domain.identity.entities import OtpChallenge
 from src.domain.identity.enums import OtpPurpose
+
+
+@dataclass(frozen=True)
+class UserAccount:
+    """A user account projected for administration (no secrets).
+
+    The read shape the access-admin surface needs to show a user picker and the
+    result of a create: identity plus the two flags that drive authorization.
+    """
+
+    id: int
+    phone_number: str
+    full_name: str
+    email: str
+    is_staff: bool
+    is_active: bool
 
 
 class OtpRepository(ABC):
@@ -77,10 +94,20 @@ class UserDirectory(ABC):
         """Return whether an account already exists for this phone number."""
 
     @abstractmethod
-    def create(self, phone_number: str, *, password: str, full_name: str, email: str) -> int:
+    def create(
+        self,
+        phone_number: str,
+        *,
+        password: str,
+        full_name: str,
+        email: str,
+        is_staff: bool = False,
+    ) -> int:
         """Create an account and return its id.
 
-        Raises ``UserAlreadyExistsError`` if the phone number is already taken.
+        ``is_staff`` marks the account as an admin/staff user (default off, as for a
+        self-registering shopper). Raises ``UserAlreadyExistsError`` if the phone
+        number is already taken.
         """
 
     @abstractmethod
@@ -88,6 +115,20 @@ class UserDirectory(ABC):
         """Replace the account's password and return its id.
 
         Raises ``UserNotFoundError`` if no account exists for the phone number.
+        """
+
+    @abstractmethod
+    def list_accounts(self, *, limit: int, offset: int) -> tuple[tuple[UserAccount, ...], int]:
+        """Return one page of accounts (ordered by id) plus the total account count.
+
+        The total is independent of the page window so the caller can paginate.
+        """
+
+    @abstractmethod
+    def get_account(self, user_id: int) -> UserAccount:
+        """Return the account projection for this id.
+
+        Raises ``UserNotFoundError`` if no account has that id.
         """
 
 

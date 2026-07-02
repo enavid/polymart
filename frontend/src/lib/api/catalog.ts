@@ -315,6 +315,9 @@ export interface StorefrontProduct {
   product_type: string;
   values: AttributeValue[];
   metadata: Record<string, string>;
+  // The product's primary image (promoted from a variant), or null when it has
+  // none -- the storefront then falls back to a monogram placeholder.
+  image?: VariantMedia | null;
   // Present only when the list was requested for a channel. `from_price` is an
   // exact string (the lowest in-channel variant price) or null when unpriced.
   from_price?: string | null;

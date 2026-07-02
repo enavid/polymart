@@ -59,7 +59,10 @@ export function LoginForm() {
         <CardTitle>{t("loginTitle")}</CardTitle>
       </CardHeader>
       <CardContent>
-        <form onSubmit={onSubmit} className="flex flex-col gap-4" noValidate>
+        {/* method="post" (plus name-less credential fields) is defence in depth:
+            if hydration ever fails, a native fallback submit stays a POST with the
+            values in the request body, never a GET that leaks them into the URL. */}
+        <form onSubmit={onSubmit} method="post" className="flex flex-col gap-4" noValidate>
           <FormField
             id="phone_number"
             label={tCommon("phoneNumber")}
@@ -69,6 +72,7 @@ export function LoginForm() {
             value={phoneNumber}
             onChange={(e) => setPhoneNumber(e.target.value)}
             required
+            omitName
           />
           <FormField
             id="password"
@@ -78,6 +82,7 @@ export function LoginForm() {
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             required
+            omitName
           />
           {errorMessage ? (
             <Alert variant="destructive">{errorMessage}</Alert>

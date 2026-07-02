@@ -57,7 +57,7 @@ export function HomeLanding() {
                 key={product.code}
                 className="overflow-hidden transition duration-200 hover:-translate-y-0.5 hover:shadow-md"
               >
-                <ProductThumb name={product.name} />
+                <ProductThumb name={product.name} image={product.image} />
                 <CardHeader className="pb-2">
                   <CardTitle className="text-base">{product.name}</CardTitle>
                 </CardHeader>

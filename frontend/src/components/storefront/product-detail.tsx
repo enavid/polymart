@@ -47,7 +47,7 @@ export function StorefrontProductDetail({ code }: { code: string }) {
         <div className="flex flex-col gap-6">
           <div className="grid gap-6 md:grid-cols-2 md:items-center">
             <Card className="overflow-hidden">
-              <ProductThumb name={product.name} />
+              <ProductThumb name={product.name} image={product.image} />
             </Card>
             <div className="flex flex-col gap-2">
               <h1 className="text-3xl font-bold tracking-tight">{product.name}</h1>

@@ -60,6 +60,7 @@ from src.domain.catalog.value_objects import (
     AttributeCode,
     CategorySlug,
     ChannelPrice,
+    MediaAsset,
     Money,
     ProductCode,
     RuleCondition,
@@ -400,6 +401,23 @@ class DjangoProductQueryRepository(ProductQueryRepository):
             # unpublished product is never leaked through the public read surface.
             raise ProductNotFoundError(code) from exc
         return product_to_domain(model)
+
+    def primary_images(self, *, codes: Sequence[str]) -> dict[str, MediaAsset]:
+        if not codes:
+            return {}
+        # Order so the first row seen for each code is its primary image: earliest
+        # variant (lowest SKU), then that variant's first media asset (lowest
+        # position). One query for the whole page; the first hit per code wins.
+        rows = (
+            ProductVariantMediaModel.objects.filter(variant__product__code__in=codes)
+            .order_by("variant__product__code", "variant__sku", "position")
+            .values_list("variant__product__code", "url", "alt_text")
+        )
+        images: dict[str, MediaAsset] = {}
+        for code, url, alt_text in rows:
+            if code not in images:
+                images[code] = MediaAsset(url=url, alt_text=alt_text)
+        return images
 
 
 class DjangoCatalogImportWriter(CatalogImportWriter):

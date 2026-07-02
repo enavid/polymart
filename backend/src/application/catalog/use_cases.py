@@ -1504,6 +1504,25 @@ class SummariseStorefrontPrices:
         return self._repository.price_summaries(codes=codes, channel=channel)
 
 
+class GetStorefrontProductImages:
+    """Resolve a representative image for storefront products (PLP cards + PDP).
+
+    Given the product codes on a page (or a single code for the detail view), it
+    returns each product's primary image so the storefront can render a real photo
+    instead of the monogram placeholder. Read-only, not channel-scoped (an image is
+    the same in every channel), and it never fabricates an image for a product that
+    has none -- absence is left to the client to fall back on.
+    """
+
+    def __init__(self, repository: ProductQueryRepository) -> None:
+        self._repository = repository
+
+    def execute(self, *, codes: Sequence[str]) -> dict[str, MediaAsset]:
+        if not codes:
+            return {}
+        return self._repository.primary_images(codes=codes)
+
+
 class GetPublishedProduct:
     """Read a single published product for the storefront (404 otherwise).
 

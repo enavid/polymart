@@ -260,3 +260,81 @@ class TestChannelPricing:
         item = next(p for p in response.data["results"] if p["code"] == "house-blend")
         assert "from_price" not in item
         assert "available" not in item
+
+
+class TestImages:
+    """The storefront read surfaces a product's primary image (promoted from a variant)."""
+
+    @staticmethod
+    def _seed_with_image() -> None:
+        from src.domain.catalog.entities import Product, ProductType, ProductVariant
+        from src.domain.catalog.value_objects import (
+            MediaAsset,
+            ProductCode,
+            ProductTypeCode,
+            Sku,
+        )
+        from src.infrastructure.catalog.repositories import (
+            DjangoProductRepository,
+            DjangoProductTypeRepository,
+            DjangoVariantRepository,
+        )
+
+        DjangoProductTypeRepository().add(
+            ProductType(code=ProductTypeCode("coffee"), name="Coffee")
+        )
+        products = DjangoProductRepository()
+        products.add(
+            Product(
+                code=ProductCode("house-blend"),
+                name="House Blend",
+                product_type=ProductTypeCode("coffee"),
+            )
+        )
+        products.set_published("house-blend", True)
+        # A product with no variant media at all, to prove the image is null (not absent).
+        products.add(
+            Product(
+                code=ProductCode("plain"),
+                name="Plain",
+                product_type=ProductTypeCode("coffee"),
+            )
+        )
+        products.set_published("plain", True)
+        DjangoVariantRepository().add(
+            ProductVariant(
+                product=ProductCode("house-blend"),
+                sku=Sku("HB-250"),
+                name="250g",
+                media=(MediaAsset(url="https://cdn.example.com/hb.jpg", alt_text="House Blend"),),
+            )
+        )
+        DjangoVariantRepository().add(
+            ProductVariant(product=ProductCode("plain"), sku=Sku("PL-1"), name="one")
+        )
+
+    def test_list_includes_the_primary_image(self) -> None:
+        self._seed_with_image()
+
+        response = APIClient().get(_LIST_URL)
+
+        item = next(p for p in response.data["results"] if p["code"] == "house-blend")
+        assert item["image"] == {"url": "https://cdn.example.com/hb.jpg", "alt_text": "House Blend"}
+
+    def test_list_image_is_null_when_the_product_has_no_media(self) -> None:
+        self._seed_with_image()
+
+        response = APIClient().get(_LIST_URL)
+
+        item = next(p for p in response.data["results"] if p["code"] == "plain")
+        assert item["image"] is None
+
+    def test_detail_includes_the_primary_image(self) -> None:
+        self._seed_with_image()
+
+        response = APIClient().get(f"{_LIST_URL}house-blend/")
+
+        assert response.data["image"] == {
+            "url": "https://cdn.example.com/hb.jpg",
+            "alt_text": "House Blend",
+        }

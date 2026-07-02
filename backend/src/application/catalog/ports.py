@@ -22,6 +22,7 @@ from src.domain.catalog.entities import (
 from src.domain.catalog.value_objects import (
     CategorySlug,
     ChannelPrice,
+    MediaAsset,
     Money,
     ProductCode,
     RuleCondition,
@@ -414,6 +415,18 @@ class ProductQueryRepository(ABC):
         Raises ``ProductNotFoundError`` if no product with that code exists *or* it
         exists but is not published -- a draft must be indistinguishable from a
         missing product, so its existence is never leaked.
+        """
+
+    @abstractmethod
+    def primary_images(self, *, codes: Sequence[str]) -> dict[str, MediaAsset]:
+        """Return a representative image for each of ``codes``, keyed by product code.
+
+        The image is the first media asset (lowest position) of the product's first
+        variant (lowest SKU) that carries any media -- the storefront card/PDP shows
+        it so the product no longer looks empty. A code whose variants have no media
+        is simply absent from the mapping (the caller falls back to a placeholder).
+        Media lives on variants (there is no product-level image in this model), so
+        this promotes a variant image to represent the product without a schema change.
         """
 
 

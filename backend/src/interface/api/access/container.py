@@ -9,13 +9,23 @@ from __future__ import annotations
 
 from src.application.access.ports import AccessControlGateway
 from src.application.access.use_cases import AssignRole, GrantChannelManagement
+from src.application.identity.admin_use_cases import AdminCreateUser, ListUserAccounts
 from src.infrastructure.access.gateway import GuardianAccessControl
 from src.infrastructure.channel.repositories import DjangoChannelRepository
+from src.infrastructure.identity.user_directory import DjangoUserDirectory
 from src.interface.api.audit.container import build_audit_recorder
 
 
 def build_access_gateway() -> AccessControlGateway:
     return GuardianAccessControl()
+
+
+def build_list_user_accounts() -> ListUserAccounts:
+    return ListUserAccounts(DjangoUserDirectory())
+
+
+def build_admin_create_user() -> AdminCreateUser:
+    return AdminCreateUser(DjangoUserDirectory(), build_audit_recorder())
 
 
 def build_assign_role() -> AssignRole:

@@ -38,6 +38,9 @@ class FakeProductQueryRepository(ProductQueryRepository):
     def price_summaries(self, *, codes, channel):  # pragma: no cover - unused here
         return {}
 
+    def primary_images(self, *, codes):  # pragma: no cover - unused here
+        return {}
+
     def get_published_by_code(self, code: str) -> Product:
         if not self._published:
             raise ProductNotFoundError(code)
