@@ -131,9 +131,7 @@ class TestImport:
     def test_reports_row_errors_and_writes_nothing(self, auth_client: APIClient) -> None:
         _seed_type(auth_client)
         csv_text = (
-            "code,name,product_type\n"
-            "house-blend,House Blend,coffee\n"
-            "ghost,Ghost,missing-type\n"
+            "code,name,product_type\nhouse-blend,House Blend,coffee\nghost,Ghost,missing-type\n"
         )
 
         response = auth_client.post(_IMPORT_URL, {"file": _upload(csv_text)}, format="multipart")

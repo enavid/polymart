@@ -1,0 +1,186 @@
+"""Django ORM implementation of the order ports.
+
+The order repository persists and reloads the aggregate; the narrow adapters bridge to
+the neighbouring cart, catalog, and channel contexts. All reads that a use case uses to
+resolve an order are owner-scoped, so one shopper can never reach another's order.
+"""
+
+from __future__ import annotations
+
+from contextlib import AbstractContextManager
+
+import structlog
+from django.db import transaction
+
+from src.application.order.ports import (
+    CartForCheckout,
+    ChannelReader,
+    CheckoutLine,
+    Inventory,
+    OrderRepository,
+    PricingReader,
+    UnitOfWork,
+)
+from src.domain.catalog.exceptions import InsufficientStockError
+from src.domain.catalog.exceptions import VariantNotFoundError as CatalogVariantNotFoundError
+from src.domain.order.entities import Order
+from src.domain.order.exceptions import (
+    OrderNotFoundError,
+    OutOfStockError,
+    VariantNotFoundError,
+)
+from src.domain.order.value_objects import Money, OrderStatus
+from src.infrastructure.cart.models import CartLineModel, CartModel
+from src.infrastructure.catalog.models import VariantPriceModel
+from src.infrastructure.catalog.repositories import DjangoStockRepository
+from src.infrastructure.channel.models import ChannelModel
+from src.infrastructure.order.mappers import order_to_domain
+from src.infrastructure.order.models import OrderLineModel, OrderModel
+
+logger = structlog.get_logger(__name__)
+
+
+def _owner_pk(owner: str) -> int:
+    """Translate the domain's string owner id back to the user's integer primary key."""
+    return int(owner)
+
+
+class DjangoOrderRepository(OrderRepository):
+    """Persist orders with the Django ORM, returning domain aggregates."""
+
+    def add(self, order: Order) -> Order:
+        model = OrderModel.objects.create(
+            number=order.number.value,
+            owner_id=_owner_pk(order.owner),
+            channel_slug=order.channel.value,
+            currency_code=order.currency,
+            total=order.total.amount,
+            status=order.status.value,
+            placed_at=order.placed_at,
+        )
+        OrderLineModel.objects.bulk_create(
+            OrderLineModel(
+                order=model,
+                sku=line.sku.value,
+                quantity=line.quantity.value,
+                unit_price=line.unit_price.amount,
+                line_total=line.line_total.amount,
+                position=position,
+            )
+            for position, line in enumerate(order.lines)
+        )
+        return self._load(model.number, owner_pk=model.owner_id)
+
+    def get_for_owner(self, owner: str, number: str) -> Order:
+        return self._load(number, owner_pk=_owner_pk(owner))
+
+    def get_for_update(self, owner: str, number: str) -> Order:
+        # Lock the order row so two concurrent status changes (e.g. two cancels)
+        # serialize instead of both reading a pending order.
+        try:
+            model = OrderModel.objects.select_for_update().get(
+                number=number, owner_id=_owner_pk(owner)
+            )
+        except OrderModel.DoesNotExist as exc:
+            raise OrderNotFoundError(number) from exc
+        return order_to_domain(model)
+
+    def list_for_owner(
+        self, owner: str, *, limit: int, offset: int
+    ) -> tuple[tuple[Order, ...], int]:
+        base = OrderModel.objects.filter(owner_id=_owner_pk(owner)).prefetch_related("lines")
+        total = base.count()
+        # Meta.ordering is already newest-first ("-id").
+        rows = list(base[offset : offset + limit])
+        return tuple(order_to_domain(row) for row in rows), total
+
+    def set_status(self, order: Order, status: OrderStatus) -> Order:
+        OrderModel.objects.filter(number=order.number.value).update(status=status.value)
+        return self._load(order.number.value, owner_pk=_owner_pk(order.owner))
+
+    @staticmethod
+    def _load(number: str, *, owner_pk: int) -> Order:
+        try:
+            model = OrderModel.objects.prefetch_related("lines").get(
+                number=number, owner_id=owner_pk
+            )
+        except OrderModel.DoesNotExist as exc:
+            raise OrderNotFoundError(number) from exc
+        return order_to_domain(model)
+
+
+class DjangoCartForCheckout(CartForCheckout):
+    """Read and clear the owner's cart, bridging to the cart context's models."""
+
+    def line_items(self, owner: str, channel: str) -> tuple[CheckoutLine, ...]:
+        cart = CartModel.objects.filter(owner_id=_owner_pk(owner), channel_slug=channel).first()
+        if cart is None:
+            return ()
+        rows = cart.lines.all().order_by("position").values_list("sku", "quantity")
+        return tuple(CheckoutLine(sku=sku, quantity=quantity) for sku, quantity in rows)
+
+    def clear(self, owner: str, channel: str) -> None:
+        # Delete the cart's lines (the row is left, so a fresh read returns an empty
+        # cart). Runs inside the checkout unit of work, so it commits with the order.
+        cart = CartModel.objects.filter(owner_id=_owner_pk(owner), channel_slug=channel).first()
+        if cart is not None:
+            CartLineModel.objects.filter(cart=cart).delete()
+
+
+class DjangoPricingReader(PricingReader):
+    """Capture a variant's current channel price from the catalog context."""
+
+    def price_of(self, sku: str, channel: str) -> Money | None:
+        row = VariantPriceModel.objects.filter(variant__sku=sku, channel_slug=channel).first()
+        if row is None:
+            return None
+        return Money(amount=row.amount, currency=row.currency_code)
+
+
+class DjangoChannelReader(ChannelReader):
+    """Read a channel's currency from the channel context, for the order currency."""
+
+    def currency_of(self, channel: str) -> str | None:
+        return (
+            ChannelModel.objects.filter(slug=channel)
+            .values_list("currency_code", flat=True)
+            .first()
+        )
+
+
+class DjangoInventory(Inventory):
+    """Move on-hand stock via the catalog's locked, no-below-zero stock repository.
+
+    ``deduct`` is a negative adjustment; the catalog repository takes a row lock and
+    refuses to drop below zero (the anti-overselling guarantee). Catalog-domain errors
+    are translated to order-domain errors so the boundary stays clean.
+    """
+
+    def __init__(self) -> None:
+        self._stock = DjangoStockRepository()
+
+    def deduct(self, sku: str, quantity: int) -> None:
+        try:
+            self._stock.adjust_quantity(sku, -quantity)
+        except InsufficientStockError as exc:
+            raise OutOfStockError(sku, requested=quantity, available=exc.available) from exc
+        except CatalogVariantNotFoundError as exc:
+            raise VariantNotFoundError(sku) from exc
+
+    def restock(self, sku: str, quantity: int) -> None:
+        try:
+            self._stock.adjust_quantity(sku, quantity)
+        except CatalogVariantNotFoundError as exc:  # pragma: no cover - defensive
+            raise VariantNotFoundError(sku) from exc
+
+
+class DjangoUnitOfWork(UnitOfWork):
+    """Transaction boundary backed by Django's ``transaction.atomic``.
+
+    Everything a use case performs inside ``atomic()`` commits together or rolls back
+    together on any exception -- the guarantee checkout relies on so an oversell reverts
+    every earlier stock deduction and writes no order.
+    """
+
+    def atomic(self) -> AbstractContextManager[None]:
+        return transaction.atomic()

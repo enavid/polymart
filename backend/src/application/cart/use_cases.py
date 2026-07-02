@@ -216,9 +216,7 @@ class RemoveCartItem:
         currency = _resolve_currency(self._channels, channel.value)
         # Under the repository lock: raises CartLineNotFoundError (a 404) if the cart
         # has no such line, in which case nothing is written.
-        saved = self._carts.apply(
-            command.owner, channel.value, lambda cart: cart.remove_item(sku)
-        )
+        saved = self._carts.apply(command.owner, channel.value, lambda cart: cart.remove_item(sku))
         logger.info(
             "cart_item_removed",
             owner=command.owner,

@@ -20,15 +20,11 @@ from src.infrastructure.cart.repositories import (
 
 
 def build_get_cart() -> GetCart:
-    return GetCart(
-        DjangoCartRepository(), DjangoVariantPricingReader(), DjangoChannelReader()
-    )
+    return GetCart(DjangoCartRepository(), DjangoVariantPricingReader(), DjangoChannelReader())
 
 
 def build_add_cart_item() -> AddCartItem:
-    return AddCartItem(
-        DjangoCartRepository(), DjangoVariantPricingReader(), DjangoChannelReader()
-    )
+    return AddCartItem(DjangoCartRepository(), DjangoVariantPricingReader(), DjangoChannelReader())
 
 
 def build_update_cart_item() -> UpdateCartItem:

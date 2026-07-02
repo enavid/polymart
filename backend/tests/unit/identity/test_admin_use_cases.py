@@ -89,9 +89,7 @@ class RecordingAudit(AuditRecorder):
 
 def _seed(directory: FakeUserDirectory, count: int) -> None:
     for i in range(count):
-        directory.create(
-            f"0912000000{i}", password="pw", full_name=f"User {i}", email=""
-        )
+        directory.create(f"0912000000{i}", password="pw", full_name=f"User {i}", email="")
 
 
 class TestListUserAccounts:
@@ -127,9 +125,7 @@ class TestListUserAccounts:
             def info(self, event: str, **fields: object) -> None:
                 events.append((event, fields))
 
-        monkeypatch.setattr(
-            "src.application.identity.admin_use_cases.logger", _RecordingLogger()
-        )
+        monkeypatch.setattr("src.application.identity.admin_use_cases.logger", _RecordingLogger())
 
         ListUserAccounts(directory).execute()
 
@@ -185,14 +181,10 @@ class TestAdminCreateUser:
     def test_a_duplicate_phone_raises(self) -> None:
         directory = FakeUserDirectory()
         audit = RecordingAudit()
-        AdminCreateUser(directory, audit).execute(
-            phone_number_raw="09120000001", password="pw"
-        )
+        AdminCreateUser(directory, audit).execute(phone_number_raw="09120000001", password="pw")
 
         with pytest.raises(UserAlreadyExistsError):
-            AdminCreateUser(directory, audit).execute(
-                phone_number_raw="09120000001", password="pw"
-            )
+            AdminCreateUser(directory, audit).execute(phone_number_raw="09120000001", password="pw")
 
     def test_an_invalid_phone_raises(self) -> None:
         with pytest.raises(InvalidPhoneNumberError):

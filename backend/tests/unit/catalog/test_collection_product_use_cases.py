@@ -184,9 +184,7 @@ class TestSetCollectionProducts:
             SetCollectionProductsCommand(collection="featured", products=("house-blend",))
         )
 
-        result = use_case.execute(
-            SetCollectionProductsCommand(collection="featured", products=())
-        )
+        result = use_case.execute(SetCollectionProductsCommand(collection="featured", products=()))
 
         assert result == ()
 

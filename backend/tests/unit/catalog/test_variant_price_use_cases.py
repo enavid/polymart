@@ -66,9 +66,7 @@ class FakeVariantPriceRepository(VariantPriceRepository):
     def __init__(self) -> None:
         self._by_sku: dict[str, tuple[ChannelPrice, ...]] = {}
 
-    def replace(
-        self, sku: str, prices: Sequence[ChannelPrice]
-    ) -> tuple[ChannelPrice, ...]:
+    def replace(self, sku: str, prices: Sequence[ChannelPrice]) -> tuple[ChannelPrice, ...]:
         stored = tuple(sorted(prices, key=lambda price: price.channel))
         self._by_sku[sku] = stored
         return stored

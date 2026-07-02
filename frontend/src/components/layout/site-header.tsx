@@ -30,6 +30,9 @@ export function SiteHeader() {
           </Link>
           {user ? (
             <>
+              <Link href="/orders" className="px-2 hover:underline">
+                {t("orders")}
+              </Link>
               <Link href="/account" className="px-2 hover:underline">
                 {t("account")}
               </Link>

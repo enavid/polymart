@@ -323,9 +323,7 @@ class TestPrimaryImages:
     def test_returns_the_first_variants_first_media_asset(self) -> None:
         self._seed_with_media()
 
-        images = DjangoProductQueryRepository().primary_images(
-            codes=["house-blend", "dark-roast"]
-        )
+        images = DjangoProductQueryRepository().primary_images(codes=["house-blend", "dark-roast"])
 
         assert images["house-blend"].url == "https://cdn.example.com/hb-front.jpg"
         assert images["house-blend"].alt_text == "front"
@@ -333,9 +331,7 @@ class TestPrimaryImages:
     def test_a_product_without_variant_media_is_absent(self) -> None:
         self._seed_with_media()
 
-        images = DjangoProductQueryRepository().primary_images(
-            codes=["house-blend", "dark-roast"]
-        )
+        images = DjangoProductQueryRepository().primary_images(codes=["house-blend", "dark-roast"])
 
         assert "dark-roast" not in images
 

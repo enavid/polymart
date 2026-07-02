@@ -24,9 +24,7 @@ pytestmark = [pytest.mark.django_db, pytest.mark.integration]
 
 
 def _seed_catalog() -> None:
-    DjangoProductTypeRepository().add(
-        ProductType(code=ProductTypeCode("coffee"), name="Coffee")
-    )
+    DjangoProductTypeRepository().add(ProductType(code=ProductTypeCode("coffee"), name="Coffee"))
     DjangoCategoryRepository().add(Category(slug=CategorySlug("espresso"), name="Espresso"))
 
 

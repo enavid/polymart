@@ -236,9 +236,7 @@ def match_products(
     """
     if not conditions:
         return ()
-    return tuple(
-        product.code for product in products if _matches_all(conditions, product)
-    )
+    return tuple(product.code for product in products if _matches_all(conditions, product))
 
 
 def _matches_all(conditions: Sequence[RuleCondition], product: Product) -> bool:

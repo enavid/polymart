@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { setupServer } from "msw/node";
@@ -9,11 +9,15 @@ import { markSignedIn } from "@/lib/auth/session-hint";
 import messages from "@/i18n/messages/fa.json";
 import { renderWithProviders } from "@/test/utils";
 
+const { push } = vi.hoisted(() => ({ push: vi.fn() }));
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push }) }));
+
 const server = setupServer();
 beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
 afterEach(() => {
   server.resetHandlers();
   window.localStorage.clear();
+  push.mockReset();
 });
 afterAll(() => server.close());
 
@@ -120,6 +124,77 @@ describe("CartView", () => {
     await userEvent.click(screen.getByRole("button", { name: messages.cart.update }));
 
     await waitFor(() => expect(putBody).toEqual({ channel: "ir-main", quantity: 5 }));
+  });
+
+  it("checks out and navigates to the new order", async () => {
+    authed();
+    server.use(
+      http.get("*/cart/", () => HttpResponse.json(cartWithLine)),
+      http.post("*/orders/", () =>
+        HttpResponse.json(
+          {
+            number: "ORD-ABC123XYZ0",
+            channel: "ir-main",
+            currency: "IRR",
+            status: "pending",
+            total: "240000.0000",
+            placed_at: "2026-07-02T12:00:00Z",
+            items: [],
+          },
+          { status: 201 },
+        ),
+      ),
+    );
+
+    renderWithProviders(<CartView />);
+    const checkout = await screen.findByRole("button", { name: messages.cart.checkout });
+    await userEvent.click(checkout);
+
+    await waitFor(() => expect(push).toHaveBeenCalledWith("/orders/ORD-ABC123XYZ0"));
+  });
+
+  it("surfaces a checkout conflict (e.g. oversell) without navigating", async () => {
+    authed();
+    server.use(
+      http.get("*/cart/", () => HttpResponse.json(cartWithLine)),
+      http.post("*/orders/", () =>
+        HttpResponse.json({ detail: "insufficient stock" }, { status: 409 }),
+      ),
+    );
+
+    renderWithProviders(<CartView />);
+    const checkout = await screen.findByRole("button", { name: messages.cart.checkout });
+    await userEvent.click(checkout);
+
+    // A conflict shows the localized checkout error, not the raw backend detail.
+    expect(await screen.findByText(messages.cart.checkoutError)).toBeInTheDocument();
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  it("disables checkout when a line is unavailable", async () => {
+    authed();
+    server.use(
+      http.get("*/cart/", () =>
+        HttpResponse.json({
+          channel: "ir-main",
+          currency: "IRR",
+          items: [
+            {
+              sku: "HB-250",
+              quantity: 1,
+              unit_price: null,
+              line_total: null,
+              available: false,
+            },
+          ],
+          total: "0",
+        }),
+      ),
+    );
+
+    renderWithProviders(<CartView />);
+    const checkout = await screen.findByRole("button", { name: messages.cart.checkout });
+    expect(checkout).toBeDisabled();
   });
 
   it("warns and excludes an unavailable line", async () => {

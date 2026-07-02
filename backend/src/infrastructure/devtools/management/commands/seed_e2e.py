@@ -71,6 +71,7 @@ from src.infrastructure.catalog.repositories import (
 from src.infrastructure.channel.models import ChannelModel
 from src.infrastructure.channel.repositories import DjangoChannelRepository
 from src.infrastructure.identity.models import User
+from src.infrastructure.order.models import OrderModel
 from src.interface.api.access.container import build_assign_role
 
 logger = structlog.get_logger(__name__)
@@ -192,9 +193,12 @@ class Command(BaseCommand):
         for role in (CATALOG_ADMIN_ROLE, ACCESS_ADMIN_ROLE, CHANNEL_ADMIN_ROLE):
             build_assign_role().execute(user_id=staff.pk, role_name=role)
 
-        # Start every E2E run from an empty shopper cart, so the cart specs assert
-        # against a known state regardless of what a previous run left behind.
+        # Start every E2E run from an empty shopper cart and no prior orders, so the
+        # cart and checkout specs assert against a known state regardless of what a
+        # previous run left behind. Stock is re-set to the fixture values below in
+        # _seed_products, so deleting orders (which never restores stock) is safe.
         CartModel.objects.filter(owner_id=shopper.pk).delete()
+        OrderModel.objects.filter(owner_id=shopper.pk).delete()
 
     @staticmethod
     def _ensure_user(phone: str, password: str, full_name: str) -> tuple[User, bool]:

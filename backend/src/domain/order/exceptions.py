@@ -1,0 +1,111 @@
+"""Domain exceptions for the order context.
+
+A single base (``OrderError``) lets the transport layer catch the whole family and
+map it to a sensible default, while the specific subclasses carry the meaning a view
+needs to choose a precise status code. Like the cart, a few boundary conditions that
+are strictly application concerns (an unknown channel, an out-of-stock variant) are
+modelled here so the use cases raise from one coherent hierarchy.
+
+Pure Python -- no Django, no DRF, no ORM.
+"""
+
+from __future__ import annotations
+
+
+class OrderError(Exception):
+    """Base class for every order-domain error."""
+
+
+class InvalidMoneyError(OrderError):
+    """Raised when a monetary amount is not a valid, representable, non-negative value."""
+
+
+class InvalidSkuError(OrderError):
+    """Raised when a SKU reference is structurally malformed."""
+
+
+class InvalidOrderQuantityError(OrderError):
+    """Raised when an order line quantity is not a positive, bounded integer."""
+
+
+class InvalidChannelReferenceError(OrderError):
+    """Raised when a channel reference is blank or too long."""
+
+
+class InvalidOrderNumberError(OrderError):
+    """Raised when an order number is structurally malformed."""
+
+
+class EmptyOrderError(OrderError):
+    """Raised when an order would have no lines -- an order must sell something."""
+
+
+class OrderTotalMismatchError(OrderError):
+    """Raised when an order's stated total does not equal the sum of its line totals."""
+
+
+class OrderCurrencyMismatchError(OrderError):
+    """Raised when a line's currency differs from the order's currency."""
+
+
+class IllegalOrderTransitionError(OrderError):
+    """Raised when a status change is not allowed by the order state machine."""
+
+    def __init__(self, current: str, target: str) -> None:
+        super().__init__(f"cannot transition an order from {current!r} to {target!r}")
+        self.current = current
+        self.target = target
+
+
+class EmptyCartError(OrderError):
+    """Raised when checkout is attempted with an empty cart (nothing to order)."""
+
+
+class UnknownChannelError(OrderError):
+    """Raised when checkout references a channel that does not exist."""
+
+
+class VariantNotFoundError(OrderError):
+    """Raised when an ordered SKU has no matching catalog variant."""
+
+    def __init__(self, sku: str) -> None:
+        super().__init__(f"unknown variant: {sku}")
+        self.sku = sku
+
+
+class VariantNotPurchasableError(OrderError):
+    """Raised when an ordered variant has no price in the checkout channel."""
+
+    def __init__(self, sku: str, channel: str) -> None:
+        super().__init__(f"variant {sku} is not purchasable in channel {channel}")
+        self.sku = sku
+        self.channel = channel
+
+
+class OutOfStockError(OrderError):
+    """Raised when an ordered quantity exceeds the on-hand stock (an oversell)."""
+
+    def __init__(self, sku: str, requested: int, available: int) -> None:
+        super().__init__(
+            f"insufficient stock for {sku}: requested {requested}, available {available}"
+        )
+        self.sku = sku
+        self.requested = requested
+        self.available = available
+
+
+class OrderNotFoundError(OrderError):
+    """Raised when no order matches the owner/number pair."""
+
+    def __init__(self, number: str) -> None:
+        super().__init__(f"order not found: {number}")
+        self.number = number
+
+
+class OrderNotCancellableError(OrderError):
+    """Raised when an order cannot be cancelled from its current status."""
+
+    def __init__(self, number: str, status: str) -> None:
+        super().__init__(f"order {number} cannot be cancelled from status {status!r}")
+        self.number = number
+        self.status = status

@@ -171,9 +171,7 @@ class TestSet:
     def test_duplicate_condition_returns_400(self, auth_client: APIClient) -> None:
         _seed(auth_client)
         condition = {"attribute": "roast-level", "operator": "equals", "value": "dark"}
-        response = auth_client.put(
-            _RULE_URL, {"conditions": [condition, condition]}, format="json"
-        )
+        response = auth_client.put(_RULE_URL, {"conditions": [condition, condition]}, format="json")
 
         assert response.status_code == 400
 
@@ -225,6 +223,4 @@ class TestMembers:
         assert response.data["products"] == []
 
     def test_unknown_collection_returns_404(self, auth_client: APIClient) -> None:
-        assert (
-            auth_client.get("/api/v1/catalog/collections/ghost/rule/members/").status_code == 404
-        )
+        assert auth_client.get("/api/v1/catalog/collections/ghost/rule/members/").status_code == 404

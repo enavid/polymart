@@ -69,9 +69,7 @@ class TestSecurity:
     ) -> None:
         _seed_product(auth_client)
         assert (
-            member_client.put(
-                _PUBLICATION_URL, {"is_published": True}, format="json"
-            ).status_code
+            member_client.put(_PUBLICATION_URL, {"is_published": True}, format="json").status_code
             == 403
         )
 

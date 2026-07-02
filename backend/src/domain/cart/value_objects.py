@@ -154,7 +154,5 @@ class Money:
     def add(self, other: Money) -> Money:
         """Return the sum of two amounts, refusing to add across currencies."""
         if other.currency != self.currency:
-            raise InvalidMoneyError(
-                f"cannot add {other.currency!r} to {self.currency!r}"
-            )
+            raise InvalidMoneyError(f"cannot add {other.currency!r} to {self.currency!r}")
         return Money(amount=self.amount + other.amount, currency=self.currency)

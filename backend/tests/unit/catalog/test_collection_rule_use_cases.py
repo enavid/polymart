@@ -247,9 +247,7 @@ class TestSetCollectionRule:
             )
         )
 
-        result = use_case.execute(
-            SetCollectionRuleCommand(collection="dark-roasts", conditions=())
-        )
+        result = use_case.execute(SetCollectionRuleCommand(collection="dark-roasts", conditions=()))
 
         assert result == ()
 

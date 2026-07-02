@@ -79,9 +79,7 @@ class TestSecurity:
         self, auth_client: APIClient, member_client: APIClient
     ) -> None:
         _seed_variant(auth_client)
-        assert (
-            member_client.put(_STOCK_URL, {"quantity": 5}, format="json").status_code == 403
-        )
+        assert member_client.put(_STOCK_URL, {"quantity": 5}, format="json").status_code == 403
 
 
 class TestSet:
