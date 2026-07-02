@@ -83,8 +83,11 @@ def _client(user: AbstractBaseUser) -> APIClient:
 
 
 def _add_to_cart(owner_pk: int, sku: str, quantity: int) -> None:
+    # The cart context keys a user's cart as ``u:<pk>`` (guest carts use ``g:<token>``);
+    # the order checkout still reads it by the bare pk, so seeding here mirrors what the
+    # cart endpoints store for a signed-in shopper.
     DjangoCartRepository().apply(
-        str(owner_pk), _CHANNEL, lambda cart: cart.add_item(CartSku(sku), CartQuantity(quantity))
+        f"u:{owner_pk}", _CHANNEL, lambda cart: cart.add_item(CartSku(sku), CartQuantity(quantity))
     )
 
 

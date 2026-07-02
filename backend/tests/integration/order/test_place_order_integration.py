@@ -106,8 +106,11 @@ def _seed_variant(sku: str, price: str, *, stock: int) -> None:
 
 
 def _add_to_cart(owner: str, sku: str, quantity: int) -> None:
+    # The cart context keys a user's cart as ``u:<pk>`` (guest carts use ``g:<token>``);
+    # the order checkout still reads it by the bare pk, so seeding here mirrors what the
+    # cart endpoints store for a signed-in shopper.
     DjangoCartRepository().apply(
-        owner, _CHANNEL, lambda cart: cart.add_item(CartSku(sku), CartQuantity(quantity))
+        f"u:{owner}", _CHANNEL, lambda cart: cart.add_item(CartSku(sku), CartQuantity(quantity))
     )
 
 

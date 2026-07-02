@@ -1,8 +1,10 @@
 """Integration tests for the cart endpoints (full path + DB).
 
-The cart is resolved from the authenticated user, so these also assert the
-security property that matters most here: one shopper can never reach another's
-cart (no IDOR), because there is no cart id to tamper with.
+The cart is resolved from the request's owner -- the authenticated user, or an
+anonymous guest identified by an HttpOnly session cookie the backend mints on the
+first write. There is no cart id in the URL, so the security property that matters
+most here holds for both: one owner can never reach another's cart (no IDOR),
+whether the "other" is a signed-in user or a different guest.
 """
 
 from __future__ import annotations
@@ -10,6 +12,7 @@ from __future__ import annotations
 from decimal import Decimal
 
 import pytest
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import AbstractBaseUser
 from rest_framework.test import APIClient
@@ -86,13 +89,6 @@ def other_client() -> APIClient:
 
 
 class TestSecurity:
-    def test_reading_requires_authentication(self) -> None:
-        assert APIClient().get(_CART_URL, {"channel": _CHANNEL}).status_code == 401
-
-    def test_adding_requires_authentication(self) -> None:
-        body = {"channel": _CHANNEL, "sku": "HB-250", "quantity": 1}
-        assert APIClient().post(_ITEMS_URL, body, format="json").status_code == 401
-
     def test_one_shopper_cannot_see_anothers_cart(
         self, client: APIClient, other_client: APIClient
     ) -> None:
@@ -108,6 +104,95 @@ class TestSecurity:
         assert response.status_code == 200
         assert response.data["items"] == []
         assert response.data["total"] == "0"
+
+    def test_a_guest_cannot_see_a_users_cart(self, client: APIClient) -> None:
+        _seed_channel()
+        _seed_variant("HB-250", "120000.00")
+        client.post(
+            _ITEMS_URL, {"channel": _CHANNEL, "sku": "HB-250", "quantity": 2}, format="json"
+        )
+
+        # A brand-new anonymous visitor shares no owner with the signed-in user.
+        response = APIClient().get(_CART_URL, {"channel": _CHANNEL})
+
+        assert response.status_code == 200
+        assert response.data["items"] == []
+
+    def test_two_guests_do_not_share_a_cart(self) -> None:
+        _seed_channel()
+        _seed_variant("HB-250", "120000.00")
+        guest_a = APIClient()
+        add = guest_a.post(
+            _ITEMS_URL, {"channel": _CHANNEL, "sku": "HB-250", "quantity": 2}, format="json"
+        )
+        # The first write mints the guest's session cookie.
+        assert settings.GUEST_COOKIE_NAME in add.cookies
+
+        # A second guest with no cookie must not inherit the first guest's cart.
+        response = APIClient().get(_CART_URL, {"channel": _CHANNEL})
+
+        assert response.status_code == 200
+        assert response.data["items"] == []
+
+
+class TestGuestOwnership:
+    def test_reading_without_a_session_returns_an_empty_cart_and_sets_no_cookie(self) -> None:
+        _seed_channel()
+
+        response = APIClient().get(_CART_URL, {"channel": _CHANNEL})
+
+        assert response.status_code == 200
+        assert response.data["items"] == []
+        assert response.data["total"] == "0"
+        # A read must not tag an anonymous visitor with a tracking cookie.
+        assert settings.GUEST_COOKIE_NAME not in response.cookies
+
+    def test_first_add_mints_an_httponly_session_cookie(self) -> None:
+        _seed_channel()
+        _seed_variant("HB-250", "120000.00")
+
+        response = APIClient().post(
+            _ITEMS_URL, {"channel": _CHANNEL, "sku": "HB-250", "quantity": 1}, format="json"
+        )
+
+        assert response.status_code == 200
+        cookie = response.cookies[settings.GUEST_COOKIE_NAME]
+        assert cookie.value != ""
+        # The token is the credential: JS must never read it.
+        assert cookie["httponly"] is True
+
+    def test_a_guest_cart_persists_across_requests_via_the_cookie(self) -> None:
+        _seed_channel()
+        _seed_variant("HB-250", "120000.00")
+        guest = APIClient()  # APIClient keeps cookies across calls, like a browser.
+
+        guest.post(
+            _ITEMS_URL, {"channel": _CHANNEL, "sku": "HB-250", "quantity": 2}, format="json"
+        )
+        response = guest.get(_CART_URL, {"channel": _CHANNEL})
+
+        assert response.status_code == 200
+        assert response.data["items"][0]["sku"] == "HB-250"
+        assert response.data["items"][0]["quantity"] == 2
+
+    def test_a_returning_add_does_not_re_mint_the_cookie(self) -> None:
+        _seed_channel()
+        _seed_variant("HB-250", "120000.00")
+        guest = APIClient()
+
+        first = guest.post(
+            _ITEMS_URL, {"channel": _CHANNEL, "sku": "HB-250", "quantity": 1}, format="json"
+        )
+        minted = first.cookies[settings.GUEST_COOKIE_NAME].value
+        guest.post(
+            _ITEMS_URL, {"channel": _CHANNEL, "sku": "HB-250", "quantity": 1}, format="json"
+        )
+        response = guest.get(_CART_URL, {"channel": _CHANNEL})
+
+        # The same guest is still one owner: quantities accumulate on one cart.
+        assert response.data["items"][0]["quantity"] == 2
+        # And the cart still belongs to the originally minted token.
+        assert guest.cookies[settings.GUEST_COOKIE_NAME].value == minted
 
 
 class TestAdd:
@@ -187,7 +272,7 @@ class TestAdd:
             )
 
         event = next(e for e in logs if e["event"] == "cart_item_added")
-        assert event["owner"] == str(user.pk)
+        assert event["owner"] == f"u:{user.pk}"
         assert not any("amount" in key or "price" in key or "total" in key for key in event)
 
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from typing import Any
 
 import structlog
 from django.db import transaction
@@ -18,14 +19,20 @@ from src.infrastructure.channel.models import ChannelModel
 logger = structlog.get_logger(__name__)
 
 
-def _owner_pk(owner: str) -> int:
-    """Translate the domain's string owner id back to the user's integer primary key.
+def _owner_filter(owner: str) -> dict[str, Any]:
+    """Map the application's opaque owner id to the cart columns that identify its row.
 
-    The domain owns a stable string id (independent of the database's key type); the
-    owner FK is an integer, so the boundary converts here rather than leaking the DB
-    type inward.
+    ``u:<pk>`` -> the user FK (``owner_id``); ``g:<token>`` -> the ``guest_token``
+    column. Mirrors the encoding produced at the HTTP boundary (see
+    ``src.interface.api.guest``); the split-on-colon contract is the only coupling, so
+    the domain's stable string id stays independent of the database's key types.
     """
-    return int(owner)
+    kind, _, value = owner.partition(":")
+    if kind == "u":
+        return {"owner_id": int(value)}
+    if kind == "g":
+        return {"guest_token": value}
+    raise ValueError(f"unrecognized cart owner id: {owner!r}")  # pragma: no cover - defensive
 
 
 class DjangoCartRepository(CartRepository):
@@ -33,7 +40,7 @@ class DjangoCartRepository(CartRepository):
 
     def get(self, owner: str, channel: str) -> Cart:
         model = (
-            CartModel.objects.filter(owner_id=_owner_pk(owner), channel_slug=channel)
+            CartModel.objects.filter(**_owner_filter(owner), channel_slug=channel)
             .prefetch_related("lines")
             .first()
         )
@@ -66,9 +73,9 @@ class DjangoCartRepository(CartRepository):
         # get_or_create absorbs the create race (it re-gets on a unique violation);
         # the subsequent select_for_update takes the row lock that serializes the
         # line replacement below.
-        owner_pk = _owner_pk(owner)
-        CartModel.objects.get_or_create(owner_id=owner_pk, channel_slug=channel)
-        return CartModel.objects.select_for_update().get(owner_id=owner_pk, channel_slug=channel)
+        owner_filter = _owner_filter(owner)
+        CartModel.objects.get_or_create(**owner_filter, channel_slug=channel)
+        return CartModel.objects.select_for_update().get(**owner_filter, channel_slug=channel)
 
     @staticmethod
     def _insert_lines(model: CartModel, lines: Sequence[CartLine]) -> None:

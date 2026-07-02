@@ -150,6 +150,16 @@ AUTH_COOKIE_HTTPONLY = True
 AUTH_COOKIE_SAMESITE = "Lax"
 AUTH_COOKIE_PATH = "/"
 
+# Guest (anonymous) session cookie. A shopper who has not signed in still needs a
+# stable, unforgeable owner for their cart/order; the backend mints an opaque
+# CSPRNG token into this HttpOnly cookie on their first cart write. It reuses the
+# same Secure/SameSite/Path posture as the auth cookies -- the token is the
+# credential, so it must never be readable by JS and must ride only same-site
+# navigations. Thirty days is long enough to survive a return visit without
+# becoming a de-facto permanent identifier.
+GUEST_COOKIE_NAME = "guest_session"
+GUEST_COOKIE_MAX_AGE = 60 * 60 * 24 * 30
+
 # --- CORS -------------------------------------------------------------------
 # The storefront is always a different origin than the API (different port in
 # local dev, different host in prod), so the browser makes cross-origin requests.

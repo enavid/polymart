@@ -66,9 +66,15 @@ def _seed_priced_variant(sku: str = "HB-250", amount: str = "120000.00") -> None
     )
 
 
-def _owner() -> str:
-    user = get_user_model().objects.create_user(phone_number="09120000001", password="pw")
-    return str(user.pk)
+def _owner(phone: str = "09120000001") -> str:
+    """Create a user and return their prefixed owner id (``u:<pk>``)."""
+    user = get_user_model().objects.create_user(phone_number=phone, password="pw")
+    return f"u:{user.pk}"
+
+
+def _user_pk(owner: str) -> int:
+    """The integer user pk behind a ``u:<pk>`` owner id, for direct ORM assertions."""
+    return int(owner.removeprefix("u:"))
 
 
 class TestCartRepository:
@@ -103,7 +109,7 @@ class TestCartRepository:
         repo.apply(owner, _CHANNEL, lambda c: c.set_item(Sku("HB-250"), CartQuantity(5)))
 
         assert CartModel.objects.count() == 1
-        assert CartLineModel.objects.filter(cart__owner_id=owner).count() == 1
+        assert CartLineModel.objects.filter(cart__owner_id=_user_pk(owner)).count() == 1
         assert repo.get(owner, _CHANNEL).lines[0].quantity == CartQuantity(5)
 
     def test_applying_twice_does_not_create_a_second_cart(self) -> None:
@@ -113,7 +119,9 @@ class TestCartRepository:
         repo.apply(owner, _CHANNEL, lambda c: c.add_item(Sku("HB-250"), CartQuantity(1)))
         repo.apply(owner, _CHANNEL, lambda c: c.add_item(Sku("HB-500"), CartQuantity(1)))
 
-        assert CartModel.objects.filter(owner_id=owner, channel_slug=_CHANNEL).count() == 1
+        assert (
+            CartModel.objects.filter(owner_id=_user_pk(owner), channel_slug=_CHANNEL).count() == 1
+        )
 
     def test_a_mutation_that_raises_writes_nothing(self) -> None:
         owner = _owner()
@@ -129,8 +137,7 @@ class TestCartRepository:
 
     def test_two_owners_keep_separate_carts(self) -> None:
         owner_a = _owner()
-        user_b = get_user_model().objects.create_user(phone_number="09120000002", password="pw")
-        owner_b = str(user_b.pk)
+        owner_b = _owner(phone="09120000002")
         repo = DjangoCartRepository()
         repo.apply(owner_a, _CHANNEL, lambda c: c.add_item(Sku("HB-250"), CartQuantity(1)))
 
@@ -141,9 +148,43 @@ class TestCartRepository:
         repo = DjangoCartRepository()
         repo.apply(owner, _CHANNEL, lambda c: c.add_item(Sku("HB-250"), CartQuantity(2)))
 
-        model = CartModel.objects.get(owner_id=owner)
-        assert str(model) == f"{owner}:{_CHANNEL}"
+        model = CartModel.objects.get(owner_id=_user_pk(owner))
+        assert str(model) == f"{_user_pk(owner)}:{_CHANNEL}"
         assert str(model.lines.first()) == f"{model.pk}:HB-250:2"
+
+
+class TestGuestCartRepository:
+    """A guest cart is keyed by an opaque session token instead of a user FK."""
+
+    def test_guest_cart_round_trips_through_the_token(self) -> None:
+        owner = "g:guest-token-abc"
+        repo = DjangoCartRepository()
+
+        repo.apply(owner, _CHANNEL, lambda c: c.add_item(Sku("HB-250"), CartQuantity(3)))
+        reloaded = repo.get(owner, _CHANNEL)
+
+        assert reloaded.owner == owner
+        assert [(line.sku.value, line.quantity.value) for line in reloaded.lines] == [
+            ("HB-250", 3)
+        ]
+        # Persisted as a guest row: no user FK, token stored.
+        model = CartModel.objects.get(guest_token="guest-token-abc")
+        assert model.owner_id is None
+        assert str(model) == f"guest-token-abc:{_CHANNEL}"
+
+    def test_a_guest_and_a_user_do_not_share_a_cart(self) -> None:
+        user_owner = _owner()
+        guest_owner = "g:some-guest"
+        repo = DjangoCartRepository()
+        repo.apply(user_owner, _CHANNEL, lambda c: c.add_item(Sku("HB-250"), CartQuantity(1)))
+
+        assert repo.get(guest_owner, _CHANNEL).lines == []
+
+    def test_two_guests_do_not_share_a_cart(self) -> None:
+        repo = DjangoCartRepository()
+        repo.apply("g:guest-one", _CHANNEL, lambda c: c.add_item(Sku("HB-250"), CartQuantity(1)))
+
+        assert repo.get("g:guest-two", _CHANNEL).lines == []
 
 
 class TestVariantPricingReader:
