@@ -13,53 +13,65 @@
  */
 
 /* ----- Layer 1: primitives ----------------------------------------------- */
+/* Warm "editorial" base: a cream canvas, warm neutrals, a deep espresso accent,
+ * and a soft gold. Hue stays in the warm 55-90 range so the whole system reads
+ * as one calm, premium family. Layer 3 repaints these per tenant/niche. */
 :root {
-  --primitive-white: oklch(1 0 0);
-  --primitive-black: oklch(0.141 0.005 285.823);
-  --primitive-neutral-50: oklch(0.985 0 0);
-  --primitive-neutral-100: oklch(0.967 0.001 286.375);
-  --primitive-neutral-200: oklch(0.92 0.004 286.32);
-  --primitive-neutral-400: oklch(0.705 0.015 286.067);
-  --primitive-neutral-500: oklch(0.552 0.016 285.938);
-  --primitive-neutral-700: oklch(0.37 0.013 285.805);
-  --primitive-neutral-900: oklch(0.21 0.006 285.885);
-  --primitive-brand-600: oklch(0.52 0.105 75.5); /* default coffee-brown accent */
-  --primitive-brand-700: oklch(0.43 0.095 70);
+  --primitive-white: oklch(1 0.003 85);
+  --primitive-cream-50: oklch(0.985 0.009 84); /* page canvas */
+  --primitive-cream-100: oklch(0.965 0.012 82); /* muted / subtle fills */
+  --primitive-warm-200: oklch(0.912 0.014 78); /* borders, hairlines */
+  --primitive-warm-400: oklch(0.66 0.02 60);
+  --primitive-warm-500: oklch(0.53 0.022 58); /* muted foreground */
+  --primitive-warm-800: oklch(0.32 0.025 55);
+  --primitive-warm-900: oklch(0.24 0.022 54); /* body text */
+  --primitive-espresso-600: oklch(0.44 0.082 52); /* primary accent */
+  --primitive-espresso-700: oklch(0.37 0.075 50);
+  --primitive-gold-300: oklch(0.86 0.09 82); /* hero / highlight gradient stop */
+  --primitive-gold-500: oklch(0.76 0.115 78);
   --primitive-danger-500: oklch(0.577 0.245 27.325);
 }
 
 /* ----- Layer 2: semantic (the contract the UI depends on) ---------------- */
 :root {
-  --radius: 0.625rem;
+  --radius: 0.75rem;
 
-  --background: var(--primitive-white);
-  --foreground: var(--primitive-neutral-900);
+  --background: var(--primitive-cream-50);
+  --foreground: var(--primitive-warm-900);
   --card: var(--primitive-white);
-  --card-foreground: var(--primitive-neutral-900);
+  --card-foreground: var(--primitive-warm-900);
   --popover: var(--primitive-white);
-  --popover-foreground: var(--primitive-neutral-900);
-  --primary: var(--primitive-brand-600);
-  --primary-foreground: var(--primitive-neutral-50);
-  --secondary: var(--primitive-neutral-100);
-  --secondary-foreground: var(--primitive-neutral-900);
-  --muted: var(--primitive-neutral-100);
-  --muted-foreground: var(--primitive-neutral-500);
-  --accent: var(--primitive-neutral-100);
-  --accent-foreground: var(--primitive-neutral-900);
+  --popover-foreground: var(--primitive-warm-900);
+  --primary: var(--primitive-espresso-600);
+  --primary-foreground: var(--primitive-cream-50);
+  --secondary: var(--primitive-cream-100);
+  --secondary-foreground: var(--primitive-warm-900);
+  --muted: var(--primitive-cream-100);
+  --muted-foreground: var(--primitive-warm-500);
+  --accent: var(--primitive-gold-300);
+  --accent-foreground: var(--primitive-warm-900);
   --destructive: var(--primitive-danger-500);
-  --destructive-foreground: var(--primitive-neutral-50);
-  --border: var(--primitive-neutral-200);
-  --input: var(--primitive-neutral-200);
-  --ring: var(--primitive-brand-600);
+  --destructive-foreground: var(--primitive-cream-50);
+  --border: var(--primitive-warm-200);
+  --input: var(--primitive-warm-200);
+  --ring: var(--primitive-espresso-600);
+
+  /* Warm hero/thumbnail gradient stops (Layer 3 may override for a tenant). */
+  --hero-from: var(--primitive-espresso-700);
+  --hero-to: var(--primitive-gold-500);
 }
 
 /* ----- Layer 3: brand/niche override hook -------------------------------- */
 /* Example re-skin: `<html data-theme="cosmetics">` repaints the whole storefront
  * by redefining Layer 2 tokens only. Phase 8 turns this into full theme delivery. */
 [data-theme="cosmetics"] {
+  --background: oklch(0.99 0.006 350);
   --primary: oklch(0.62 0.18 12);
   --primary-foreground: var(--primitive-white);
+  --accent: oklch(0.9 0.05 350);
   --ring: oklch(0.62 0.18 12);
+  --hero-from: oklch(0.55 0.19 12);
+  --hero-to: oklch(0.78 0.13 350);
 }
 
 /* ----- Tailwind theme mapping -------------------------------------------- */

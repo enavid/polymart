@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { useTranslations } from "next-intl";
 
+import { ProductThumb } from "@/components/storefront/product-thumb";
 import { Alert } from "@/components/ui/alert";
 import {
   Card,
@@ -44,11 +45,16 @@ export function StorefrontProductDetail({ code }: { code: string }) {
 
       {product ? (
         <div className="flex flex-col gap-6">
-          <div className="flex flex-col gap-1">
-            <h1 className="text-xl font-semibold">{product.name}</h1>
-            <span className="text-sm text-muted-foreground">
-              {product.product_type}
-            </span>
+          <div className="grid gap-6 md:grid-cols-2 md:items-center">
+            <Card className="overflow-hidden">
+              <ProductThumb name={product.name} />
+            </Card>
+            <div className="flex flex-col gap-2">
+              <h1 className="text-3xl font-bold tracking-tight">{product.name}</h1>
+              <span className="text-sm text-muted-foreground">
+                {product.product_type}
+              </span>
+            </div>
           </div>
 
           {product.values.length > 0 ? (

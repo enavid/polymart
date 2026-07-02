@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useTranslations } from "next-intl";
 import { useState } from "react";
 
+import { ProductThumb } from "@/components/storefront/product-thumb";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -157,13 +158,17 @@ export function StorefrontProductList() {
           {results.length === 0 ? (
             <p className="text-muted-foreground">{t("empty")}</p>
           ) : (
-            <div className="grid gap-4 md:grid-cols-3">
+            <div className="grid gap-6 sm:grid-cols-2 md:grid-cols-3">
               {results.map((product) => (
-                <Card key={product.code}>
-                  <CardHeader>
-                    <CardTitle>{product.name}</CardTitle>
+                <Card
+                  key={product.code}
+                  className="overflow-hidden transition duration-200 hover:-translate-y-0.5 hover:shadow-md"
+                >
+                  <ProductThumb name={product.name} />
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-base">{product.name}</CardTitle>
                   </CardHeader>
-                  <CardContent className="flex flex-col gap-2">
+                  <CardContent className="flex flex-col gap-2 pb-6">
                     <span className="text-sm text-muted-foreground">
                       {product.code}
                     </span>

@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { useTranslations } from "next-intl";
 
+import { ProductThumb } from "@/components/storefront/product-thumb";
 import { buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { listStorefrontProducts } from "@/lib/api/catalog";
@@ -24,30 +25,43 @@ export function HomeLanding() {
   const products = query.data?.results ?? [];
 
   return (
-    <div className="flex flex-col gap-10">
-      <section className="flex flex-col items-start gap-4 rounded-lg border border-border bg-accent/40 px-6 py-12">
-        <h1 className="text-3xl font-bold">{t("heroTitle")}</h1>
-        <p className="text-muted-foreground">{t("heroSubtitle")}</p>
-        <Link href="/products" className={buttonVariants()}>
-          {t("shopCta")}
-        </Link>
+    <div className="flex flex-col gap-14">
+      <section className="grid items-stretch gap-6 overflow-hidden rounded-2xl border border-border bg-card shadow-sm md:grid-cols-2">
+        <div className="flex flex-col items-start justify-center gap-5 px-8 py-12 md:px-10">
+          <h1 className="text-4xl font-bold leading-tight tracking-tight md:text-5xl">
+            {t("heroTitle")}
+          </h1>
+          <p className="max-w-prose text-lg text-muted-foreground">{t("heroSubtitle")}</p>
+          <Link href="/products" className={buttonVariants({ size: "lg" })}>
+            {t("shopCta")}
+          </Link>
+        </div>
+        {/* Warm branded visual panel; decorative, so it stays out of the a11y tree. */}
+        <div
+          aria-hidden
+          className="hidden min-h-56 bg-[image:linear-gradient(135deg,var(--hero-from),var(--hero-to))] md:block"
+        />
       </section>
 
-      <section className="flex flex-col gap-4">
-        <h2 className="text-xl font-semibold">{t("featuredTitle")}</h2>
+      <section className="flex flex-col gap-6">
+        <h2 className="text-2xl font-semibold tracking-tight">{t("featuredTitle")}</h2>
 
         {query.data && products.length === 0 ? (
           <p className="text-muted-foreground">{t("featuredEmpty")}</p>
         ) : null}
 
         {products.length > 0 ? (
-          <div className="grid gap-4 md:grid-cols-3">
+          <div className="grid gap-6 sm:grid-cols-2 md:grid-cols-3">
             {products.map((product) => (
-              <Card key={product.code}>
-                <CardHeader>
-                  <CardTitle>{product.name}</CardTitle>
+              <Card
+                key={product.code}
+                className="overflow-hidden transition duration-200 hover:-translate-y-0.5 hover:shadow-md"
+              >
+                <ProductThumb name={product.name} />
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-base">{product.name}</CardTitle>
                 </CardHeader>
-                <CardContent className="flex flex-col gap-2">
+                <CardContent className="flex flex-col gap-2 pb-6">
                   <span className="text-sm text-muted-foreground">{product.code}</span>
                   <Link
                     href={`/products/${product.code}`}

@@ -14,9 +14,9 @@ export function SiteHeader() {
   const logout = useLogout();
 
   return (
-    <header className="border-b border-border">
+    <header className="sticky top-0 z-20 border-b border-border bg-background/80 backdrop-blur">
       <div className="mx-auto flex w-full max-w-5xl items-center justify-between px-4 py-3">
-        <Link href="/" className="text-lg font-semibold">
+        <Link href="/" className="text-lg font-bold tracking-tight text-primary">
           {tCommon("appName")}
         </Link>
         <nav className="flex items-center gap-2 text-sm">
