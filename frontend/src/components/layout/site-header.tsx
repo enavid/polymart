@@ -33,6 +33,9 @@ export function SiteHeader() {
               <Link href="/orders" className="px-2 hover:underline">
                 {t("orders")}
               </Link>
+              <Link href="/addresses" className="px-2 hover:underline">
+                {t("addresses")}
+              </Link>
               <Link href="/account" className="px-2 hover:underline">
                 {t("account")}
               </Link>

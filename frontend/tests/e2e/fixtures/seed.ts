@@ -51,6 +51,18 @@ export const PRODUCTS = {
 
 export const PUBLISHED_PRODUCT_COUNT = 3;
 
+/** A valid address the address-book spec can save without editing anything. */
+export const ADDRESS = {
+  recipientName: "Sara Ahmadi",
+  phoneNumber: "09123456789",
+  province: "Tehran",
+  city: "Tehran",
+  postalCode: "1234567890",
+  line1: "Valiasr St, No. 1",
+};
+
+export const ADDRESS_LIMIT = 20;
+
 /** A variant that is priced only in another channel, so it is unavailable here. */
 export const UNAVAILABLE_VARIANT = { sku: "HB-1000", productCode: "house-blend" };
 

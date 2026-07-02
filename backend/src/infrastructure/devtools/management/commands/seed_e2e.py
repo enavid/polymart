@@ -49,6 +49,7 @@ from src.domain.catalog.value_objects import (
 from src.domain.channel.entities import Channel
 from src.domain.channel.value_objects import ChannelSlug, Currency
 from src.domain.identity.value_objects import PhoneNumber
+from src.infrastructure.address.models import AddressModel
 from src.infrastructure.cart.models import CartModel
 from src.infrastructure.catalog.models import (
     CategoryModel,
@@ -193,12 +194,14 @@ class Command(BaseCommand):
         for role in (CATALOG_ADMIN_ROLE, ACCESS_ADMIN_ROLE, CHANNEL_ADMIN_ROLE):
             build_assign_role().execute(user_id=staff.pk, role_name=role)
 
-        # Start every E2E run from an empty shopper cart and no prior orders, so the
-        # cart and checkout specs assert against a known state regardless of what a
-        # previous run left behind. Stock is re-set to the fixture values below in
-        # _seed_products, so deleting orders (which never restores stock) is safe.
+        # Start every E2E run from an empty shopper cart, no prior orders, and an
+        # empty address book, so the cart/checkout/address specs assert against a
+        # known state regardless of what a previous run left behind. Stock is
+        # re-set to the fixture values below in _seed_products, so deleting orders
+        # (which never restores stock) is safe.
         CartModel.objects.filter(owner_id=shopper.pk).delete()
         OrderModel.objects.filter(owner_id=shopper.pk).delete()
+        AddressModel.objects.filter(owner_id=shopper.pk).delete()
 
     @staticmethod
     def _ensure_user(phone: str, password: str, full_name: str) -> tuple[User, bool]:

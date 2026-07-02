@@ -163,10 +163,11 @@ access/channel/audit admin area). Phase 2 (catalog core) is complete on the
 backend and now surfaced in the UI: a public storefront (PLP/PDP) plus a full
 catalog admin area (attributes, product types, products, variants, prices, stock,
 categories, collections, rules, CSV import/export).
-Phase 3 (cart → checkout → order) has started: the first slice — the persistent,
-per-channel cart with dynamic pricing (add/update/remove, IDOR-safe, money-exact)
-and the storefront variant/price read it needs — is complete on the backend and in
-the UI (PDP add-to-cart + `/cart`). Checkout and order creation are the next slices.
-A full-stack Playwright E2E harness (`make e2e-full`) now drives every UI route
-against the real backend on a seeded dataset. Next: see
-[`docs/03-roadmap.md`](docs/03-roadmap.md).
+Phase 3 (cart → checkout → order) is well underway: the persistent, per-channel cart
+with dynamic pricing, the storefront variant/price read, checkout (Unit of Work +
+order aggregate + state machine), and an address book are all complete on the backend
+and in the UI (PDP add-to-cart, `/cart`, order confirmation/detail/history + cancel,
+`/addresses`). Guest checkout, manual/pre-invoice orders, and wiring the address book
+into a multi-step checkout remain. A full-stack Playwright E2E harness
+(`make e2e-full`) now drives every UI route against the real backend on a seeded
+dataset. Next: see [`docs/03-roadmap.md`](docs/03-roadmap.md).
