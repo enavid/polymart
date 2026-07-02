@@ -112,6 +112,9 @@ class _Product:
     code: str
     name: str
     variants: tuple[_Variant, ...]
+    # Free-form metadata rendered on the storefront PDP (so the detail page has
+    # real content, not just a variant list).
+    description: str = ""
 
 
 # A published catalog with enough shape to exercise the storefront: multiple
@@ -120,6 +123,7 @@ PRODUCTS: tuple[_Product, ...] = (
     _Product(
         code="house-blend",
         name="House Blend",
+        description="A balanced, everyday medium roast with notes of cocoa and citrus.",
         variants=(
             _Variant(sku="HB-250", name="250g", price="120000.00", stock=30),
             _Variant(sku="HB-500", name="500g", price="200000.00", stock=10),
@@ -137,11 +141,13 @@ PRODUCTS: tuple[_Product, ...] = (
     _Product(
         code="dark-roast",
         name="Dark Roast",
+        description="A bold, full-bodied dark roast with a smoky finish.",
         variants=(_Variant(sku="DR-250", name="250g", price="150000.00", stock=5),),
     ),
     _Product(
         code="light-roast",
         name="Light Roast",
+        description="A bright, delicate light roast with floral aromatics.",
         # Deliberately out of stock, to exercise the empty/zero-stock UI path.
         variants=(_Variant(sku="LR-250", name="250g", price="100000.00", stock=0),),
     ),
@@ -262,6 +268,11 @@ class Command(BaseCommand):
                         product_type=ProductTypeCode(PRODUCT_TYPE_CODE),
                     )
                 )
+            # Idempotently ensure the storefront description (metadata) even when
+            # the product already exists from an earlier seed run.
+            ProductModel.objects.filter(code=product.code).update(
+                metadata={"description": product.description}
+            )
             for variant in product.variants:
                 if not ProductVariantModel.objects.filter(sku=variant.sku).exists():
                     variants.add(

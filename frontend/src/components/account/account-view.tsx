@@ -12,11 +12,22 @@ import {
 } from "@/components/ui/card";
 import { useCurrentUser, useLogout } from "@/lib/hooks/use-auth";
 
-function Row({ label, value }: { label: string; value: string }) {
+function Row({
+  label,
+  value,
+  dir,
+}: {
+  label: string;
+  value: string;
+  // Inherently-LTR values (phone, email) keep source order inside the RTL layout.
+  dir?: "ltr";
+}) {
   return (
     <div className="flex justify-between gap-4 border-b border-border py-2 last:border-0">
       <span className="text-muted-foreground">{label}</span>
-      <span className="font-medium">{value}</span>
+      <span className="font-medium" dir={dir}>
+        {value}
+      </span>
     </div>
   );
 }
@@ -52,9 +63,13 @@ export function AccountView() {
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
         <div>
-          <Row label={t("phoneLabel")} value={user.phone_number} />
+          <Row label={t("phoneLabel")} value={user.phone_number} dir="ltr" />
           <Row label={t("nameLabel")} value={user.full_name || "—"} />
-          <Row label={t("emailLabel")} value={user.email || "—"} />
+          <Row
+            label={t("emailLabel")}
+            value={user.email || "—"}
+            dir={user.email ? "ltr" : undefined}
+          />
           <Row
             label={t("staffLabel")}
             value={user.is_staff ? t("yes") : t("no")}

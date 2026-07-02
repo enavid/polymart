@@ -22,6 +22,7 @@ from src.domain.catalog.entities import (
 from src.domain.catalog.value_objects import (
     CategorySlug,
     ChannelPrice,
+    Money,
     ProductCode,
     RuleCondition,
     StockQuantity,
@@ -369,6 +370,21 @@ class ProductPage:
     total: int
 
 
+@dataclass(frozen=True)
+class PriceSummary:
+    """A product's storefront pricing summary in one channel.
+
+    ``from_price`` is the lowest per-channel base price across the product's
+    variants in the channel (a "starting at" price), or ``None`` when no variant is
+    priced there. ``available`` is true when at least one variant is both priced in
+    the channel and has stock on hand -- so an out-of-stock or unpriced product can
+    be shown but flagged, never silently offered.
+    """
+
+    from_price: Money | None
+    available: bool
+
+
 class ProductQueryRepository(ABC):
     """Read-optimised boundary for storefront product browsing (a query side).
 
@@ -383,6 +399,13 @@ class ProductQueryRepository(ABC):
     def search(self, *, filters: ProductFilters, limit: int, offset: int) -> ProductPage:
         """Return the products matching ``filters``, ordered by code, windowed by
         ``offset``/``limit``, together with the total match count."""
+
+    @abstractmethod
+    def price_summaries(self, *, codes: Sequence[str], channel: str) -> dict[str, PriceSummary]:
+        """Return the per-channel pricing summary for each of ``codes``.
+
+        Keyed by product code. A code with no variant priced in the channel maps to
+        a summary with ``from_price=None`` and ``available=False``."""
 
     @abstractmethod
     def get_published_by_code(self, code: str) -> Product:

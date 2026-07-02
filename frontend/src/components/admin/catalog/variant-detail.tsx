@@ -32,6 +32,7 @@ import {
   type Variant,
 } from "@/lib/api/catalog";
 import { ApiError } from "@/lib/api/client";
+import { formatMoneyString } from "@/lib/format";
 
 interface PriceRow {
   channel: string;
@@ -164,15 +165,15 @@ function PricesCard({ sku }: { sku: string }) {
                 <TableRow>
                   <TableHead>{t("variantDetail.channel")}</TableHead>
                   <TableHead>{t("variantDetail.amount")}</TableHead>
-                  <TableHead>{t("variantDetail.currency")}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {query.data.map((price) => (
                   <TableRow key={price.channel}>
                     <TableCell className="font-medium">{price.channel}</TableCell>
-                    <TableCell>{price.amount}</TableCell>
-                    <TableCell>{price.currency}</TableCell>
+                    {/* Displayed as formatted currency; the raw Decimal string stays
+                        the source of truth in the edit form below. */}
+                    <TableCell>{formatMoneyString(price.amount, price.currency)}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>

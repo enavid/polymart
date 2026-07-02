@@ -18,6 +18,7 @@ from src.application.catalog.use_cases import (
     SearchCatalogProductsQuery,
     SetProductPublished,
     SetProductPublishedCommand,
+    SummariseStorefrontPrices,
 )
 from src.domain.audit.entities import FieldChange
 from src.domain.catalog.entities import Product
@@ -76,6 +77,8 @@ class FakeProductQueryRepository(ProductQueryRepository):
         self.last_filters: ProductFilters | None = None
         self.last_limit: int | None = None
         self.last_offset: int | None = None
+        self.summaries_result: dict[str, object] = {}
+        self.last_summary_call: tuple[tuple[str, ...], str] | None = None
 
     def search(
         self, *, filters: ProductFilters, limit: int, offset: int
@@ -91,6 +94,10 @@ class FakeProductQueryRepository(ProductQueryRepository):
             if product.code.value == code and product.is_published:
                 return product
         raise ProductNotFoundError(code)
+
+    def price_summaries(self, *, codes, channel):
+        self.last_summary_call = (tuple(codes), channel)
+        return self.summaries_result
 
 
 class RecordingAudit(AuditRecorder):
@@ -262,3 +269,24 @@ class TestSetProductPublished:
             )
 
         assert audit.records == []
+
+
+class TestSummariseStorefrontPrices:
+    def test_returns_empty_without_calling_the_repo_for_no_codes(self) -> None:
+        repo = FakeProductQueryRepository([])
+
+        result = SummariseStorefrontPrices(repo).execute(codes=[], channel="ir-main")
+
+        assert result == {}
+        assert repo.last_summary_call is None
+
+    def test_delegates_codes_and_channel_to_the_repo(self) -> None:
+        repo = FakeProductQueryRepository([])
+        repo.summaries_result = {"house-blend": object()}
+
+        result = SummariseStorefrontPrices(repo).execute(
+            codes=["house-blend"], channel="ir-main"
+        )
+
+        assert result == repo.summaries_result
+        assert repo.last_summary_call == (("house-blend",), "ir-main")

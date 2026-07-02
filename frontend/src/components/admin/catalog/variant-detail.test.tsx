@@ -5,6 +5,7 @@ import { setupServer } from "msw/node";
 import { http, HttpResponse } from "msw";
 
 import { VariantDetail } from "@/components/admin/catalog/variant-detail";
+import { formatMoneyString } from "@/lib/format";
 import messages from "@/i18n/messages/fa.json";
 import { renderWithProviders } from "@/test/utils";
 
@@ -36,6 +37,27 @@ describe("VariantDetail", () => {
 
     expect((await screen.findAllByText("250g")).length).toBeGreaterThan(0);
     expect(await screen.findByText("5")).toBeInTheDocument();
+  });
+
+  it("formats existing prices as currency, not the raw decimal string", async () => {
+    server.use(
+      http.get("*/catalog/variants/HB-001/", () => HttpResponse.json(variant)),
+      http.get("*/catalog/variants/HB-001/prices/", () =>
+        HttpResponse.json({
+          prices: [{ channel: "ir-main", amount: "120000.0000", currency: "IRR" }],
+        }),
+      ),
+      http.get("*/catalog/variants/HB-001/stock/", () => HttpResponse.json({ quantity: 5 })),
+    );
+
+    renderWithProviders(<VariantDetail sku="HB-001" />);
+
+    // The read-only prices table shows a formatted money value (Persian digits,
+    // channel currency), never the raw four-decimal Decimal string.
+    const cell = await screen.findByText(/ریال/);
+    expect(cell.textContent).toBe(formatMoneyString("120000.0000", "IRR"));
+    expect(cell.textContent).toContain("۱۲۰"); // Persian digits, not "120000.0000"
+    expect(screen.queryByText("120000.0000")).not.toBeInTheDocument();
   });
 
   it("sets the stock quantity", async () => {

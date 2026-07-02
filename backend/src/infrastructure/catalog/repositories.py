@@ -6,7 +6,7 @@ from collections.abc import Sequence
 
 import structlog
 from django.db import IntegrityError, transaction
-from django.db.models import Q, QuerySet
+from django.db.models import Min, Q, QuerySet
 
 from src.application.catalog.ports import (
     AttributeRepository,
@@ -16,6 +16,7 @@ from src.application.catalog.ports import (
     CollectionProductRepository,
     CollectionRepository,
     CollectionRuleRepository,
+    PriceSummary,
     ProductCategoryRepository,
     ProductFilters,
     ProductImportItem,
@@ -332,6 +333,38 @@ class DjangoProductQueryRepository(ProductQueryRepository):
         )
         items = tuple(product_to_domain(model) for model in window)
         return ProductPage(items=items, total=total)
+
+    def price_summaries(self, *, codes: Sequence[str], channel: str) -> dict[str, PriceSummary]:
+        if not codes:
+            return {}
+        # Lowest in-channel base price per product (its "from" price). All prices in
+        # one channel share a currency, so grouping by currency yields one row/code.
+        priced = (
+            VariantPriceModel.objects.filter(channel_slug=channel, variant__product__code__in=codes)
+            .values("variant__product__code", "currency_code")
+            .annotate(from_amount=Min("amount"))
+        )
+        from_by_code = {
+            row["variant__product__code"]: Money(
+                amount=row["from_amount"], currency=row["currency_code"]
+            )
+            for row in priced
+        }
+        # Buyable = some variant is priced in this channel AND has stock on hand.
+        available_codes = set(
+            ProductVariantModel.objects.filter(
+                product__code__in=codes,
+                prices__channel_slug=channel,
+                stock__quantity__gt=0,
+            ).values_list("product__code", flat=True)
+        )
+        return {
+            code: PriceSummary(
+                from_price=from_by_code.get(code),
+                available=code in available_codes,
+            )
+            for code in codes
+        }
 
     @staticmethod
     def _apply_filters(

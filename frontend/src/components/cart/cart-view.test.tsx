@@ -5,15 +5,20 @@ import { setupServer } from "msw/node";
 import { http, HttpResponse } from "msw";
 
 import { CartView } from "@/components/cart/cart-view";
+import { markSignedIn } from "@/lib/auth/session-hint";
 import messages from "@/i18n/messages/fa.json";
 import { renderWithProviders } from "@/test/utils";
 
 const server = setupServer();
 beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
-afterEach(() => server.resetHandlers());
+afterEach(() => {
+  server.resetHandlers();
+  window.localStorage.clear();
+});
 afterAll(() => server.close());
 
 function authed() {
+  markSignedIn();
   server.use(
     http.get("*/auth/me/", () =>
       HttpResponse.json({

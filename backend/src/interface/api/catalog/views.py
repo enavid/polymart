@@ -20,7 +20,7 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from src.application.catalog.ports import ProductPage
+from src.application.catalog.ports import PriceSummary, ProductPage
 from src.application.catalog.use_cases import (
     AdjustVariantStockCommand,
     AttributeChoiceInput,
@@ -112,6 +112,7 @@ from src.interface.api.catalog.container import (
     build_set_product_published,
     build_set_variant_prices,
     build_set_variant_stock,
+    build_summarise_storefront_prices,
 )
 from src.interface.api.catalog.csv_io import CsvFormatError, decode_products, encode_products
 from src.interface.api.catalog.serializers import (
@@ -136,9 +137,12 @@ from src.interface.api.catalog.serializers import (
     SetProductPublishedSerializer,
     SetVariantPricesSerializer,
     SetVariantStockSerializer,
+    StorefrontCategorySerializer,
+    StorefrontCollectionSerializer,
     StorefrontProductPageSerializer,
     StorefrontProductQuerySerializer,
     StorefrontProductSerializer,
+    StorefrontProductTypeSerializer,
     StorefrontProductVariantsSerializer,
     StorefrontVariantsQuerySerializer,
     VariantPricesSerializer,
@@ -894,13 +898,18 @@ class VariantStockView(APIView):
         return Response(_variant_stock_payload(quantity))
 
 
-def _storefront_product_payload(product: Product) -> dict[str, object]:
+def _storefront_product_payload(
+    product: Product, summary: PriceSummary | None = None
+) -> dict[str, object]:
     """Project a published product for the public storefront.
 
     Deliberately omits the internal ``id`` (the public key is the ``code``) so the
-    sequential database id is never exposed to anonymous callers.
+    sequential database id is never exposed to anonymous callers. When a viewing
+    channel was supplied, the pricing summary (a "from" price + availability) is
+    attached so the PLP can show a price and an out-of-stock flag; the amount is a
+    string so the exact Decimal survives JSON.
     """
-    return {
+    payload: dict[str, object] = {
         "code": product.code.value,
         "name": product.name,
         "product_type": product.product_type.value,
@@ -909,15 +918,32 @@ def _storefront_product_payload(product: Product) -> dict[str, object]:
         ],
         "metadata": dict(product.metadata),
     }
+    if summary is not None:
+        from_price = summary.from_price
+        payload["from_price"] = None if from_price is None else str(from_price.amount)
+        payload["currency"] = None if from_price is None else from_price.currency
+        payload["available"] = summary.available
+    return payload
 
 
-def _storefront_page_payload(page: ProductPage, *, limit: int, offset: int) -> dict[str, object]:
+def _storefront_page_payload(
+    page: ProductPage,
+    *,
+    limit: int,
+    offset: int,
+    summaries: dict[str, PriceSummary] | None = None,
+) -> dict[str, object]:
     """Project a page of storefront products to the response body."""
     return {
         "count": page.total,
         "limit": limit,
         "offset": offset,
-        "results": [_storefront_product_payload(product) for product in page.items],
+        "results": [
+            _storefront_product_payload(
+                product, None if summaries is None else summaries.get(product.code.value)
+            )
+            for product in page.items
+        ],
     }
 
 
@@ -946,7 +972,21 @@ class StorefrontProductListView(APIView):
         except CatalogError as exc:
             # An out-of-range limit/offset surfaced from the domain.
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
-        return Response(_storefront_page_payload(page, limit=query.limit, offset=query.offset))
+        # When a viewing channel is given, enrich each item with its "from" price
+        # and availability so the PLP can show pricing without an extra round-trip.
+        channel = data.get("channel")
+        summaries = (
+            build_summarise_storefront_prices().execute(
+                codes=[product.code.value for product in page.items], channel=channel
+            )
+            if channel
+            else None
+        )
+        return Response(
+            _storefront_page_payload(
+                page, limit=query.limit, offset=query.offset, summaries=summaries
+            )
+        )
 
 
 def _window_kwargs(data: dict[str, object]) -> dict[str, int]:
@@ -1033,6 +1073,50 @@ class StorefrontProductVariantsView(APIView):
         return Response(
             {"channel": channel, "variants": [_storefront_variant_payload(v) for v in variants]}
         )
+
+
+class StorefrontCategoryListView(APIView):
+    """Public list of categories, for the storefront's filter chooser."""
+
+    permission_classes: ClassVar = [AllowAny]
+
+    @extend_schema(responses=StorefrontCategorySerializer(many=True))
+    def get(self, request: Request) -> Response:
+        categories = build_list_categories().execute()
+        return Response(
+            [
+                {
+                    "slug": category.slug.value,
+                    "name": category.name,
+                    "parent": category.parent.value if category.parent is not None else None,
+                }
+                for category in categories
+            ]
+        )
+
+
+class StorefrontCollectionListView(APIView):
+    """Public list of collections, for the storefront's filter chooser."""
+
+    permission_classes: ClassVar = [AllowAny]
+
+    @extend_schema(responses=StorefrontCollectionSerializer(many=True))
+    def get(self, request: Request) -> Response:
+        collections = build_list_collections().execute()
+        return Response(
+            [{"slug": collection.slug.value, "name": collection.name} for collection in collections]
+        )
+
+
+class StorefrontProductTypeListView(APIView):
+    """Public list of product types, for the storefront's filter chooser."""
+
+    permission_classes: ClassVar = [AllowAny]
+
+    @extend_schema(responses=StorefrontProductTypeSerializer(many=True))
+    def get(self, request: Request) -> Response:
+        product_types = build_list_product_types().execute()
+        return Response([{"code": pt.code.value, "name": pt.name} for pt in product_types])
 
 
 class ProductExportView(APIView):

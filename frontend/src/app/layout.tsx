@@ -8,6 +8,7 @@ import { NextIntlClientProvider } from "next-intl";
 import { getLocale, getMessages } from "next-intl/server";
 import type { ReactNode } from "react";
 
+import { SiteFooter } from "@/components/layout/site-footer";
 import { SiteHeader } from "@/components/layout/site-header";
 import { Providers } from "@/app/providers";
 
@@ -27,11 +28,12 @@ export default async function RootLayout({
 
   return (
     <html lang={locale} dir="rtl">
-      <body className="min-h-screen bg-background text-foreground antialiased">
+      <body className="flex min-h-screen flex-col bg-background text-foreground antialiased">
         <NextIntlClientProvider locale={locale} messages={messages}>
           <Providers>
             <SiteHeader />
-            <main className="mx-auto w-full max-w-5xl px-4 py-8">{children}</main>
+            <main className="mx-auto w-full max-w-5xl flex-1 px-4 py-8">{children}</main>
+            <SiteFooter />
           </Providers>
         </NextIntlClientProvider>
       </body>

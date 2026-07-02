@@ -17,6 +17,7 @@ import {
 import { FormField } from "@/components/ui/form-field";
 import { register } from "@/lib/api/auth";
 import { ApiError } from "@/lib/api/client";
+import { markSignedIn } from "@/lib/auth/session-hint";
 
 export function RegisterForm() {
   const t = useTranslations("auth");
@@ -36,6 +37,9 @@ export function RegisterForm() {
         full_name: fullName,
         email,
       }),
+    // Registration signs the user in (sets the auth cookie), so record the hint
+    // that a session exists for the next page they navigate to.
+    onSuccess: () => markSignedIn(),
   });
 
   function onSubmit(event: FormEvent<HTMLFormElement>) {

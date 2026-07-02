@@ -29,6 +29,7 @@ export const PRODUCTS = {
   houseBlend: {
     code: "house-blend",
     name: "House Blend",
+    description: "A balanced, everyday medium roast with notes of cocoa and citrus.",
     variants: [
       { sku: "HB-250", name: "250g", price: "120000.0000" as string | null },
       { sku: "HB-500", name: "500g", price: "200000.0000" as string | null },

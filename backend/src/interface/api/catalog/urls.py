@@ -23,8 +23,11 @@ from src.interface.api.catalog.views import (
     ProductTypeDetailView,
     ProductTypeListCreateView,
     ProductVariantListCreateView,
+    StorefrontCategoryListView,
+    StorefrontCollectionListView,
     StorefrontProductDetailView,
     StorefrontProductListView,
+    StorefrontProductTypeListView,
     StorefrontProductVariantsView,
     VariantDetailView,
     VariantPricesView,
@@ -63,6 +66,21 @@ urlpatterns = [
         "catalog/storefront/products/",
         StorefrontProductListView.as_view(),
         name="storefront-product-list",
+    ),
+    path(
+        "catalog/storefront/categories/",
+        StorefrontCategoryListView.as_view(),
+        name="storefront-category-list",
+    ),
+    path(
+        "catalog/storefront/collections/",
+        StorefrontCollectionListView.as_view(),
+        name="storefront-collection-list",
+    ),
+    path(
+        "catalog/storefront/product-types/",
+        StorefrontProductTypeListView.as_view(),
+        name="storefront-product-type-list",
     ),
     path(
         "catalog/storefront/products/<slug:code>/variants/",

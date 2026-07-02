@@ -22,10 +22,13 @@ export function SendCodeButton({ phoneNumber, purpose }: SendCodeButtonProps) {
   });
 
   return (
-    <div className="flex flex-col gap-2">
+    // `items-start` keeps the button its natural width (a flex column would
+    // otherwise stretch it to look like a disabled input field).
+    <div className="flex flex-col items-start gap-2">
       <Button
         type="button"
         variant="outline"
+        size="sm"
         onClick={() => mutation.mutate()}
         disabled={phoneNumber.length === 0 || mutation.isPending}
       >

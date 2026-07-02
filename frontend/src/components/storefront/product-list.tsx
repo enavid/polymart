@@ -14,8 +14,17 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { FormField } from "@/components/ui/form-field";
-import { listStorefrontProducts } from "@/lib/api/catalog";
+import { Label } from "@/components/ui/label";
+import {
+  listStorefrontCategories,
+  listStorefrontCollections,
+  listStorefrontProducts,
+  listStorefrontProductTypes,
+  type StorefrontProduct,
+} from "@/lib/api/catalog";
 import { ApiError } from "@/lib/api/client";
+import { formatMoneyString } from "@/lib/format";
+import { STOREFRONT_CHANNEL } from "@/lib/storefront/channel";
 
 const limit = 12;
 
@@ -47,7 +56,22 @@ export function StorefrontProductList() {
 
   const query = useQuery({
     queryKey: ["storefront-products", applied],
-    queryFn: () => listStorefrontProducts({ ...applied, limit }),
+    queryFn: () =>
+      listStorefrontProducts({ ...applied, channel: STOREFRONT_CHANNEL, limit }),
+  });
+
+  // Filter choosers, populated from the public storefront taxonomy endpoints.
+  const categories = useQuery({
+    queryKey: ["storefront-categories"],
+    queryFn: listStorefrontCategories,
+  });
+  const collections = useQuery({
+    queryKey: ["storefront-collections"],
+    queryFn: listStorefrontCollections,
+  });
+  const productTypes = useQuery({
+    queryKey: ["storefront-product-types"],
+    queryFn: listStorefrontProductTypes,
   });
 
   function onSearch() {
@@ -83,23 +107,29 @@ export function StorefrontProductList() {
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
-        <FormField
+        <FilterSelect
           id="storefront_category"
           label={t("filterCategory")}
+          allLabel={t("filterAll")}
           value={category}
-          onChange={(e) => setCategory(e.target.value)}
+          onChange={setCategory}
+          options={(categories.data ?? []).map((c) => ({ value: c.slug, label: c.name }))}
         />
-        <FormField
+        <FilterSelect
           id="storefront_collection"
           label={t("filterCollection")}
+          allLabel={t("filterAll")}
           value={collection}
-          onChange={(e) => setCollection(e.target.value)}
+          onChange={setCollection}
+          options={(collections.data ?? []).map((c) => ({ value: c.slug, label: c.name }))}
         />
-        <FormField
+        <FilterSelect
           id="storefront_product_type"
           label={t("filterProductType")}
+          allLabel={t("filterAll")}
           value={productType}
-          onChange={(e) => setProductType(e.target.value)}
+          onChange={setProductType}
+          options={(productTypes.data ?? []).map((p) => ({ value: p.code, label: p.name }))}
         />
         <div className="md:col-span-4">
           <Button type="button" onClick={onSearch}>
@@ -137,6 +167,7 @@ export function StorefrontProductList() {
                     <span className="text-sm text-muted-foreground">
                       {product.code}
                     </span>
+                    <ProductCardPrice product={product} />
                     <Link
                       href={`/products/${product.code}`}
                       className="text-sm font-medium text-primary hover:underline"
@@ -169,6 +200,59 @@ export function StorefrontProductList() {
           </div>
         </>
       ) : null}
+    </div>
+  );
+}
+
+/** The "from" price + availability badge on a PLP card, for the active channel. */
+function ProductCardPrice({ product }: { product: StorefrontProduct }) {
+  const t = useTranslations("storefront");
+  // Pricing fields are present because the list is requested with a channel.
+  const price =
+    product.from_price != null && product.currency != null
+      ? t("priceFrom", { price: formatMoneyString(product.from_price, product.currency) })
+      : t("noPrice");
+
+  return (
+    <div className="flex items-center justify-between gap-2">
+      <span className="text-sm font-medium">{price}</span>
+      {product.available === false ? (
+        <span className="rounded bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+          {t("outOfStock")}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+interface FilterSelectProps {
+  id: string;
+  label: string;
+  allLabel: string;
+  value: string;
+  onChange: (value: string) => void;
+  options: { value: string; label: string }[];
+}
+
+/** A labelled dropdown for a storefront filter; the empty value means "all". */
+function FilterSelect({ id, label, allLabel, value, onChange, options }: FilterSelectProps) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <Label htmlFor={id}>{label}</Label>
+      <select
+        id={id}
+        name={id}
+        className="h-10 rounded-md border border-input bg-background px-3 text-sm"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+      >
+        <option value="">{allLabel}</option>
+        {options.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
     </div>
   );
 }

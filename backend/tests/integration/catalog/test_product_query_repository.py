@@ -2,16 +2,28 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
+
 import pytest
 
 from src.application.catalog.ports import ProductFilters
-from src.domain.catalog.entities import Category, Collection, Product, ProductType
+from src.domain.catalog.entities import (
+    Category,
+    Collection,
+    Product,
+    ProductType,
+    ProductVariant,
+)
 from src.domain.catalog.exceptions import ProductNotFoundError
 from src.domain.catalog.value_objects import (
     CategorySlug,
+    ChannelPrice,
     CollectionSlug,
+    Money,
     ProductCode,
     ProductTypeCode,
+    Sku,
+    StockQuantity,
 )
 from src.infrastructure.catalog.repositories import (
     DjangoCategoryRepository,
@@ -21,6 +33,9 @@ from src.infrastructure.catalog.repositories import (
     DjangoProductQueryRepository,
     DjangoProductRepository,
     DjangoProductTypeRepository,
+    DjangoStockRepository,
+    DjangoVariantPriceRepository,
+    DjangoVariantRepository,
 )
 
 pytestmark = [pytest.mark.django_db, pytest.mark.integration]
@@ -177,3 +192,87 @@ class TestGetPublishedByCode:
     def test_an_unknown_product_is_not_found(self) -> None:
         with pytest.raises(ProductNotFoundError):
             DjangoProductQueryRepository().get_published_by_code("ghost")
+
+
+class TestPriceSummaries:
+    @staticmethod
+    def _seed_priced() -> None:
+        types = DjangoProductTypeRepository()
+        types.add(ProductType(code=ProductTypeCode("coffee"), name="Coffee"))
+        products = DjangoProductRepository()
+        coffee = ProductTypeCode("coffee")
+        products.add(
+            Product(code=ProductCode("house-blend"), name="House Blend", product_type=coffee)
+        )
+        products.add(
+            Product(code=ProductCode("dark-roast"), name="Dark Roast", product_type=coffee)
+        )
+
+        variants = DjangoVariantRepository()
+        prices = DjangoVariantPriceRepository()
+        stock = DjangoStockRepository()
+
+        # house-blend: two variants in ir-main (120k in stock, 200k) + one only in
+        # another channel -> from_price is the 120k, and it is available.
+        for sku, name in (("HB-250", "250g"), ("HB-500", "500g"), ("HB-1000", "1kg")):
+            variants.add(
+                ProductVariant(product=ProductCode("house-blend"), sku=Sku(sku), name=name)
+            )
+        prices.replace(
+            "HB-250", (ChannelPrice(channel="ir-main", money=Money(Decimal("120000.00"), "IRR")),)
+        )
+        prices.replace(
+            "HB-500", (ChannelPrice(channel="ir-main", money=Money(Decimal("200000.00"), "IRR")),)
+        )
+        prices.replace(
+            "HB-1000",
+            (ChannelPrice(channel="ir-secondary", money=Money(Decimal("360000.00"), "IRR")),),
+        )
+        stock.set_quantity("HB-250", StockQuantity(30))
+        stock.set_quantity("HB-500", StockQuantity(10))
+        stock.set_quantity("HB-1000", StockQuantity(8))
+
+        # dark-roast: priced in ir-main but out of stock -> priced, not available.
+        variants.add(
+            ProductVariant(product=ProductCode("dark-roast"), sku=Sku("DR-250"), name="250g")
+        )
+        prices.replace(
+            "DR-250", (ChannelPrice(channel="ir-main", money=Money(Decimal("150000.00"), "IRR")),)
+        )
+        stock.set_quantity("DR-250", StockQuantity(0))
+
+    def test_from_price_is_the_lowest_in_channel_variant_price(self) -> None:
+        self._seed_priced()
+
+        summaries = DjangoProductQueryRepository().price_summaries(
+            codes=["house-blend", "dark-roast"], channel="ir-main"
+        )
+
+        assert summaries["house-blend"].from_price is not None
+        assert summaries["house-blend"].from_price.amount == Decimal("120000.00")
+        assert summaries["house-blend"].from_price.currency == "IRR"
+        assert summaries["house-blend"].available is True
+
+    def test_priced_but_out_of_stock_is_not_available(self) -> None:
+        self._seed_priced()
+
+        summaries = DjangoProductQueryRepository().price_summaries(
+            codes=["dark-roast"], channel="ir-main"
+        )
+
+        assert summaries["dark-roast"].from_price.amount == Decimal("150000.00")
+        assert summaries["dark-roast"].available is False
+
+    def test_unpriced_in_channel_has_no_from_price(self) -> None:
+        self._seed_priced()
+
+        # Only HB-1000 is priced in ir-secondary; the others are not.
+        summaries = DjangoProductQueryRepository().price_summaries(
+            codes=["dark-roast"], channel="ir-secondary"
+        )
+
+        assert summaries["dark-roast"].from_price is None
+        assert summaries["dark-roast"].available is False
+
+    def test_no_codes_returns_empty(self) -> None:
+        assert DjangoProductQueryRepository().price_summaries(codes=[], channel="ir-main") == {}

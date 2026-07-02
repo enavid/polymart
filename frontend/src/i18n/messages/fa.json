@@ -11,6 +11,17 @@
     "password": "رمز عبور",
     "back": "بازگشت"
   },
+  "footer": {
+    "tagline": "فروشگاه چندمنظورهٔ سفید‌برچسب",
+    "rights": "همهٔ حقوق محفوظ است."
+  },
+  "home": {
+    "heroTitle": "هر چیزی که بخواهید، اینجاست",
+    "heroSubtitle": "فروشگاهی چندمنظوره با تجربهٔ خرید ساده و سریع.",
+    "shopCta": "مشاهدهٔ فروشگاه",
+    "featuredTitle": "محصولات منتخب",
+    "featuredEmpty": "هنوز محصولی برای نمایش نیست."
+  },
   "nav": {
     "account": "حساب کاربری",
     "admin": "پنل مدیریت",
@@ -267,9 +278,13 @@
     "filterCategory": "دسته‌بندی",
     "filterCollection": "مجموعه",
     "filterProductType": "نوع محصول",
+    "filterAll": "همه",
     "allProducts": "همهٔ محصولات",
     "empty": "محصولی یافت نشد.",
     "viewProduct": "مشاهده",
+    "priceFrom": "از {price}",
+    "noPrice": "قیمت‌گذاری نشده",
+    "outOfStock": "ناموجود",
     "previous": "قبلی",
     "next": "بعدی",
     "resultCount": "{count} محصول",

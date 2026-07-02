@@ -35,6 +35,9 @@ class FakeProductQueryRepository(ProductQueryRepository):
     def search(self, *, filters: ProductFilters, limit: int, offset: int) -> ProductPage:
         raise NotImplementedError  # pragma: no cover - unused here
 
+    def price_summaries(self, *, codes, channel):  # pragma: no cover - unused here
+        return {}
+
     def get_published_by_code(self, code: str) -> Product:
         if not self._published:
             raise ProductNotFoundError(code)

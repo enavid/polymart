@@ -98,6 +98,12 @@ class TestSeedCatalog:
         hb_250 = VariantPriceModel.objects.get(variant__sku="HB-250")
         assert hb_250.amount == Decimal("120000.00")
 
+    def test_seeds_a_product_description_for_the_storefront_pdp(self) -> None:
+        _seed()
+
+        house_blend = ProductModel.objects.get(code="house-blend")
+        assert house_blend.metadata["description"]
+
     def test_seeds_the_category_tree_and_a_collection_with_members(self) -> None:
         _seed()
 

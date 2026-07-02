@@ -91,13 +91,21 @@ class SetProductPublishedSerializer(serializers.Serializer):
 
 
 class StorefrontProductSerializer(serializers.Serializer):
-    """Public projection of a published product (no internal ``id``)."""
+    """Public projection of a published product (no internal ``id``).
+
+    ``from_price``/``currency``/``available`` are present only when the list was
+    requested for a specific ``channel``; the amount is an exact string (never a
+    float) and is null when the product has no price in that channel.
+    """
 
     code = serializers.CharField()
     name = serializers.CharField()
     product_type = serializers.CharField()
     values = AttributeValueSerializer(many=True)
     metadata = serializers.DictField(child=serializers.CharField())
+    from_price = serializers.CharField(required=False, allow_null=True)
+    currency = serializers.CharField(required=False, allow_null=True)
+    available = serializers.BooleanField(required=False)
 
 
 class StorefrontProductPageSerializer(serializers.Serializer):
@@ -120,6 +128,9 @@ class StorefrontProductQuerySerializer(serializers.Serializer):
     category = serializers.CharField(required=False)
     collection = serializers.CharField(required=False)
     product_type = serializers.CharField(required=False)
+    # When given, each result is enriched with its "from" price + availability
+    # in this channel.
+    channel = serializers.CharField(required=False)
     limit = serializers.IntegerField(required=False)
     offset = serializers.IntegerField(required=False)
 
@@ -183,6 +194,28 @@ class StorefrontVariantsQuerySerializer(serializers.Serializer):
     """Query parameter selecting the channel a product's variants are priced in."""
 
     channel = serializers.CharField()
+
+
+class StorefrontCategorySerializer(serializers.Serializer):
+    """Public projection of a category for storefront filter choosers (no internal id)."""
+
+    slug = serializers.CharField()
+    name = serializers.CharField()
+    parent = serializers.CharField(allow_null=True)
+
+
+class StorefrontCollectionSerializer(serializers.Serializer):
+    """Public projection of a collection for storefront filter choosers (no internal id)."""
+
+    slug = serializers.CharField()
+    name = serializers.CharField()
+
+
+class StorefrontProductTypeSerializer(serializers.Serializer):
+    """Public projection of a product type for storefront filter choosers."""
+
+    code = serializers.CharField()
+    name = serializers.CharField()
 
 
 class CreateVariantSerializer(serializers.Serializer):

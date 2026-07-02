@@ -315,6 +315,11 @@ export interface StorefrontProduct {
   product_type: string;
   values: AttributeValue[];
   metadata: Record<string, string>;
+  // Present only when the list was requested for a channel. `from_price` is an
+  // exact string (the lowest in-channel variant price) or null when unpriced.
+  from_price?: string | null;
+  currency?: string | null;
+  available?: boolean;
 }
 
 export interface StorefrontProductPage {
@@ -329,6 +334,7 @@ export interface StorefrontFilters {
   category?: string;
   collection?: string;
   product_type?: string;
+  channel?: string;
   limit?: number;
   offset?: number;
 }
@@ -342,6 +348,7 @@ export function listStorefrontProducts(
       category: filters.category,
       collection: filters.collection,
       product_type: filters.product_type,
+      channel: filters.channel,
       limit: filters.limit,
       offset: filters.offset,
     })}`,
@@ -350,6 +357,36 @@ export function listStorefrontProducts(
 
 export function getStorefrontProduct(code: string): Promise<StorefrontProduct> {
   return apiGet<StorefrontProduct>(`/catalog/storefront/products/${code}/`);
+}
+
+// --- Storefront taxonomy (public; powers the PLP filter choosers) ---------
+
+export interface StorefrontCategory {
+  slug: string;
+  name: string;
+  parent: string | null;
+}
+
+export interface StorefrontCollection {
+  slug: string;
+  name: string;
+}
+
+export interface StorefrontProductType {
+  code: string;
+  name: string;
+}
+
+export function listStorefrontCategories(): Promise<StorefrontCategory[]> {
+  return apiGet<StorefrontCategory[]>("/catalog/storefront/categories/");
+}
+
+export function listStorefrontCollections(): Promise<StorefrontCollection[]> {
+  return apiGet<StorefrontCollection[]>("/catalog/storefront/collections/");
+}
+
+export function listStorefrontProductTypes(): Promise<StorefrontProductType[]> {
+  return apiGet<StorefrontProductType[]>("/catalog/storefront/product-types/");
 }
 
 /** A variant's storefront price. `amount` is an exact string (never a float). */

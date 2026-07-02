@@ -43,6 +43,7 @@ from src.application.catalog.use_cases import (
     SetProductPublished,
     SetVariantPrices,
     SetVariantStock,
+    SummariseStorefrontPrices,
 )
 from src.infrastructure.catalog.repositories import (
     DjangoAttributeRepository,
@@ -230,6 +231,10 @@ def build_set_product_published() -> SetProductPublished:
 
 def build_search_catalog_products() -> SearchCatalogProducts:
     return SearchCatalogProducts(DjangoProductQueryRepository())
+
+
+def build_summarise_storefront_prices() -> SummariseStorefrontPrices:
+    return SummariseStorefrontPrices(DjangoProductQueryRepository())
 
 
 def build_get_published_product() -> GetPublishedProduct:

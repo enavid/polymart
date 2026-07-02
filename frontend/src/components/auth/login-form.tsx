@@ -17,6 +17,7 @@ import {
 import { FormField } from "@/components/ui/form-field";
 import { login } from "@/lib/api/auth";
 import { ApiError } from "@/lib/api/client";
+import { markSignedIn } from "@/lib/auth/session-hint";
 import { CURRENT_USER_KEY } from "@/lib/hooks/use-auth";
 
 export function LoginForm() {
@@ -30,6 +31,7 @@ export function LoginForm() {
   const mutation = useMutation({
     mutationFn: () => login(phoneNumber, password),
     onSuccess: (user) => {
+      markSignedIn();
       queryClient.setQueryData(CURRENT_USER_KEY, user);
       router.push("/account");
     },

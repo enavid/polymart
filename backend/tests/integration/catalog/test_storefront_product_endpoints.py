@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
+
 import pytest
 from django.contrib.auth import get_user_model
 from rest_framework.test import APIClient
@@ -191,3 +193,70 @@ class TestDetail:
 
     def test_an_unknown_product_returns_404(self, admin_client: APIClient) -> None:
         assert APIClient().get(f"{_LIST_URL}ghost/").status_code == 404
+
+
+class TestChannelPricing:
+    """The list enriches items with a channel 'from' price + availability."""
+
+    @staticmethod
+    def _seed_priced() -> None:
+        # Seed via repositories so a variant is priced + stocked in a channel
+        # without needing the channel-admin API surface here.
+        from src.domain.catalog.entities import Product, ProductType, ProductVariant
+        from src.domain.catalog.value_objects import (
+            ChannelPrice,
+            Money,
+            ProductCode,
+            ProductTypeCode,
+            Sku,
+            StockQuantity,
+        )
+        from src.infrastructure.catalog.repositories import (
+            DjangoProductRepository,
+            DjangoProductTypeRepository,
+            DjangoStockRepository,
+            DjangoVariantPriceRepository,
+            DjangoVariantRepository,
+        )
+
+        DjangoProductTypeRepository().add(
+            ProductType(code=ProductTypeCode("coffee"), name="Coffee")
+        )
+        products = DjangoProductRepository()
+        products.add(
+            Product(
+                code=ProductCode("house-blend"),
+                name="House Blend",
+                product_type=ProductTypeCode("coffee"),
+            )
+        )
+        products.set_published("house-blend", True)
+        DjangoVariantRepository().add(
+            ProductVariant(product=ProductCode("house-blend"), sku=Sku("HB-250"), name="250g")
+        )
+        DjangoVariantPriceRepository().replace(
+            "HB-250", (ChannelPrice(channel="ir-main", money=Money(Decimal("120000.00"), "IRR")),)
+        )
+        DjangoStockRepository().set_quantity("HB-250", StockQuantity(30))
+
+    def test_channel_query_adds_from_price_and_availability(self) -> None:
+        self._seed_priced()
+
+        response = APIClient().get(_LIST_URL, {"channel": "ir-main"})
+
+        item = next(p for p in response.data["results"] if p["code"] == "house-blend")
+        # Exact-decimal string (trailing-zero scale varies by DB backend); compare
+        # numerically. It stays a string in the payload -- never a float.
+        assert isinstance(item["from_price"], str)
+        assert Decimal(item["from_price"]) == Decimal("120000.00")
+        assert item["currency"] == "IRR"
+        assert item["available"] is True
+
+    def test_without_a_channel_no_pricing_fields_are_added(self) -> None:
+        self._seed_priced()
+
+        response = APIClient().get(_LIST_URL)
+
+        item = next(p for p in response.data["results"] if p["code"] == "house-blend")
+        assert "from_price" not in item
+        assert "available" not in item

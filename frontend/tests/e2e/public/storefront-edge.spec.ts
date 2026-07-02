@@ -23,7 +23,8 @@ test("search with no matches shows the empty state", async ({ page }) => {
 test("collection filter narrows to the collection's members only", async ({ page }) => {
   await page.goto("/products");
   // The "featured" collection has house-blend + dark-roast, but not light-roast.
-  await page.locator("#storefront_collection").fill(COLLECTION);
+  // The filter is a dropdown populated from the public taxonomy endpoint.
+  await page.locator("#storefront_collection").selectOption(COLLECTION);
   await page.getByRole("button", { name: store.search }).click();
 
   await expect(page.getByText(store.resultCount.replace("{count}", "2"))).toBeVisible();

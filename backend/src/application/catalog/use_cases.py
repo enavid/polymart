@@ -26,6 +26,7 @@ from src.application.catalog.ports import (
     CollectionProductRepository,
     CollectionRepository,
     CollectionRuleRepository,
+    PriceSummary,
     ProductCategoryRepository,
     ProductFilters,
     ProductImportItem,
@@ -921,9 +922,7 @@ class SetCollectionProducts:
     ) -> tuple[ProductCode, ...]:
         # Build value objects first: a malformed or duplicated code fails fast,
         # before any I/O.
-        requested = reject_duplicate_products(
-            tuple(ProductCode(code) for code in command.products)
-        )
+        requested = reject_duplicate_products(tuple(ProductCode(code) for code in command.products))
         collection_slug = command.collection
 
         # The collection must exist (a 404 at the edge); its id anchors the audit
@@ -983,9 +982,7 @@ class GetCollectionProducts:
         # Confirm the collection exists so an unknown slug is a 404, not an empty set.
         self._collections.get_by_slug(collection_slug)
         products = self._repository.list_for_collection(collection_slug)
-        logger.debug(
-            "collection_products_listed", collection=collection_slug, count=len(products)
-        )
+        logger.debug("collection_products_listed", collection=collection_slug, count=len(products))
         return products
 
 
@@ -1313,9 +1310,7 @@ class SetVariantStock:
             resource_type=_RESOURCE_VARIANT,
             resource_id=str(variant.id),
             actor=actor,
-            changes=(
-                FieldChange(field="quantity", before=before.value, after=stored.value),
-            ),
+            changes=(FieldChange(field="quantity", before=before.value, after=stored.value),),
         )
         return stored
 
@@ -1370,9 +1365,7 @@ class AdjustVariantStock:
             resource_type=_RESOURCE_VARIANT,
             resource_id=str(variant.id),
             actor=actor,
-            changes=(
-                FieldChange(field="quantity", before=before_value, after=stored.value),
-            ),
+            changes=(FieldChange(field="quantity", before=before_value, after=stored.value),),
         )
         return stored
 
@@ -1413,9 +1406,7 @@ class SetProductPublished:
         self._repository = repository
         self._audit = audit
 
-    def execute(
-        self, command: SetProductPublishedCommand, *, actor: str | None = None
-    ) -> Product:
+    def execute(self, command: SetProductPublishedCommand, *, actor: str | None = None) -> Product:
         code = command.product
         before = self._repository.get_by_code(code).is_published
         product = self._repository.set_published(code, command.is_published)
@@ -1431,9 +1422,7 @@ class SetProductPublished:
             resource_type=_RESOURCE_PRODUCT,
             resource_id=str(product.id),
             actor=actor,
-            changes=(
-                FieldChange(field="is_published", before=before, after=product.is_published),
-            ),
+            changes=(FieldChange(field="is_published", before=before, after=product.is_published),),
         )
         return product
 
@@ -1495,6 +1484,24 @@ class SearchCatalogProducts:
         if offset < 0:
             raise InvalidPaginationError(f"offset must not be negative: {offset}")
         return limit, offset
+
+
+class SummariseStorefrontPrices:
+    """Summarise the storefront pricing (from-price + availability) of products.
+
+    Used to enrich the PLP: given the codes on a page and the viewing channel, it
+    returns each product's lowest in-channel price and whether it can be bought.
+    Money stays server-authoritative -- this only reads and reports, never computes
+    a price the client could recompute differently.
+    """
+
+    def __init__(self, repository: ProductQueryRepository) -> None:
+        self._repository = repository
+
+    def execute(self, *, codes: Sequence[str], channel: str) -> dict[str, PriceSummary]:
+        if not codes:
+            return {}
+        return self._repository.price_summaries(codes=codes, channel=channel)
 
 
 class GetPublishedProduct:
@@ -1677,16 +1684,12 @@ class ImportCatalogProducts:
         # Bound the work before touching the database: an oversized upload is
         # rejected outright rather than half-processed.
         if len(rows) > _MAX_IMPORT_ROWS:
-            logger.warning(
-                "catalog_products_import_too_large", count=len(rows), actor=actor
-            )
+            logger.warning("catalog_products_import_too_large", count=len(rows), actor=actor)
             raise ImportTooLargeError(len(rows), _MAX_IMPORT_ROWS)
 
         items, errors = self._validate(rows)
         if errors:
-            logger.warning(
-                "catalog_products_import_rejected", error_count=len(errors), actor=actor
-            )
+            logger.warning("catalog_products_import_rejected", error_count=len(errors), actor=actor)
             return ProductImportResult(created=0, errors=tuple(errors))
 
         # Every row is valid: persist the whole batch atomically.
@@ -1712,9 +1715,7 @@ class ImportCatalogProducts:
             try:
                 items.append(self._validate_row(row, seen_codes))
             except CatalogError as exc:
-                errors.append(
-                    ImportRowError(row_number=row_number, code=row.code, error=str(exc))
-                )
+                errors.append(ImportRowError(row_number=row_number, code=row.code, error=str(exc)))
         return items, errors
 
     def _validate_row(self, row: ProductRow, seen_codes: set[str]) -> ProductImportItem:

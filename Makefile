@@ -179,7 +179,7 @@ coverage: test ## Run backend tests and enforce the coverage threshold
 security: $(STAMP) ## Run backend security scanners (bandit + pip-audit)
 	$(BACKEND) $(VBIN)/bandit -q -r src config && $(VBIN)/pip-audit
 
-check: lint type test ## Quick local quality gate (backend lint + type + test)
+check: lint type test e2e-full ## Local quality gate (backend lint + type + test + full-stack E2E)
 
 # ===========================================================================
 # Docker full-stack (everything in containers)
@@ -221,7 +221,7 @@ docker-superuser: ## Create an admin user in the backend container
 # ===========================================================================
 # Frontend quality
 # ===========================================================================
-.PHONY: fe-install fe-lint fe-type fe-test fe-build e2e
+.PHONY: fe-install fe-lint fe-type fe-test fe-build e2e seed-e2e e2e-full
 fe-install: ## Install frontend dependencies
 	$(FRONTEND) npm install
 
@@ -237,8 +237,14 @@ fe-test: ## Run frontend unit tests (vitest)
 fe-build: ## Build the frontend
 	$(FRONTEND) npm run build
 
-e2e: ## Run end-to-end tests (playwright)
+e2e: ## Run end-to-end tests (playwright; assumes stack is up + seeded)
 	$(FRONTEND) npm run e2e
+
+seed-e2e: $(STAMP) ## Seed the deterministic E2E dataset (idempotent, dev only)
+	$(BACKEND) env $(DJANGO_ENV) $(VBIN)/python manage.py seed_e2e
+
+e2e-full: assert-stopped $(STAMP) env infra-up migrate ## Full-stack E2E: start backend, seed, run Playwright, tear down
+	bash scripts/e2e.sh
 
 # ===========================================================================
 # Aggregate / docs
