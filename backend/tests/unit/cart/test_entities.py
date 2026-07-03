@@ -79,6 +79,65 @@ class TestRemoveItem:
             cart.remove_item(Sku("GHOST"))
 
 
+class TestMergeFrom:
+    def _other(self) -> Cart:
+        return Cart(owner="g:tok", channel=ChannelRef("ir-main"))
+
+    def test_appends_lines_the_target_does_not_have(self) -> None:
+        cart = _cart()
+        cart.add_item(Sku("HB-250"), CartQuantity(1))
+        other = self._other()
+        other.add_item(Sku("HB-500"), CartQuantity(2))
+
+        cart.merge_from(other)
+
+        assert [(line.sku.value, line.quantity.value) for line in cart.lines] == [
+            ("HB-250", 1),
+            ("HB-500", 2),
+        ]
+
+    def test_sums_quantities_for_a_shared_sku(self) -> None:
+        cart = _cart()
+        cart.add_item(Sku("HB-250"), CartQuantity(2))
+        other = self._other()
+        other.add_item(Sku("HB-250"), CartQuantity(3))
+
+        cart.merge_from(other)
+
+        assert len(cart.lines) == 1
+        assert cart.lines[0].quantity == CartQuantity(5)
+
+    def test_caps_a_summed_quantity_instead_of_raising(self) -> None:
+        cart = _cart()
+        cart.add_item(Sku("HB-250"), CartQuantity(1_000_000))
+        other = self._other()
+        other.add_item(Sku("HB-250"), CartQuantity(500))
+
+        cart.merge_from(other)
+
+        assert cart.lines[0].quantity == CartQuantity(1_000_000)
+
+    def test_merging_an_empty_cart_is_a_no_op(self) -> None:
+        cart = _cart()
+        cart.add_item(Sku("HB-250"), CartQuantity(1))
+
+        cart.merge_from(self._other())
+
+        assert [line.sku.value for line in cart.lines] == ["HB-250"]
+
+    def test_preserves_target_order_then_appends_new_skus(self) -> None:
+        cart = _cart()
+        cart.add_item(Sku("HB-250"), CartQuantity(1))
+        cart.add_item(Sku("HB-500"), CartQuantity(1))
+        other = self._other()
+        other.add_item(Sku("HB-500"), CartQuantity(1))
+        other.add_item(Sku("HB-1000"), CartQuantity(1))
+
+        cart.merge_from(other)
+
+        assert [line.sku.value for line in cart.lines] == ["HB-250", "HB-500", "HB-1000"]
+
+
 class TestInvariant:
     def test_rebuilding_with_a_duplicate_sku_is_rejected(self) -> None:
         with pytest.raises(DuplicateCartLineError):

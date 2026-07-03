@@ -68,6 +68,30 @@ class DjangoCartRepository(CartRepository):
             model.save(update_fields=["updated_at"])
         return self.get(owner, channel)
 
+    def merge_guest_into_user(self, guest_owner: str, user_owner: str) -> int:
+        # One transaction for the whole merge: each guest cart is locked, absorbed
+        # into the same-channel user cart, and deleted together, so a merged guest
+        # cart is never left behind to be merged a second time. The guest lock also
+        # blocks a concurrent guest write from slipping a line in between the read and
+        # the delete.
+        with transaction.atomic():
+            guest_carts = list(
+                CartModel.objects.select_for_update()
+                .filter(**_owner_filter(guest_owner))
+                .prefetch_related("lines")
+            )
+            for guest_model in guest_carts:
+                channel = guest_model.channel_slug
+                guest_cart = cart_to_domain(guest_model)
+                user_model = self._lock_or_create(user_owner, channel)
+                user_cart = cart_to_domain(user_model)
+                user_cart.merge_from(guest_cart)
+                CartLineModel.objects.filter(cart=user_model).delete()
+                self._insert_lines(user_model, user_cart.lines)
+                user_model.save(update_fields=["updated_at"])
+                guest_model.delete()
+        return len(guest_carts)
+
     @staticmethod
     def _lock_or_create(owner: str, channel: str) -> CartModel:
         # get_or_create absorbs the create race (it re-gets on a unique violation);

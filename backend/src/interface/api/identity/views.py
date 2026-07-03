@@ -27,6 +27,7 @@ from rest_framework.views import APIView
 from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.tokens import RefreshToken
 
+from src.application.cart.use_cases import MergeGuestCartCommand
 from src.application.identity.use_cases import RegisteredUser
 from src.domain.identity.enums import OtpPurpose
 from src.domain.identity.exceptions import (
@@ -40,7 +41,9 @@ from src.domain.identity.exceptions import (
 )
 from src.domain.identity.value_objects import PhoneNumber
 from src.infrastructure.identity.models import User
+from src.interface.api.cart.container import build_merge_guest_cart
 from src.interface.api.common import ErrorSerializer
+from src.interface.api.guest import GUEST_OWNER_PREFIX, clear_guest_cookie, user_owner
 from src.interface.api.identity.container import (
     build_register_user,
     build_request_otp,
@@ -123,8 +126,33 @@ class LoginView(APIView):
         refresh = RefreshToken.for_user(user)
         response = Response(_user_payload(user), status=status.HTTP_200_OK)
         set_auth_cookies(response, access=str(refresh.access_token), refresh=str(refresh))
+        self._merge_guest_cart(request, response, user)
         logger.info("login_succeeded", user_id=user.id)
         return response
+
+    @staticmethod
+    def _merge_guest_cart(request: Request, response: Response, user: User) -> None:
+        """Fold a guest cart into the just-signed-in user's cart, then drop the cookie.
+
+        Best-effort: a cart merge must never break authentication, so any failure is
+        logged and swallowed and the guest cookie is *kept* (so the cart is not lost).
+        The cookie is cleared only after a successful merge -- the guest identity is
+        then spent.
+        """
+        token = request.COOKIES.get(settings.GUEST_COOKIE_NAME)
+        if not token:
+            return
+        try:
+            build_merge_guest_cart().execute(
+                MergeGuestCartCommand(
+                    guest_owner=f"{GUEST_OWNER_PREFIX}{token}",
+                    user_owner=user_owner(user.pk),
+                )
+            )
+        except Exception:
+            logger.warning("guest_cart_merge_failed", user_id=user.id)
+            return
+        clear_guest_cookie(response)
 
     @staticmethod
     def _rejected() -> Response:

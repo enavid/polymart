@@ -80,3 +80,18 @@ class Cart:
         if existing is None:
             raise CartLineNotFoundError(sku.value)
         self.lines.remove(existing)
+
+    def merge_from(self, other: Cart) -> None:
+        """Absorb another cart's lines into this one (guest -> user on login).
+
+        A variant present in both carts has its quantities summed (capped, so an
+        absurd combined total cannot make a login fail); a variant only in ``other``
+        is appended. This cart's existing lines keep their order; newly seen variants
+        follow. Purely structural: no pricing, no I/O.
+        """
+        for line in other.lines:
+            existing = self._find(line.sku)
+            if existing is None:
+                self.lines.append(CartLine(sku=line.sku, quantity=line.quantity))
+            else:
+                existing.quantity = existing.quantity.capped_sum(line.quantity)

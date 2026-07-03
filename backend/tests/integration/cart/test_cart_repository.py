@@ -185,6 +185,77 @@ class TestGuestCartRepository:
         assert repo.get("g:guest-two", _CHANNEL).lines == []
 
 
+class TestMergeGuestIntoUser:
+    """Merging a guest's cart into a user's cart on login (real DB)."""
+
+    def test_merges_into_an_empty_user_cart_and_deletes_the_guest_cart(self) -> None:
+        user_owner = _owner()
+        guest_owner = "g:merge-token"
+        repo = DjangoCartRepository()
+        repo.apply(guest_owner, _CHANNEL, lambda c: c.add_item(Sku("HB-250"), CartQuantity(2)))
+
+        merged = repo.merge_guest_into_user(guest_owner, user_owner)
+
+        assert merged == 1
+        assert [
+            (line.sku.value, line.quantity.value) for line in repo.get(user_owner, _CHANNEL).lines
+        ] == [("HB-250", 2)]
+        # The guest cart row is gone, not orphaned.
+        assert not CartModel.objects.filter(guest_token="merge-token").exists()
+
+    def test_sums_a_shared_variant_into_an_existing_user_cart(self) -> None:
+        user_owner = _owner()
+        guest_owner = "g:merge-token"
+        repo = DjangoCartRepository()
+        repo.apply(user_owner, _CHANNEL, lambda c: c.add_item(Sku("HB-250"), CartQuantity(3)))
+        repo.apply(guest_owner, _CHANNEL, lambda c: c.add_item(Sku("HB-250"), CartQuantity(4)))
+        repo.apply(guest_owner, _CHANNEL, lambda c: c.add_item(Sku("HB-500"), CartQuantity(1)))
+
+        repo.merge_guest_into_user(guest_owner, user_owner)
+
+        assert [
+            (line.sku.value, line.quantity.value) for line in repo.get(user_owner, _CHANNEL).lines
+        ] == [
+            ("HB-250", 7),
+            ("HB-500", 1),
+        ]
+        assert CartLineModel.objects.filter(cart__owner_id=_user_pk(user_owner)).count() == 2
+
+    def test_merges_every_channel_the_guest_has_a_cart_in(self) -> None:
+        _seed_channel("ir-other")
+        user_owner = _owner()
+        guest_owner = "g:merge-token"
+        repo = DjangoCartRepository()
+        repo.apply(guest_owner, _CHANNEL, lambda c: c.add_item(Sku("HB-250"), CartQuantity(1)))
+        repo.apply(guest_owner, "ir-other", lambda c: c.add_item(Sku("HB-500"), CartQuantity(2)))
+
+        merged = repo.merge_guest_into_user(guest_owner, user_owner)
+
+        assert merged == 2
+        assert repo.get(user_owner, _CHANNEL).lines[0].sku.value == "HB-250"
+        assert repo.get(user_owner, "ir-other").lines[0].sku.value == "HB-500"
+        assert not CartModel.objects.filter(guest_token="merge-token").exists()
+
+    def test_a_guest_with_no_cart_is_a_no_op(self) -> None:
+        user_owner = _owner()
+        repo = DjangoCartRepository()
+
+        assert repo.merge_guest_into_user("g:nothing", user_owner) == 0
+        assert repo.get(user_owner, _CHANNEL).lines == []
+
+    def test_is_idempotent_when_called_twice(self) -> None:
+        user_owner = _owner()
+        guest_owner = "g:merge-token"
+        repo = DjangoCartRepository()
+        repo.apply(guest_owner, _CHANNEL, lambda c: c.add_item(Sku("HB-250"), CartQuantity(2)))
+
+        repo.merge_guest_into_user(guest_owner, user_owner)
+        second = repo.merge_guest_into_user(guest_owner, user_owner)
+
+        assert second == 0
+        assert repo.get(user_owner, _CHANNEL).lines[0].quantity == CartQuantity(2)
+
+
 class TestVariantPricingReader:
     def test_exists_reflects_the_catalog(self) -> None:
         _seed_priced_variant()

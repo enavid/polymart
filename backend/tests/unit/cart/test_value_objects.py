@@ -55,6 +55,13 @@ class TestCartQuantity:
         with pytest.raises(InvalidCartQuantityError):
             CartQuantity(1_000_000).plus(CartQuantity(1))
 
+    def test_capped_sum_sums_two_quantities(self) -> None:
+        assert CartQuantity(2).capped_sum(CartQuantity(3)) == CartQuantity(5)
+
+    def test_capped_sum_caps_at_the_maximum_instead_of_raising(self) -> None:
+        # Unlike plus(), a merge must degrade gracefully rather than fail a login.
+        assert CartQuantity(1_000_000).capped_sum(CartQuantity(5)) == CartQuantity(1_000_000)
+
 
 class TestChannelRef:
     def test_accepts_and_strips_a_reference(self) -> None:

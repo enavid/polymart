@@ -146,6 +146,78 @@ class TestLogin:
         assert PASSWORD not in serialized
 
 
+class TestLoginMergesGuestCart:
+    """On login, a cart the shopper built as a guest is folded into their user cart."""
+
+    _CHANNEL = "ir-main"
+    _GUEST_TOKEN = "guest-merge-token"
+
+    def _login(self, client: APIClient) -> object:
+        return client.post(
+            "/api/v1/auth/login/",
+            {"phone_number": "09123456789", "password": PASSWORD},
+            format="json",
+        )
+
+    def _guest_cart_with_a_line(self) -> object:
+        from src.domain.cart.value_objects import CartQuantity, Sku
+        from src.infrastructure.cart.repositories import DjangoCartRepository
+
+        repo = DjangoCartRepository()
+        repo.apply(
+            f"g:{self._GUEST_TOKEN}",
+            self._CHANNEL,
+            lambda cart: cart.add_item(Sku("HB-250"), CartQuantity(2)),
+        )
+        return repo
+
+    def test_login_merges_the_guest_cart_and_clears_the_cookie(
+        self, client: APIClient, user: object
+    ) -> None:
+        from src.infrastructure.cart.models import CartModel
+
+        repo = self._guest_cart_with_a_line()
+        client.cookies[settings.GUEST_COOKIE_NAME] = self._GUEST_TOKEN
+
+        response = self._login(client)
+
+        assert response.status_code == 200
+        # The guest identity is spent -- the cookie is expired on the response.
+        assert response.cookies[settings.GUEST_COOKIE_NAME]["max-age"] == 0
+        # The line now belongs to the user; the guest cart row is gone.
+        user_cart = repo.get(f"u:{user.pk}", self._CHANNEL)  # type: ignore[attr-defined]
+        assert [(line.sku.value, line.quantity.value) for line in user_cart.lines] == [
+            ("HB-250", 2)
+        ]
+        assert not CartModel.objects.filter(guest_token=self._GUEST_TOKEN).exists()
+
+    def test_login_without_a_guest_cookie_touches_no_cookie(
+        self, client: APIClient, user: object
+    ) -> None:
+        response = self._login(client)
+
+        assert response.status_code == 200
+        assert settings.GUEST_COOKIE_NAME not in response.cookies
+
+    def test_a_failing_merge_never_breaks_login(
+        self, client: APIClient, user: object, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A cart merge is best-effort: if it blows up, authentication still succeeds
+        # and the guest cookie is kept (so the cart is not silently lost).
+        from src.interface.api.identity import views
+
+        def _boom() -> object:
+            raise RuntimeError("merge exploded")
+
+        monkeypatch.setattr(views, "build_merge_guest_cart", _boom)
+        client.cookies[settings.GUEST_COOKIE_NAME] = self._GUEST_TOKEN
+
+        response = self._login(client)
+
+        assert response.status_code == 200
+        assert settings.GUEST_COOKIE_NAME not in response.cookies
+
+
 class TestMe:
     def test_cookie_authenticates_a_follow_up_request(
         self, client: APIClient, user: object

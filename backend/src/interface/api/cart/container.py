@@ -9,6 +9,7 @@ from __future__ import annotations
 from src.application.cart.use_cases import (
     AddCartItem,
     GetCart,
+    MergeGuestCart,
     RemoveCartItem,
     UpdateCartItem,
 )
@@ -37,3 +38,7 @@ def build_remove_cart_item() -> RemoveCartItem:
     return RemoveCartItem(
         DjangoCartRepository(), DjangoVariantPricingReader(), DjangoChannelReader()
     )
+
+
+def build_merge_guest_cart() -> MergeGuestCart:
+    return MergeGuestCart(DjangoCartRepository())

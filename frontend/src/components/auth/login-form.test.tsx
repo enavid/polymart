@@ -46,6 +46,30 @@ describe("LoginForm", () => {
     await waitFor(() => expect(push).toHaveBeenCalledWith("/account"));
   });
 
+  it("invalidates the cached cart on success so the merged guest cart is refetched", async () => {
+    server.use(
+      http.post("*/auth/login/", () =>
+        HttpResponse.json({
+          id: 1,
+          phone_number: "+989123456789",
+          email: "",
+          full_name: "Ali",
+          is_staff: false,
+        }),
+      ),
+    );
+
+    const { client } = renderWithProviders(<LoginForm />);
+    // A cart the shopper viewed as a guest is cached under ["cart", channel]; after
+    // the backend merges it into the user cart on login, the stale copy must refetch.
+    client.setQueryData(["cart", "ir-main"], { lines: [], total: "0" });
+    await fillAndSubmit();
+
+    await waitFor(() =>
+      expect(client.getQueryState(["cart", "ir-main"])?.isInvalidated).toBe(true),
+    );
+  });
+
   it("shows the uniform invalid-credentials message on 401", async () => {
     server.use(
       http.post("*/auth/login/", () =>

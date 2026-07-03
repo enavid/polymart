@@ -46,6 +46,17 @@ class CartRepository(ABC):
         Returns the persisted cart.
         """
 
+    @abstractmethod
+    def merge_guest_into_user(self, guest_owner: str, user_owner: str) -> int:
+        """Merge every guest cart into the same-channel user cart, then delete it.
+
+        For each channel where the guest owns a cart, its lines are absorbed into the
+        user's cart in that channel (quantities summed per variant, capped) and the
+        guest cart is removed. Runs as one atomic unit so a merged guest cart is never
+        left behind to be merged twice. Returns the number of channels merged;
+        idempotent (a repeat finds no guest carts and merges nothing).
+        """
+
 
 class VariantPricingReader(ABC):
     """Narrow read boundary onto the catalog for cart pricing.

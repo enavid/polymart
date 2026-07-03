@@ -14,6 +14,8 @@ from src.application.cart.use_cases import (
     AddCartItemCommand,
     GetCart,
     GetCartQuery,
+    MergeGuestCart,
+    MergeGuestCartCommand,
     RemoveCartItem,
     RemoveCartItemCommand,
     UpdateCartItem,
@@ -28,7 +30,7 @@ from src.domain.cart.exceptions import (
     VariantNotFoundError,
     VariantNotPurchasableError,
 )
-from src.domain.cart.value_objects import ChannelRef, Money
+from src.domain.cart.value_objects import CartQuantity, ChannelRef, Money, Sku
 
 _CHANNEL = "ir-main"
 
@@ -51,6 +53,16 @@ class FakeCartRepository(CartRepository):
         cart.id = 1
         self._carts[(owner, channel)] = cart
         return cart
+
+    def merge_guest_into_user(self, guest_owner: str, user_owner: str) -> int:
+        channels = [ch for (owner, ch) in self._carts if owner == guest_owner]
+        for channel in channels:
+            guest_cart = self._carts.pop((guest_owner, channel))
+            user_cart = self.get(user_owner, channel)
+            user_cart.merge_from(guest_cart)
+            user_cart.id = 1
+            self._carts[(user_owner, channel)] = user_cart
+        return len(channels)
 
 
 class FakeVariantPricingReader(VariantPricingReader):
@@ -327,3 +339,63 @@ class TestRemoveCartItem:
             RemoveCartItem(carts, pricing, channels).execute(
                 RemoveCartItemCommand(owner="7", channel=_CHANNEL, sku="HB-250")
             )
+
+
+_GUEST = "g:tok-abc"
+_USER = "u:7"
+
+
+class TestMergeGuestCart:
+    def _seed(
+        self, carts: FakeCartRepository, owner: str, channel: str, sku: str, qty: int
+    ) -> None:
+        carts.apply(owner, channel, lambda cart: cart.add_item(Sku(sku), CartQuantity(qty)))
+
+    def test_merges_a_guest_cart_into_an_empty_user_cart(self, carts: FakeCartRepository) -> None:
+        self._seed(carts, _GUEST, _CHANNEL, "HB-250", 2)
+
+        MergeGuestCart(carts).execute(MergeGuestCartCommand(guest_owner=_GUEST, user_owner=_USER))
+
+        user_cart = carts.get(_USER, _CHANNEL)
+        assert [(line.sku.value, line.quantity.value) for line in user_cart.lines] == [
+            ("HB-250", 2)
+        ]
+
+    def test_sums_quantities_into_an_existing_user_cart(self, carts: FakeCartRepository) -> None:
+        self._seed(carts, _USER, _CHANNEL, "HB-250", 3)
+        self._seed(carts, _GUEST, _CHANNEL, "HB-250", 4)
+
+        MergeGuestCart(carts).execute(MergeGuestCartCommand(guest_owner=_GUEST, user_owner=_USER))
+
+        user_cart = carts.get(_USER, _CHANNEL)
+        assert user_cart.lines[0].quantity == CartQuantity(7)
+
+    def test_removes_the_guest_cart_so_a_second_merge_is_a_no_op(
+        self, carts: FakeCartRepository
+    ) -> None:
+        self._seed(carts, _GUEST, _CHANNEL, "HB-250", 2)
+
+        first = MergeGuestCart(carts)
+        first.execute(MergeGuestCartCommand(guest_owner=_GUEST, user_owner=_USER))
+
+        # The guest cart is gone; a repeat (e.g. a double login) merges nothing more.
+        assert carts.merge_guest_into_user(_GUEST, _USER) == 0
+        assert carts.get(_USER, _CHANNEL).lines[0].quantity == CartQuantity(2)
+
+    def test_a_guest_with_no_cart_is_a_no_op(self, carts: FakeCartRepository) -> None:
+        MergeGuestCart(carts).execute(MergeGuestCartCommand(guest_owner=_GUEST, user_owner=_USER))
+
+        assert carts.get(_USER, _CHANNEL).lines == []
+
+    def test_logs_the_merge_without_the_raw_guest_token(self, carts: FakeCartRepository) -> None:
+        self._seed(carts, _GUEST, _CHANNEL, "HB-250", 1)
+
+        with capture_logs() as logs:
+            MergeGuestCart(carts).execute(
+                MergeGuestCartCommand(guest_owner=_GUEST, user_owner=_USER)
+            )
+
+        merged = [log for log in logs if log["event"] == "guest_cart_merged"]
+        assert merged and merged[0]["channels_merged"] == 1
+        # The guest token is a session credential: it must never reach the logs.
+        assert all("tok-abc" not in str(value) for value in merged[0].values())

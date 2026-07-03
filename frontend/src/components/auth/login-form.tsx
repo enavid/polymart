@@ -33,6 +33,10 @@ export function LoginForm() {
     onSuccess: (user) => {
       markSignedIn();
       queryClient.setQueryData(CURRENT_USER_KEY, user);
+      // The backend merges any guest cart into the user's on login, so the cart
+      // cached under ["cart", channel] as a guest is now stale -- drop it so the
+      // merged cart is refetched fresh.
+      queryClient.invalidateQueries({ queryKey: ["cart"] });
       router.push("/account");
     },
   });

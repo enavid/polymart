@@ -88,3 +88,17 @@ def set_guest_cookie(response: Response, token: str) -> None:
         samesite=settings.AUTH_COOKIE_SAMESITE,
         path=settings.AUTH_COOKIE_PATH,
     )
+
+
+def clear_guest_cookie(response: Response) -> None:
+    """Expire the guest session cookie.
+
+    Sent on login once the guest cart has been merged into the user's: the guest
+    identity is spent, so the credential must not linger in the browser. Matches the
+    cookie's Path/SameSite so the browser targets the right cookie to delete.
+    """
+    response.delete_cookie(
+        settings.GUEST_COOKIE_NAME,
+        path=settings.AUTH_COOKIE_PATH,
+        samesite=settings.AUTH_COOKIE_SAMESITE,
+    )

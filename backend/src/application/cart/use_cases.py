@@ -225,3 +225,33 @@ class RemoveCartItem:
             line_count=len(saved.lines),
         )
         return _price(saved, self._pricing, currency)
+
+
+@dataclass(frozen=True)
+class MergeGuestCartCommand:
+    """Input for absorbing a guest's cart into a user's cart on sign-in.
+
+    ``guest_owner`` is the opaque ``g:<token>`` id (the token is a session
+    credential); ``user_owner`` is the ``u:<pk>`` id of the just-authenticated user.
+    """
+
+    guest_owner: str
+    user_owner: str
+
+
+class MergeGuestCart:
+    """Fold a guest's cart(s) into the signed-in user's cart, then discard them.
+
+    Invoked at login so a shopper who filled a cart as a guest keeps it after signing
+    in. Delegates the atomic cross-channel merge to the repository; the merge rule
+    (sum shared variants, append the rest) lives in the Cart aggregate.
+    """
+
+    def __init__(self, carts: CartRepository) -> None:
+        self._carts = carts
+
+    def execute(self, command: MergeGuestCartCommand) -> None:
+        merged = self._carts.merge_guest_into_user(command.guest_owner, command.user_owner)
+        # Never log the guest owner: its token is a session credential. The user id is
+        # a stable pk (not a secret) and the channel count is enough to observe the merge.
+        logger.info("guest_cart_merged", user_owner=command.user_owner, channels_merged=merged)

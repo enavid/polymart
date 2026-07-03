@@ -77,6 +77,16 @@ class CartQuantity:
         """Return the summed quantity, re-validating the upper bound."""
         return CartQuantity(self.value + other.value)
 
+    def capped_sum(self, other: CartQuantity) -> CartQuantity:
+        """Return the summed quantity, capped at the maximum instead of raising.
+
+        Unlike ``plus`` -- which rejects an over-large total so a deliberate add/set
+        cannot silently exceed the cap -- this is for merging a guest cart into a
+        user cart on login, where an absurd combined quantity must degrade to the
+        ceiling rather than fail the merge (and therefore the login).
+        """
+        return CartQuantity(min(self.value + other.value, _MAX_QUANTITY))
+
 
 @dataclass(frozen=True)
 class ChannelRef:
