@@ -9,6 +9,7 @@
  * into a float.
  */
 
+import type { AddressInput } from "@/lib/api/addresses";
 import { apiGet, apiPost, toQuery } from "@/lib/api/client";
 
 /** The order lifecycle states, matching the backend state machine. */
@@ -56,11 +57,24 @@ export interface OrderPage {
 }
 
 /**
- * Place an order by checking out the given channel's cart, shipping to the shopper's
- * saved address `addressId`. The order captures a snapshot of that address.
+ * How the order's shipping address is supplied: a signed-in shopper picks one of their
+ * saved addresses by id; a guest (no address book) enters a one-off address inline. The
+ * order captures a snapshot either way -- exactly one of the two is sent.
  */
-export function placeOrder(channel: string, addressId: string): Promise<Order> {
-  return apiPost<Order>("/orders/", { channel, address_id: addressId });
+export type PlaceOrderShipping =
+  | { addressId: string }
+  | { shippingAddress: AddressInput };
+
+/**
+ * Place an order by checking out the given channel's cart, shipping to either a saved
+ * address (`{ addressId }`) or a one-off inline address (`{ shippingAddress }`).
+ */
+export function placeOrder(channel: string, shipping: PlaceOrderShipping): Promise<Order> {
+  const body =
+    "addressId" in shipping
+      ? { channel, address_id: shipping.addressId }
+      : { channel, shipping_address: shipping.shippingAddress };
+  return apiPost<Order>("/orders/", body);
 }
 
 /** List the authenticated shopper's own orders (newest first). */

@@ -5,7 +5,6 @@ import { setupServer } from "msw/node";
 import { http, HttpResponse } from "msw";
 
 import { CartView } from "@/components/cart/cart-view";
-import { markSignedIn } from "@/lib/auth/session-hint";
 import messages from "@/i18n/messages/fa.json";
 import { renderWithProviders } from "@/test/utils";
 
@@ -20,21 +19,6 @@ afterEach(() => {
   push.mockReset();
 });
 afterAll(() => server.close());
-
-function authed() {
-  markSignedIn();
-  server.use(
-    http.get("*/auth/me/", () =>
-      HttpResponse.json({
-        id: 7,
-        phone_number: "+989120000001",
-        email: "",
-        full_name: "Shopper",
-        is_staff: false,
-      }),
-    ),
-  );
-}
 
 const cartWithLine = {
   channel: "ir-main",
@@ -52,18 +36,18 @@ const cartWithLine = {
 };
 
 describe("CartView", () => {
-  it("prompts to log in when unauthenticated", async () => {
-    server.use(
-      http.get("*/auth/me/", () => HttpResponse.json({ detail: "no" }, { status: 401 })),
-    );
+  it("shows a guest's cart without requiring login", async () => {
+    // No session at all: the cart is still resolved (from the guest cookie) and shown.
+    server.use(http.get("*/cart/", () => HttpResponse.json(cartWithLine)));
 
     renderWithProviders(<CartView />);
 
-    expect(await screen.findByText(messages.cart.loginRequired)).toBeInTheDocument();
+    expect(await screen.findByText("HB-250")).toBeInTheDocument();
+    // The cart is shown directly -- no "please sign in" gate for a guest.
+    expect(screen.getByText(messages.cart.total)).toBeInTheDocument();
   });
 
   it("shows an empty cart", async () => {
-    authed();
     server.use(
       http.get("*/cart/", () =>
         HttpResponse.json({ channel: "ir-main", currency: "IRR", items: [], total: "0" }),
@@ -76,7 +60,6 @@ describe("CartView", () => {
   });
 
   it("renders lines and the server-computed total", async () => {
-    authed();
     server.use(http.get("*/cart/", () => HttpResponse.json(cartWithLine)));
 
     renderWithProviders(<CartView />);
@@ -87,7 +70,6 @@ describe("CartView", () => {
   });
 
   it("removes a line", async () => {
-    authed();
     server.use(
       http.get("*/cart/", () => HttpResponse.json(cartWithLine)),
       http.delete("*/cart/items/HB-250/", () =>
@@ -103,7 +85,6 @@ describe("CartView", () => {
   });
 
   it("updates a line quantity", async () => {
-    authed();
     let putBody: unknown;
     server.use(
       http.get("*/cart/", () => HttpResponse.json(cartWithLine)),
@@ -127,7 +108,6 @@ describe("CartView", () => {
   });
 
   it("links to the multi-step checkout page", async () => {
-    authed();
     server.use(http.get("*/cart/", () => HttpResponse.json(cartWithLine)));
 
     renderWithProviders(<CartView />);
@@ -138,7 +118,6 @@ describe("CartView", () => {
   });
 
   it("disables checkout when a line is unavailable", async () => {
-    authed();
     server.use(
       http.get("*/cart/", () =>
         HttpResponse.json({
@@ -167,7 +146,6 @@ describe("CartView", () => {
   });
 
   it("warns and excludes an unavailable line", async () => {
-    authed();
     server.use(
       http.get("*/cart/", () =>
         HttpResponse.json({

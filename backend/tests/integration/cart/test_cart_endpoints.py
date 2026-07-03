@@ -166,9 +166,7 @@ class TestGuestOwnership:
         _seed_variant("HB-250", "120000.00")
         guest = APIClient()  # APIClient keeps cookies across calls, like a browser.
 
-        guest.post(
-            _ITEMS_URL, {"channel": _CHANNEL, "sku": "HB-250", "quantity": 2}, format="json"
-        )
+        guest.post(_ITEMS_URL, {"channel": _CHANNEL, "sku": "HB-250", "quantity": 2}, format="json")
         response = guest.get(_CART_URL, {"channel": _CHANNEL})
 
         assert response.status_code == 200
@@ -184,9 +182,7 @@ class TestGuestOwnership:
             _ITEMS_URL, {"channel": _CHANNEL, "sku": "HB-250", "quantity": 1}, format="json"
         )
         minted = first.cookies[settings.GUEST_COOKIE_NAME].value
-        guest.post(
-            _ITEMS_URL, {"channel": _CHANNEL, "sku": "HB-250", "quantity": 1}, format="json"
-        )
+        guest.post(_ITEMS_URL, {"channel": _CHANNEL, "sku": "HB-250", "quantity": 1}, format="json")
         response = guest.get(_CART_URL, {"channel": _CHANNEL})
 
         # The same guest is still one owner: quantities accumulate on one cart.

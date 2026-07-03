@@ -50,6 +50,11 @@ def _user(phone: str = "09120000001"):
     return get_user_model().objects.create_user(phone_number=phone, password="pw")
 
 
+def _owner(user: object) -> str:
+    """The prefixed owner id the order context keys a signed-in user's orders by."""
+    return f"u:{user.pk}"
+
+
 def _seed_variant(sku: str, stock: int) -> None:
     """Create the minimal catalog rows so a variant has on-hand stock."""
     DjangoProductTypeRepository().add(ProductType(code=ProductTypeCode("coffee"), name="C"))
@@ -108,8 +113,8 @@ class TestOrderRepository:
         user = _user()
         repo = DjangoOrderRepository()
 
-        saved = repo.add(_order(str(user.pk)))
-        reloaded = repo.get_for_owner(str(user.pk), "ORD-ABC123XYZ0")
+        saved = repo.add(_order(_owner(user)))
+        reloaded = repo.get_for_owner(_owner(user), "ORD-ABC123XYZ0")
 
         assert reloaded.id == saved.id
         assert reloaded.total.amount == Decimal("390000.00")
@@ -123,23 +128,23 @@ class TestOrderRepository:
         owner = _user("09120000001")
         other = _user("09120000002")
         repo = DjangoOrderRepository()
-        repo.add(_order(str(owner.pk)))
+        repo.add(_order(_owner(owner)))
 
         with pytest.raises(OrderNotFoundError):
-            repo.get_for_owner(str(other.pk), "ORD-ABC123XYZ0")
+            repo.get_for_owner(_owner(other), "ORD-ABC123XYZ0")
 
     def test_a_missing_order_raises_not_found(self) -> None:
         user = _user()
         with pytest.raises(OrderNotFoundError):
-            DjangoOrderRepository().get_for_owner(str(user.pk), "ORD-MISSING0000")
+            DjangoOrderRepository().get_for_owner(_owner(user), "ORD-MISSING0000")
 
     def test_lists_newest_first_with_count(self) -> None:
         user = _user()
         repo = DjangoOrderRepository()
-        repo.add(_order(str(user.pk), "ORD-FIRST000000"))
-        repo.add(_order(str(user.pk), "ORD-SECOND00000"))
+        repo.add(_order(_owner(user), "ORD-FIRST000000"))
+        repo.add(_order(_owner(user), "ORD-SECOND00000"))
 
-        rows, total = repo.list_for_owner(str(user.pk), limit=10, offset=0)
+        rows, total = repo.list_for_owner(_owner(user), limit=10, offset=0)
 
         assert total == 2
         assert rows[0].number.value == "ORD-SECOND00000"  # newest first
@@ -147,12 +152,38 @@ class TestOrderRepository:
     def test_set_status_persists_the_change(self) -> None:
         user = _user()
         repo = DjangoOrderRepository()
-        saved = repo.add(_order(str(user.pk)))
+        saved = repo.add(_order(_owner(user)))
 
         updated = repo.set_status(saved, OrderStatus.CANCELLED)
 
         assert updated.status is OrderStatus.CANCELLED
-        assert repo.get_for_owner(str(user.pk), "ORD-ABC123XYZ0").status is OrderStatus.CANCELLED
+        assert repo.get_for_owner(_owner(user), "ORD-ABC123XYZ0").status is OrderStatus.CANCELLED
+
+    def test_round_trips_a_guest_order_by_token(self) -> None:
+        # A guest order carries no user FK -- only the session token -- and reloads by it,
+        # keyed by the same opaque owner string as a user's (``g:<token>``).
+        repo = DjangoOrderRepository()
+        owner = "g:guest-token-xyz"
+
+        saved = repo.add(_order(owner))
+        reloaded = repo.get_for_owner(owner, "ORD-ABC123XYZ0")
+
+        assert reloaded.owner == owner
+        assert reloaded.id == saved.id
+        assert reloaded.total.amount == Decimal("390000.00")
+
+    def test_a_guest_and_a_user_order_do_not_collide(self) -> None:
+        # Same order number cannot exist twice, so distinct owners get distinct numbers;
+        # each owner-kind resolves only its own row.
+        repo = DjangoOrderRepository()
+        user = _user()
+        repo.add(_order(_owner(user), "ORD-USER000001"))
+        repo.add(_order("g:guest-token-xyz", "ORD-GUEST00001"))
+
+        with pytest.raises(OrderNotFoundError):
+            repo.get_for_owner("g:guest-token-xyz", "ORD-USER000001")
+        with pytest.raises(OrderNotFoundError):
+            repo.get_for_owner(_owner(user), "ORD-GUEST00001")
 
 
 class TestInventoryAdapter:

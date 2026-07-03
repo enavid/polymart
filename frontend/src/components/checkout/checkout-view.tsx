@@ -27,7 +27,7 @@ import {
 } from "@/lib/api/addresses";
 import { getCart, type Cart } from "@/lib/api/cart";
 import { ApiError } from "@/lib/api/client";
-import { placeOrder } from "@/lib/api/orders";
+import { placeOrder, type Order, type PlaceOrderShipping } from "@/lib/api/orders";
 import { formatMoneyString } from "@/lib/format";
 import { useCurrentUser } from "@/lib/hooks/use-auth";
 import { STOREFRONT_CHANNEL } from "@/lib/storefront/channel";
@@ -37,32 +37,109 @@ const ADDRESSES_KEY = ["addresses"] as const;
 
 type Step = "address" | "review";
 
-/** The multi-step checkout: choose a shipping address, then review and place the order. */
+/** The seven display fields shared by a saved address and a guest's inline one. */
+type ShippingDisplay = {
+  recipient_name: string;
+  phone_number: string;
+  province: string;
+  city: string;
+  postal_code: string;
+  line1: string;
+  line2: string | null;
+};
+
+/**
+ * Checkout, open to guests as well as signed-in users. The cart is resolved from the
+ * request's owner (a user, or a guest's HttpOnly session cookie), so no login is
+ * required. A signed-in shopper picks a saved address; a guest fills a one-off shipping
+ * form inline. The order captures a snapshot of whichever address is used.
+ */
 export function CheckoutView() {
   const t = useTranslations("checkout");
   const tCommon = useTranslations("common");
   const channel = STOREFRONT_CHANNEL;
-  const queryClient = useQueryClient();
-  const router = useRouter();
 
   const { data: user, isLoading: userLoading } = useCurrentUser();
+
+  const cartQuery = useQuery({
+    queryKey: CART_KEY(channel),
+    queryFn: () => getCart(channel),
+  });
+
+  // Wait for both the auth state (to choose the user vs guest flow) and the cart.
+  if (userLoading || cartQuery.isLoading) {
+    return <p>{tCommon("loading")}</p>;
+  }
+
+  if (cartQuery.isError) {
+    return (
+      <div className="flex flex-col gap-4">
+        <h1 className="text-xl font-semibold">{t("title")}</h1>
+        <Alert variant="destructive">
+          {cartQuery.error instanceof ApiError ? cartQuery.error.detail : t("loadError")}
+        </Alert>
+      </div>
+    );
+  }
+
+  const cart = cartQuery.data;
+
+  if (cart && cart.items.length === 0) {
+    return (
+      <div className="flex flex-col gap-4">
+        <h1 className="text-xl font-semibold">{t("title")}</h1>
+        <p className="text-muted-foreground">{t("emptyCart")}</p>
+        <Link href="/products" className="text-sm text-primary hover:underline">
+          {t("continueShopping")}
+        </Link>
+      </div>
+    );
+  }
+
+  if (!cart) {
+    return <p>{tCommon("loading")}</p>;
+  }
+
+  return user ? (
+    <UserCheckout cart={cart} channel={channel} />
+  ) : (
+    <GuestCheckout cart={cart} channel={channel} />
+  );
+}
+
+/** Hook: place the order and, on success, drop the cached cart and go to the order. */
+function usePlaceOrder(channel: string) {
+  const queryClient = useQueryClient();
+  const router = useRouter();
+  return useMutation({
+    mutationFn: (shipping: PlaceOrderShipping) => placeOrder(channel, shipping),
+    onSuccess: (order: Order) => {
+      // The cart is now consumed; drop the cached copy so a revisit refetches the
+      // (empty) cart rather than showing stale lines.
+      queryClient.removeQueries({ queryKey: CART_KEY(channel) });
+      router.push(`/orders/${order.number}`);
+    },
+  });
+}
+
+// --- Signed-in shopper: pick a saved address -----------------------------------------
+
+interface FlowProps {
+  cart: Cart;
+  channel: string;
+}
+
+function UserCheckout({ cart, channel }: FlowProps) {
+  const t = useTranslations("checkout");
+  const tCommon = useTranslations("common");
+  const queryClient = useQueryClient();
+  const router = useRouter();
 
   const [step, setStep] = useState<Step>("address");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [addingNew, setAddingNew] = useState(false);
 
-  const cartQuery = useQuery({
-    queryKey: CART_KEY(channel),
-    queryFn: () => getCart(channel),
-    enabled: Boolean(user),
-  });
-
-  const addressesQuery = useQuery({
-    queryKey: ADDRESSES_KEY,
-    queryFn: listMyAddresses,
-    enabled: Boolean(user),
-  });
-
+  const addressesQuery = useQuery({ queryKey: ADDRESSES_KEY, queryFn: listMyAddresses });
   const addresses = addressesQuery.data;
 
   // Preselect the shopper's default address (or the first) once the book loads, so a
@@ -83,63 +160,24 @@ export function CheckoutView() {
     },
   });
 
-  const place = useMutation({
-    mutationFn: (addressId: string) => placeOrder(channel, addressId),
-    onSuccess: (order) => {
-      // The cart is now consumed; drop the cached copy so a revisit refetches the
-      // (empty) cart rather than showing stale lines.
-      queryClient.removeQueries({ queryKey: CART_KEY(channel) });
-      router.push(`/orders/${order.number}`);
-    },
-  });
+  const place = usePlaceOrder(channel);
 
-  if (userLoading) {
+  if (addressesQuery.isLoading) {
     return <p>{tCommon("loading")}</p>;
   }
 
-  if (!user) {
-    return (
-      <div className="flex flex-col gap-4">
-        <h1 className="text-xl font-semibold">{t("title")}</h1>
-        <Alert>{t("loginRequired")}</Alert>
-        <Link href="/login" className="text-sm text-primary hover:underline">
-          {t("goLogin")}
-        </Link>
-      </div>
-    );
-  }
-
-  if (cartQuery.isLoading || addressesQuery.isLoading) {
-    return <p>{tCommon("loading")}</p>;
-  }
-
-  if (cartQuery.isError || addressesQuery.isError) {
-    const err = cartQuery.error ?? addressesQuery.error;
+  if (addressesQuery.isError) {
     return (
       <div className="flex flex-col gap-4">
         <h1 className="text-xl font-semibold">{t("title")}</h1>
         <Alert variant="destructive">
-          {err instanceof ApiError ? err.detail : t("loadError")}
+          {addressesQuery.error instanceof ApiError ? addressesQuery.error.detail : t("loadError")}
         </Alert>
       </div>
     );
   }
 
-  const cart = cartQuery.data;
-  const hasUnavailable = (cart?.items ?? []).some((line) => !line.available);
-
-  if (cart && cart.items.length === 0) {
-    return (
-      <div className="flex flex-col gap-4">
-        <h1 className="text-xl font-semibold">{t("title")}</h1>
-        <p className="text-muted-foreground">{t("emptyCart")}</p>
-        <Link href="/products" className="text-sm text-primary hover:underline">
-          {t("continueShopping")}
-        </Link>
-      </div>
-    );
-  }
-
+  const hasUnavailable = cart.items.some((line) => !line.available);
   const selected = (addresses ?? []).find((a) => a.id === selectedId) ?? null;
   const showForm = addingNew || (addresses ?? []).length === 0;
 
@@ -172,12 +210,12 @@ export function CheckoutView() {
         />
       ) : null}
 
-      {step === "review" && selected && cart ? (
+      {step === "review" && selected ? (
         <ReviewStep
           address={selected}
           cart={cart}
           onBack={() => setStep("address")}
-          onPlace={() => place.mutate(selected.id)}
+          onPlace={() => place.mutate({ addressId: selected.id })}
           placing={place.isPending}
           placeError={place.isError ? t("placeError") : null}
           blocked={hasUnavailable}
@@ -185,6 +223,90 @@ export function CheckoutView() {
       ) : null}
     </div>
   );
+}
+
+// --- Guest shopper: enter a one-off shipping address inline --------------------------
+
+function GuestCheckout({ cart, channel }: FlowProps) {
+  const t = useTranslations("checkout");
+  const router = useRouter();
+
+  const [step, setStep] = useState<Step>("address");
+  const [shipping, setShipping] = useState<AddressInput | null>(null);
+
+  const place = usePlaceOrder(channel);
+
+  const hasUnavailable = cart.items.some((line) => !line.available);
+
+  return (
+    <div className="flex flex-col gap-6">
+      <h1 className="text-xl font-semibold">{t("title")}</h1>
+
+      {hasUnavailable ? <Alert variant="destructive">{t("unavailableBlocked")}</Alert> : null}
+
+      {step === "address" ? (
+        <div className="flex flex-col gap-4">
+          <h2 className="font-medium">{t("addressStepTitle")}</h2>
+          <p className="text-muted-foreground text-sm">{t("guestAddressHint")}</p>
+          <Card>
+            <CardContent className="pt-6">
+              <AddressForm
+                initial={shipping ? toAddress(shipping) : undefined}
+                onSubmit={(input) => {
+                  setShipping(input);
+                  setStep("review");
+                }}
+                onCancel={() => router.push("/cart")}
+                submitting={false}
+                errorMessage={hasUnavailable ? t("unavailableBlocked") : null}
+              />
+            </CardContent>
+          </Card>
+        </div>
+      ) : null}
+
+      {step === "review" && shipping ? (
+        <ReviewStep
+          address={inlineToDisplay(shipping)}
+          cart={cart}
+          onBack={() => setStep("address")}
+          onPlace={() => place.mutate({ shippingAddress: shipping })}
+          placing={place.isPending}
+          placeError={place.isError ? t("placeError") : null}
+          blocked={hasUnavailable}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+/** Adapt a guest's `AddressInput` to the `Address` shape `AddressForm` prefills from. */
+function toAddress(input: AddressInput): Address {
+  return {
+    id: "",
+    recipient_name: input.recipient_name,
+    phone_number: input.phone_number,
+    province: input.province,
+    city: input.city,
+    postal_code: input.postal_code,
+    line1: input.line1,
+    line2: input.line2 ?? null,
+    is_default: false,
+    created_at: "",
+  };
+}
+
+/** Project a guest's `AddressInput` to the seven display fields the review shows. */
+function inlineToDisplay(input: AddressInput): ShippingDisplay {
+  return {
+    recipient_name: input.recipient_name,
+    phone_number: input.phone_number,
+    province: input.province,
+    city: input.city,
+    postal_code: input.postal_code,
+    line1: input.line1,
+    line2: input.line2 ?? null,
+  };
 }
 
 interface AddressStepProps {
@@ -288,7 +410,7 @@ function AddressStep({
 }
 
 interface ReviewStepProps {
-  address: Address;
+  address: ShippingDisplay;
   cart: Cart;
   onBack: () => void;
   onPlace: () => void;

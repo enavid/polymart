@@ -23,6 +23,7 @@ from src.application.order.ports import (
     ChannelReader,
     CheckoutLine,
     Clock,
+    InlineShippingAddress,
     Inventory,
     OrderNumberGenerator,
     OrderPage,
@@ -82,7 +83,7 @@ def _resolve_shipping_address(
     return _to_shipping_address(owned)
 
 
-def _to_shipping_address(owned: OwnedAddress) -> ShippingAddress:
+def _to_shipping_address(owned: OwnedAddress | InlineShippingAddress) -> ShippingAddress:
     return ShippingAddress(
         recipient_name=owned.recipient_name,
         phone_number=owned.phone_number,
@@ -96,11 +97,18 @@ def _to_shipping_address(owned: OwnedAddress) -> ShippingAddress:
 
 @dataclass(frozen=True)
 class PlaceOrderCommand:
-    """Input for turning a shopper's cart into a placed order."""
+    """Input for turning a shopper's cart into a placed order.
+
+    The shipping address arrives one of two ways, exactly one of which is set: a signed-in
+    shopper picks a saved ``address_id`` (resolved from their address book), while a guest
+    supplies a one-off ``shipping_address`` inline (they have no book). Supplying neither
+    is rejected as an unknown address.
+    """
 
     owner: str
     channel: str
-    address_id: str
+    address_id: str | None = None
+    shipping_address: InlineShippingAddress | None = None
 
 
 class PlaceOrder:
@@ -141,9 +149,7 @@ class PlaceOrder:
     def execute(self, command: PlaceOrderCommand) -> Order:
         channel = ChannelRef(command.channel)
         currency = _resolve_currency(self._channels, channel.value)
-        shipping_address = _resolve_shipping_address(
-            self._addresses, command.owner, command.address_id
-        )
+        shipping_address = self._resolve_shipping(command)
 
         with self._uow.atomic():
             items = self._carts.line_items(command.owner, channel.value)
@@ -188,6 +194,19 @@ class PlaceOrder:
             currency=currency,
         )
         return saved
+
+    def _resolve_shipping(self, command: PlaceOrderCommand) -> ShippingAddress:
+        """Resolve the order's captured shipping address from whichever source was given.
+
+        An inline address (a guest's one-off form) is captured directly; otherwise the
+        saved ``address_id`` is resolved from the owner's book. Supplying neither cannot
+        ship anywhere, so it is refused exactly like an unknown saved address.
+        """
+        if command.shipping_address is not None:
+            return _to_shipping_address(command.shipping_address)
+        if command.address_id is not None:
+            return _resolve_shipping_address(self._addresses, command.owner, command.address_id)
+        raise UnknownShippingAddressError("")
 
     def _capture_and_deduct(
         self, items: tuple[CheckoutLine, ...], channel: str, currency: str

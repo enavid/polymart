@@ -4,7 +4,6 @@ import { setupServer } from "msw/node";
 import { http, HttpResponse } from "msw";
 
 import { OrdersList } from "@/components/orders/orders-list";
-import { markSignedIn } from "@/lib/auth/session-hint";
 import messages from "@/i18n/messages/fa.json";
 import { renderWithProviders } from "@/test/utils";
 
@@ -15,21 +14,6 @@ afterEach(() => {
   window.localStorage.clear();
 });
 afterAll(() => server.close());
-
-function authed() {
-  markSignedIn();
-  server.use(
-    http.get("*/auth/me/", () =>
-      HttpResponse.json({
-        id: 7,
-        phone_number: "+989120000001",
-        email: "",
-        full_name: "Shopper",
-        is_staff: false,
-      }),
-    ),
-  );
-}
 
 const orderRow = {
   number: "ORD-ABC123XYZ0",
@@ -42,18 +26,7 @@ const orderRow = {
 };
 
 describe("OrdersList", () => {
-  it("prompts to log in when unauthenticated", async () => {
-    server.use(
-      http.get("*/auth/me/", () => HttpResponse.json({ detail: "no" }, { status: 401 })),
-    );
-
-    renderWithProviders(<OrdersList />);
-
-    expect(await screen.findByText(messages.orders.loginRequired)).toBeInTheDocument();
-  });
-
   it("shows an empty history", async () => {
-    authed();
     server.use(
       http.get("*/orders/", () =>
         HttpResponse.json({ count: 0, limit: 20, offset: 0, results: [] }),
@@ -65,8 +38,7 @@ describe("OrdersList", () => {
     expect(await screen.findByText(messages.orders.empty)).toBeInTheDocument();
   });
 
-  it("lists orders with the server total and localized status", async () => {
-    authed();
+  it("lists orders with the server total and localized status (user or guest)", async () => {
     server.use(
       http.get("*/orders/", () =>
         HttpResponse.json({ count: 1, limit: 20, offset: 0, results: [orderRow] }),
@@ -85,7 +57,6 @@ describe("OrdersList", () => {
   });
 
   it("surfaces a load error", async () => {
-    authed();
     server.use(
       http.get("*/orders/", () => HttpResponse.json({ detail: "boom" }, { status: 500 })),
     );

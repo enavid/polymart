@@ -13,9 +13,13 @@ from typing import ClassVar
 
 from django.conf import settings
 from django.db import models
+from django.db.models import Q
 
 _ORDER_NUMBER_MAX_LENGTH = 40
 _CHANNEL_SLUG_MAX_LENGTH = 64
+# A guest owner is identified by the same CSPRNG session token as their cart (~43 url-safe
+# base64 chars for 32 bytes); 64 leaves headroom.
+_GUEST_TOKEN_MAX_LENGTH = 64
 _CURRENCY_CODE_MAX_LENGTH = 3
 _SKU_MAX_LENGTH = 64
 _STATUS_MAX_LENGTH = 16
@@ -36,7 +40,9 @@ _ADDRESS_LINE_MAX_LENGTH = 255
 class OrderModel(models.Model):
     """A placed order (one row per order).
 
-    The owner is a hard FK to the user (an order is meaningless without its owner). The
+    The owner is either a signed-in user (a hard FK, cascade-deleted with the user) or an
+    anonymous guest (the ``guest_token`` from their session cookie); a check constraint
+    enforces that exactly one is set, mirroring the cart's dual-column ownership. The
     channel is a soft slug reference -- the channel lives in a separate bounded context
     and is never deleted out from under an order -- matching how the catalog references
     channels. ``number`` is the public, unguessable, unique reference used in URLs.
@@ -47,6 +53,14 @@ class OrderModel(models.Model):
         settings.AUTH_USER_MODEL,
         related_name="orders",
         on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+    )
+    # NULL (never "") is the "no guest owner" sentinel, so the check constraint can tell a
+    # guest order (owner NULL, token set) from a user order (owner set, token NULL) via IS
+    # NULL. A guest order is intentionally not cascade-reaped; a later job expires old ones.
+    guest_token = models.CharField(  # noqa: DJ001 - NULL is the "no guest owner" sentinel
+        max_length=_GUEST_TOKEN_MAX_LENGTH, null=True, blank=True
     )
     channel_slug = models.SlugField(max_length=_CHANNEL_SLUG_MAX_LENGTH)
     currency_code = models.CharField(max_length=_CURRENCY_CODE_MAX_LENGTH)
@@ -79,6 +93,18 @@ class OrderModel(models.Model):
         ordering = ("-id",)
         indexes: ClassVar[list[models.Index]] = [
             models.Index(fields=["owner", "-id"], name="idx_order_owner_recent"),
+            # Guest history is scoped by token; a matching index keeps that read cheap.
+            models.Index(fields=["guest_token", "-id"], name="idx_order_guest_recent"),
+        ]
+        constraints: ClassVar[list[models.BaseConstraint]] = [
+            # Exactly one owner kind: a user FK or a guest token, never both, never neither.
+            models.CheckConstraint(
+                name="order_exactly_one_owner",
+                condition=(
+                    Q(owner__isnull=False, guest_token__isnull=True)
+                    | Q(owner__isnull=True, guest_token__isnull=False)
+                ),
+            ),
         ]
         verbose_name = "order"
         verbose_name_plural = "orders"

@@ -119,6 +119,25 @@ class OwnedAddress:
     line2: str | None
 
 
+@dataclass(frozen=True)
+class InlineShippingAddress:
+    """A one-off shipping address captured inline at checkout (a guest has no address book).
+
+    Same shape as ``OwnedAddress`` but carries no id/owner: it is entered on the
+    checkout form and captured onto the order directly, rather than resolved from a
+    saved book entry. Transport (the serializer) validates its format; the order's
+    ``ShippingAddress`` value object re-checks presence/length when it is built.
+    """
+
+    recipient_name: str
+    phone_number: str
+    province: str
+    city: str
+    postal_code: str
+    line1: str
+    line2: str | None
+
+
 class AddressReader(ABC):
     """Narrow read boundary onto the address context for capturing a checkout's shipping address."""
 

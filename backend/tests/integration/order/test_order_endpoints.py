@@ -1,8 +1,9 @@
 """Integration tests for the order HTTP endpoints (real stack).
 
-Cover the secure-by-default posture (auth required), checkout (place → 201), the
-owner-scoping that makes IDOR impossible, the money/stock conflict paths (empty cart,
-oversell, unpurchasable line) as 409s, order history paging, and cancel/restock.
+Cover both a signed-in user's checkout (saved address) and a guest's (inline address),
+the owner-scoping that makes IDOR impossible for either, the money/stock conflict paths
+(empty cart, oversell, unpurchasable line) as 409s, order history paging, and
+cancel/restock.
 """
 
 from __future__ import annotations
@@ -42,7 +43,19 @@ pytestmark = [pytest.mark.django_db, pytest.mark.integration]
 
 _CHANNEL = "ir-main"
 _ORDERS_URL = "/api/v1/orders/"
+_CART_ITEMS_URL = "/api/v1/cart/items/"
 _ADDRESS_ID = "ADDR-SHIP000001"
+
+# A guest's one-off inline shipping address (Iranian mobile + 10-digit postal), the shape
+# the checkout form submits when there is no address book.
+_INLINE_ADDRESS = {
+    "recipient_name": "Guest Buyer",
+    "phone_number": "09121112233",
+    "province": "Isfahan",
+    "city": "Isfahan",
+    "postal_code": "8134567890",
+    "line1": "Chaharbagh St, No. 9",
+}
 
 
 def _seed_catalog() -> None:
@@ -96,12 +109,113 @@ def _checkout(client: APIClient, *, address_id: str = _ADDRESS_ID, channel: str 
     return client.post(_ORDERS_URL, {"channel": channel, "address_id": address_id}, format="json")
 
 
-class TestAuthorization:
-    def test_anonymous_cannot_list_orders(self) -> None:
-        assert APIClient().get(_ORDERS_URL).status_code == 401
+def _guest_add_to_cart(client: APIClient, sku: str, quantity: int):
+    """Add a line as a guest -- the first write mints the guest session cookie, which the
+    test client then carries on every later request (so the guest is remembered)."""
+    return client.post(
+        _CART_ITEMS_URL,
+        {"channel": _CHANNEL, "sku": sku, "quantity": quantity},
+        format="json",
+    )
 
-    def test_anonymous_cannot_place_an_order(self) -> None:
-        assert _checkout(APIClient()).status_code == 401
+
+def _guest_checkout(client: APIClient, *, address=None, channel: str = _CHANNEL):
+    """POST the checkout body a guest submits (channel + inline shipping address)."""
+    return client.post(
+        _ORDERS_URL,
+        {"channel": channel, "shipping_address": address or _INLINE_ADDRESS},
+        format="json",
+    )
+
+
+class TestGuestCheckout:
+    """A guest (no account) builds a cart and checks out with an inline shipping address,
+    remembered only by their HttpOnly session cookie."""
+
+    def test_a_guest_places_an_order_with_an_inline_address(self) -> None:
+        _seed_catalog()
+        client = APIClient()
+        assert _guest_add_to_cart(client, "HB-250", 2).status_code == 200
+
+        response = _guest_checkout(client)
+
+        assert response.status_code == 201
+        assert response.data["status"] == "pending"
+        assert response.data["total"] == "240000.0000"
+        assert response.data["shipping_address"]["recipient_name"] == "Guest Buyer"
+        assert response.data["shipping_address"]["city"] == "Isfahan"
+        # Stock was captured for the guest's order exactly as for a user's.
+        assert DjangoStockRepository().get_quantity("HB-250").value == 3
+
+    def test_a_guest_can_read_and_list_only_their_own_order(self) -> None:
+        _seed_catalog()
+        client = APIClient()
+        _guest_add_to_cart(client, "HB-250", 1)
+        number = _guest_checkout(client).data["number"]
+
+        # The same cookie resolves the guest's own order and history.
+        assert client.get(f"{_ORDERS_URL}{number}/").status_code == 200
+        assert client.get(_ORDERS_URL).data["count"] == 1
+
+    def test_another_guest_cannot_see_the_order(self) -> None:
+        # A fresh client carries no cookie -> a different (throwaway) guest identity, so
+        # the order number leaks nothing even if guessed/replayed (IDOR).
+        _seed_catalog()
+        buyer = APIClient()
+        _guest_add_to_cart(buyer, "HB-250", 1)
+        number = _guest_checkout(buyer).data["number"]
+
+        other = APIClient()
+        assert other.get(f"{_ORDERS_URL}{number}/").status_code == 404
+        assert other.get(_ORDERS_URL).data["count"] == 0
+
+    def test_a_guest_cancels_their_pending_order_and_stock_is_restored(self) -> None:
+        _seed_catalog()
+        client = APIClient()
+        _guest_add_to_cart(client, "HB-250", 2)
+        number = _guest_checkout(client).data["number"]
+        assert DjangoStockRepository().get_quantity("HB-250").value == 3
+
+        response = client.post(f"{_ORDERS_URL}{number}/cancel/")
+
+        assert response.status_code == 200
+        assert response.data["status"] == "cancelled"
+        assert DjangoStockRepository().get_quantity("HB-250").value == 5
+
+    def test_a_cookieless_guest_with_an_empty_cart_is_a_409(self) -> None:
+        # No cart write happened, so there is no cookie and no cart -> checkout conflicts.
+        _seed_catalog()
+        assert _guest_checkout(APIClient()).status_code == 409
+
+    def test_supplying_both_address_id_and_inline_address_is_a_400(self) -> None:
+        _seed_catalog()
+        client = APIClient()
+        _guest_add_to_cart(client, "HB-250", 1)
+
+        response = client.post(
+            _ORDERS_URL,
+            {"channel": _CHANNEL, "address_id": _ADDRESS_ID, "shipping_address": _INLINE_ADDRESS},
+            format="json",
+        )
+        assert response.status_code == 400
+
+    def test_a_malformed_inline_phone_is_a_400(self) -> None:
+        _seed_catalog()
+        client = APIClient()
+        _guest_add_to_cart(client, "HB-250", 1)
+
+        response = _guest_checkout(client, address={**_INLINE_ADDRESS, "phone_number": "12345"})
+        assert response.status_code == 400
+
+    def test_a_guest_cannot_check_out_against_a_saved_address_id(self) -> None:
+        # A guest has no address book, so a saved-address id resolves to nothing for them
+        # (exactly like an unknown one) -- they must supply an inline address instead.
+        _seed_catalog()
+        client = APIClient()
+        _guest_add_to_cart(client, "HB-250", 1)
+
+        response = _checkout(client, address_id=_ADDRESS_ID)
+        assert response.status_code == 400
 
 
 class TestPlaceOrder:

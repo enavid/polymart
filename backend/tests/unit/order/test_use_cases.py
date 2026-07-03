@@ -22,6 +22,7 @@ from src.application.order.ports import (
     ChannelReader,
     CheckoutLine,
     Clock,
+    InlineShippingAddress,
     Inventory,
     OrderNumberGenerator,
     OrderRepository,
@@ -439,6 +440,96 @@ class TestPlaceOrder:
         assert uow.rolled_back is True
         # No order was persisted.
         assert orders.list_for_owner("7", limit=10, offset=0) == ((), 0)
+
+
+_INLINE_ADDRESS = InlineShippingAddress(
+    recipient_name="Guest Buyer",
+    phone_number="09121112233",
+    province="Isfahan",
+    city="Isfahan",
+    postal_code="8134567890",
+    line1="Chaharbagh St, No. 9",
+    line2=None,
+)
+
+
+class TestPlaceOrderInlineShipping:
+    """A guest (owner ``g:<token>``) checks out with a one-off inline shipping address,
+    never touching the address book (which they have none of)."""
+
+    def test_captures_the_inline_shipping_address(self) -> None:
+        addresses = FakeAddresses({})  # no saved addresses for anyone
+        place = _build_place_order(
+            cart_items=(CheckoutLine("HB-250", 1),),
+            prices={"HB-250": _money("120000.00")},
+            stock={"HB-250": 5},
+            addresses=addresses,
+        )
+
+        order = place.execute(
+            PlaceOrderCommand(
+                owner="g:tok-abc", channel="ir-main", shipping_address=_INLINE_ADDRESS
+            )
+        )
+
+        assert order.owner == "g:tok-abc"
+        assert order.shipping_address.recipient_name == "Guest Buyer"
+        assert order.shipping_address.city == "Isfahan"
+        assert order.shipping_address.postal_code == "8134567890"
+
+    def test_inline_capture_never_reads_the_address_book(self) -> None:
+        # If the address reader is consulted at all for an inline checkout it is a bug;
+        # a reader that explodes on use proves the inline path bypasses it entirely.
+        class ExplodingAddresses(AddressReader):
+            def get_for_owner(self, owner: str, address_id: str) -> OwnedAddress | None:
+                raise AssertionError("inline checkout must not read the address book")
+
+        place = PlaceOrder(
+            unit_of_work=FakeUnitOfWork(),
+            carts=FakeCart((CheckoutLine("HB-250", 1),)),
+            pricing=FakePricing({"HB-250": _money("120000.00")}),
+            channels=FakeChannels("IRR"),
+            addresses=ExplodingAddresses(),
+            inventory=FakeInventory({"HB-250": 5}),
+            orders=FakeOrders(),
+            numbers=FakeNumbers(),
+            clock=FixedClock(),
+            audit=RecordingAudit(),
+        )
+
+        order = place.execute(
+            PlaceOrderCommand(
+                owner="g:tok-abc", channel="ir-main", shipping_address=_INLINE_ADDRESS
+            )
+        )
+        assert order.total.amount == Decimal("120000.00")
+
+    def test_audits_the_guest_placement_by_owner_token(self) -> None:
+        audit = RecordingAudit()
+        place = _build_place_order(
+            cart_items=(CheckoutLine("HB-250", 1),),
+            prices={"HB-250": _money("120000.00")},
+            stock={"HB-250": 5},
+            audit=audit,
+        )
+
+        place.execute(
+            PlaceOrderCommand(
+                owner="g:tok-xyz", channel="ir-main", shipping_address=_INLINE_ADDRESS
+            )
+        )
+
+        assert audit.records[-1]["actor"] == "g:tok-xyz"
+
+    def test_requires_either_an_address_id_or_an_inline_address(self) -> None:
+        place = _build_place_order(
+            cart_items=(CheckoutLine("HB-250", 1),),
+            prices={"HB-250": _money("120000.00")},
+            stock={"HB-250": 5},
+        )
+
+        with pytest.raises(UnknownShippingAddressError):
+            place.execute(PlaceOrderCommand(owner="g:tok-abc", channel="ir-main"))
 
 
 # --- ListMyOrders / GetMyOrder -------------------------------------------

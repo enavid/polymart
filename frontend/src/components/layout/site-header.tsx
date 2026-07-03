@@ -23,8 +23,8 @@ export function SiteHeader() {
           <Link href="/products" className="px-2 hover:underline">
             {t("storefront")}
           </Link>
-          {/* The cart is a first-class storefront entry point for everyone; a
-              guest who opens it is prompted to sign in. */}
+          {/* The cart is a first-class storefront entry point for everyone; a guest
+              builds and checks out a cart without signing in (guest checkout). */}
           <Link href="/cart" className="px-2 hover:underline">
             {t("cart")}
           </Link>

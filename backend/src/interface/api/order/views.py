@@ -3,11 +3,12 @@
 Views parse input, delegate to a use case, and serialize the result -- no business
 logic. Domain exceptions are translated to HTTP status codes here.
 
-Every route resolves the order from the authenticated user (``request.user``); there is
-no owner id in the request body, and reads are owner-scoped in the repository, so one
-shopper can never place, read, or cancel another's order (IDOR is structurally
-impossible). Order numbers are opaque and unguessable, so appearing in a URL leaks
-nothing.
+Every route resolves the order's owner from the request -- the authenticated user, or an
+anonymous guest identified by their HttpOnly session cookie -- never from a
+client-supplied id: there is no owner id in the request body, and reads are owner-scoped
+in the repository, so one shopper can never place, read, or cancel another's order (IDOR
+is structurally impossible for guests and users alike). Order numbers are opaque and
+unguessable, so appearing in a URL leaks nothing.
 """
 
 from __future__ import annotations
@@ -17,11 +18,12 @@ from typing import ClassVar
 import structlog
 from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework import status
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import AllowAny
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from src.application.order.ports import InlineShippingAddress
 from src.application.order.use_cases import (
     DEFAULT_PAGE_LIMIT,
     CancelMyOrderCommand,
@@ -42,6 +44,7 @@ from src.domain.order.exceptions import (
     VariantNotPurchasableError,
 )
 from src.interface.api.common import ErrorSerializer
+from src.interface.api.guest import resolve_owner
 from src.interface.api.order.container import (
     build_cancel_my_order,
     build_get_my_order,
@@ -59,8 +62,30 @@ logger = structlog.get_logger(__name__)
 
 
 def _owner(request: Request) -> str:
-    """The authenticated user's stable id -- the order's owner (never the PII username)."""
-    return str(request.user.pk)
+    """The request's order owner -- ``u:<pk>`` for a user, ``g:<token>`` for a guest.
+
+    Orders are never minted a new guest cookie: a guest reaching checkout already holds
+    one from building their cart, and a cookieless request resolves to a throwaway owner
+    that owns no cart/order (so it reads empty and cannot place -- empty cart -> 409).
+    """
+    return resolve_owner(request, mint=False).owner
+
+
+def _inline_shipping(data: dict[str, object]) -> InlineShippingAddress | None:
+    """Build the inline shipping address from validated data, if a guest supplied one."""
+    raw = data.get("shipping_address")
+    if raw is None:
+        return None
+    address = dict(raw)  # type: ignore[call-overload]
+    return InlineShippingAddress(
+        recipient_name=address["recipient_name"],
+        phone_number=address["phone_number"],
+        province=address["province"],
+        city=address["city"],
+        postal_code=address["postal_code"],
+        line1=address["line1"],
+        line2=address.get("line2") or None,
+    )
 
 
 def _order_payload(order: Order) -> dict[str, object]:
@@ -94,9 +119,9 @@ def _order_payload(order: Order) -> dict[str, object]:
 
 
 class OrderCollectionView(APIView):
-    """List the authenticated shopper's orders, or place a new one (checkout)."""
+    """List the current shopper's orders, or place a new one (checkout) -- user or guest."""
 
-    permission_classes: ClassVar = [IsAuthenticated]
+    permission_classes: ClassVar = [AllowAny]
 
     @extend_schema(
         operation_id="orders_list",
@@ -104,7 +129,7 @@ class OrderCollectionView(APIView):
             OpenApiParameter(name="limit", type=int, location=OpenApiParameter.QUERY),
             OpenApiParameter(name="offset", type=int, location=OpenApiParameter.QUERY),
         ],
-        responses={200: OrderPageSerializer, 400: ErrorSerializer, 401: ErrorSerializer},
+        responses={200: OrderPageSerializer, 400: ErrorSerializer},
     )
     def get(self, request: Request) -> Response:
         params = OrderListQuerySerializer(data=request.query_params)
@@ -132,7 +157,6 @@ class OrderCollectionView(APIView):
         responses={
             201: OrderSerializer,
             400: ErrorSerializer,
-            401: ErrorSerializer,
             404: ErrorSerializer,
             409: ErrorSerializer,
         },
@@ -140,10 +164,12 @@ class OrderCollectionView(APIView):
     def post(self, request: Request) -> Response:
         serializer = PlaceOrderSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
         command = PlaceOrderCommand(
             owner=_owner(request),
-            channel=serializer.validated_data["channel"],
-            address_id=serializer.validated_data["address_id"],
+            channel=data["channel"],
+            address_id=data.get("address_id"),
+            shipping_address=_inline_shipping(data),
         )
         try:
             order = build_place_order().execute(command)
@@ -168,13 +194,13 @@ class OrderCollectionView(APIView):
 
 
 class OrderDetailView(APIView):
-    """Read one of the authenticated shopper's orders by number."""
+    """Read one of the current shopper's orders by number (user or guest)."""
 
-    permission_classes: ClassVar = [IsAuthenticated]
+    permission_classes: ClassVar = [AllowAny]
 
     @extend_schema(
         operation_id="orders_retrieve",
-        responses={200: OrderSerializer, 401: ErrorSerializer, 404: ErrorSerializer},
+        responses={200: OrderSerializer, 404: ErrorSerializer},
     )
     def get(self, request: Request, number: str) -> Response:
         try:
@@ -190,16 +216,15 @@ class OrderDetailView(APIView):
 
 
 class OrderCancelView(APIView):
-    """Cancel one of the authenticated shopper's still-pending orders."""
+    """Cancel one of the current shopper's still-pending orders (user or guest)."""
 
-    permission_classes: ClassVar = [IsAuthenticated]
+    permission_classes: ClassVar = [AllowAny]
 
     @extend_schema(
         operation_id="orders_cancel",
         request=None,
         responses={
             200: OrderSerializer,
-            401: ErrorSerializer,
             404: ErrorSerializer,
             409: ErrorSerializer,
         },

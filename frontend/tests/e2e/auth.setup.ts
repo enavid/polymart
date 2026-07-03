@@ -47,6 +47,10 @@ const WARM_ROUTES = [
   "/checkout",
   "/account",
   "/addresses",
+  "/orders",
+  // A dummy order number compiles the dynamic order route (it renders "not found",
+  // but the route is now warm for the checkout/guest specs that land on a real one).
+  "/orders/ORD-WARMUP0000",
   "/admin/catalog/products",
   "/admin/catalog/products/house-blend",
   "/admin/catalog/variants/HB-250",

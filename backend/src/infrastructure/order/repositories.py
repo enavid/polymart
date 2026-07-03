@@ -9,6 +9,7 @@ order (or, via the address reader, capture another shopper's saved address).
 from __future__ import annotations
 
 from contextlib import AbstractContextManager
+from typing import Any
 
 import structlog
 from django.db import transaction
@@ -44,9 +45,31 @@ from src.infrastructure.order.models import OrderLineModel, OrderModel
 logger = structlog.get_logger(__name__)
 
 
-def _owner_pk(owner: str) -> int:
-    """Translate the domain's string owner id back to the user's integer primary key."""
-    return int(owner)
+def _owner_filter(owner: str) -> dict[str, Any]:
+    """Map the application's opaque owner id to the order/cart columns that identify it.
+
+    ``u:<pk>`` -> the user FK (``owner_id``); ``g:<token>`` -> the ``guest_token`` column.
+    Mirrors the cart's decode and the encoding produced at the HTTP boundary (see
+    ``src.interface.api.guest``); the split-on-colon contract is the only coupling, so the
+    domain's stable string id stays independent of the database's key types.
+    """
+    kind, _, value = owner.partition(":")
+    if kind == "u":
+        return {"owner_id": int(value)}
+    if kind == "g":
+        return {"guest_token": value}
+    raise ValueError(f"unrecognized order owner id: {owner!r}")  # pragma: no cover - defensive
+
+
+def _user_pk_or_none(owner: str) -> int | None:
+    """The user's integer pk for a ``u:<pk>`` owner, or ``None`` for a guest.
+
+    A guest owns no address-book entries, so an address lookup for a guest owner has no
+    row to find; returning ``None`` lets the reader answer "not found" without a decode
+    error, exactly as a nonexistent saved address would.
+    """
+    kind, _, value = owner.partition(":")
+    return int(value) if kind == "u" else None
 
 
 class DjangoOrderRepository(OrderRepository):
@@ -56,7 +79,7 @@ class DjangoOrderRepository(OrderRepository):
         address = order.shipping_address
         model = OrderModel.objects.create(
             number=order.number.value,
-            owner_id=_owner_pk(order.owner),
+            **_owner_filter(order.owner),
             channel_slug=order.channel.value,
             currency_code=order.currency,
             total=order.total.amount,
@@ -81,17 +104,17 @@ class DjangoOrderRepository(OrderRepository):
             )
             for position, line in enumerate(order.lines)
         )
-        return self._load(model.number, owner_pk=model.owner_id)
+        return self._load(model.number, owner=order.owner)
 
     def get_for_owner(self, owner: str, number: str) -> Order:
-        return self._load(number, owner_pk=_owner_pk(owner))
+        return self._load(number, owner=owner)
 
     def get_for_update(self, owner: str, number: str) -> Order:
         # Lock the order row so two concurrent status changes (e.g. two cancels)
         # serialize instead of both reading a pending order.
         try:
             model = OrderModel.objects.select_for_update().get(
-                number=number, owner_id=_owner_pk(owner)
+                number=number, **_owner_filter(owner)
             )
         except OrderModel.DoesNotExist as exc:
             raise OrderNotFoundError(number) from exc
@@ -100,7 +123,7 @@ class DjangoOrderRepository(OrderRepository):
     def list_for_owner(
         self, owner: str, *, limit: int, offset: int
     ) -> tuple[tuple[Order, ...], int]:
-        base = OrderModel.objects.filter(owner_id=_owner_pk(owner)).prefetch_related("lines")
+        base = OrderModel.objects.filter(**_owner_filter(owner)).prefetch_related("lines")
         total = base.count()
         # Meta.ordering is already newest-first ("-id").
         rows = list(base[offset : offset + limit])
@@ -108,13 +131,13 @@ class DjangoOrderRepository(OrderRepository):
 
     def set_status(self, order: Order, status: OrderStatus) -> Order:
         OrderModel.objects.filter(number=order.number.value).update(status=status.value)
-        return self._load(order.number.value, owner_pk=_owner_pk(order.owner))
+        return self._load(order.number.value, owner=order.owner)
 
     @staticmethod
-    def _load(number: str, *, owner_pk: int) -> Order:
+    def _load(number: str, *, owner: str) -> Order:
         try:
             model = OrderModel.objects.prefetch_related("lines").get(
-                number=number, owner_id=owner_pk
+                number=number, **_owner_filter(owner)
             )
         except OrderModel.DoesNotExist as exc:
             raise OrderNotFoundError(number) from exc
@@ -125,7 +148,7 @@ class DjangoCartForCheckout(CartForCheckout):
     """Read and clear the owner's cart, bridging to the cart context's models."""
 
     def line_items(self, owner: str, channel: str) -> tuple[CheckoutLine, ...]:
-        cart = CartModel.objects.filter(owner_id=_owner_pk(owner), channel_slug=channel).first()
+        cart = CartModel.objects.filter(**_owner_filter(owner), channel_slug=channel).first()
         if cart is None:
             return ()
         rows = cart.lines.all().order_by("position").values_list("sku", "quantity")
@@ -134,7 +157,7 @@ class DjangoCartForCheckout(CartForCheckout):
     def clear(self, owner: str, channel: str) -> None:
         # Delete the cart's lines (the row is left, so a fresh read returns an empty
         # cart). Runs inside the checkout unit of work, so it commits with the order.
-        cart = CartModel.objects.filter(owner_id=_owner_pk(owner), channel_slug=channel).first()
+        cart = CartModel.objects.filter(**_owner_filter(owner), channel_slug=channel).first()
         if cart is not None:
             CartLineModel.objects.filter(cart=cart).delete()
 
@@ -158,7 +181,11 @@ class DjangoAddressReader(AddressReader):
     """
 
     def get_for_owner(self, owner: str, address_id: str) -> OwnedAddress | None:
-        row = AddressModel.objects.filter(address_id=address_id, owner_id=_owner_pk(owner)).first()
+        owner_pk = _user_pk_or_none(owner)
+        if owner_pk is None:
+            # A guest has no saved addresses; nothing to resolve (they check out inline).
+            return None
+        row = AddressModel.objects.filter(address_id=address_id, owner_id=owner_pk).first()
         if row is None:
             return None
         return OwnedAddress(

@@ -66,15 +66,71 @@ const savedAddress = {
 
 const checkout = messages.checkout;
 
+const addresses = messages.addresses;
+
 describe("CheckoutView", () => {
-  it("prompts to log in when unauthenticated", async () => {
+  it("lets a guest check out with an inline shipping address (no login)", async () => {
+    // No session: the guest sees an inline shipping form instead of an address book,
+    // and the order is placed with that captured address (never an address_id).
+    let placedBody: unknown;
     server.use(
-      http.get("*/auth/me/", () => HttpResponse.json({ detail: "no" }, { status: 401 })),
+      http.get("*/cart/", () => HttpResponse.json(cartWithLine)),
+      http.post("*/orders/", async ({ request }) => {
+        placedBody = await request.json();
+        return HttpResponse.json(
+          {
+            number: "ORD-GUEST00001",
+            channel: "ir-main",
+            currency: "IRR",
+            status: "pending",
+            total: "240000.0000",
+            placed_at: "2026-07-02T12:00:00Z",
+            items: [],
+            shipping_address: {
+              recipient_name: "Guest Buyer",
+              phone_number: "09121112233",
+              province: "Isfahan",
+              city: "Isfahan",
+              postal_code: "8134567890",
+              line1: "Chaharbagh St, No. 9",
+              line2: null,
+            },
+          },
+          { status: 201 },
+        );
+      }),
     );
 
     renderWithProviders(<CheckoutView />);
 
-    expect(await screen.findByText(checkout.loginRequired)).toBeInTheDocument();
+    // The guest is not asked to log in; they fill the one-off shipping form.
+    await userEvent.type(
+      await screen.findByLabelText(addresses.recipientName),
+      "Guest Buyer",
+    );
+    await userEvent.type(screen.getByLabelText(addresses.phoneNumber), "09121112233");
+    await userEvent.type(screen.getByLabelText(addresses.province), "Isfahan");
+    await userEvent.type(screen.getByLabelText(addresses.city), "Isfahan");
+    await userEvent.type(screen.getByLabelText(addresses.postalCode), "8134567890");
+    await userEvent.type(screen.getByLabelText(addresses.line1), "Chaharbagh St, No. 9");
+    await userEvent.click(screen.getByRole("button", { name: addresses.save }));
+
+    // Review step: place the order.
+    await userEvent.click(await screen.findByRole("button", { name: checkout.placeOrder }));
+
+    await waitFor(() => expect(push).toHaveBeenCalledWith("/orders/ORD-GUEST00001"));
+    // A one-off inline address is submitted -- never an address_id (a guest has no book).
+    expect(placedBody).toEqual({
+      channel: "ir-main",
+      shipping_address: {
+        recipient_name: "Guest Buyer",
+        phone_number: "09121112233",
+        province: "Isfahan",
+        city: "Isfahan",
+        postal_code: "8134567890",
+        line1: "Chaharbagh St, No. 9",
+      },
+    });
   });
 
   it("shows the empty-cart state", async () => {

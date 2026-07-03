@@ -24,45 +24,28 @@ import {
 } from "@/lib/api/cart";
 import { ApiError } from "@/lib/api/client";
 import { formatMoneyString } from "@/lib/format";
-import { useCurrentUser } from "@/lib/hooks/use-auth";
 import { STOREFRONT_CHANNEL } from "@/lib/storefront/channel";
 
 const CART_KEY = (channel: string) => ["cart", channel] as const;
 
-/** The shopper's cart for the active channel: line editing + server-computed totals. */
+/** The shopper's cart for the active channel: line editing + server-computed totals.
+ *
+ * Open to guests as well as signed-in users -- the backend resolves the cart from the
+ * request's owner (a user, or a guest's HttpOnly session cookie), so no login is
+ * required to build or view a cart. */
 export function CartView() {
   const t = useTranslations("cart");
   const tCommon = useTranslations("common");
   const channel = STOREFRONT_CHANNEL;
   const queryClient = useQueryClient();
 
-  const { data: user, isLoading: userLoading } = useCurrentUser();
-
   const query = useQuery({
     queryKey: CART_KEY(channel),
     queryFn: () => getCart(channel),
-    // The cart lives behind auth; only fetch it once we know there is a user.
-    enabled: Boolean(user),
   });
 
   function onMutated(cart: Cart) {
     queryClient.setQueryData(CART_KEY(channel), cart);
-  }
-
-  if (userLoading) {
-    return <p>{tCommon("loading")}</p>;
-  }
-
-  if (!user) {
-    return (
-      <div className="flex flex-col gap-4">
-        <h1 className="text-xl font-semibold">{t("title")}</h1>
-        <Alert>{t("loginRequired")}</Alert>
-        <Link href="/login" className="text-sm text-primary hover:underline">
-          {t("goLogin")}
-        </Link>
-      </div>
-    );
   }
 
   const cart = query.data;

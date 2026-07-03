@@ -9,11 +9,14 @@ import { expect, test } from "@playwright/test";
 import messages from "../../../src/i18n/messages/fa.json";
 import { CHANNEL } from "../fixtures/seed";
 
-test("logged-out visitor is asked to sign in on the cart page", async ({ page }) => {
+test("logged-out visitor can use the cart without a sign-in gate (guest checkout)", async ({
+  page,
+}) => {
   await page.goto("/cart");
-  await expect(page.getByText(messages.cart.loginRequired)).toBeVisible();
-  // No cart data/table is rendered.
-  await expect(page.getByText(messages.cart.total, { exact: true })).toHaveCount(0);
+  // The cart is a guest-accessible surface now: a fresh visitor sees their own (empty)
+  // cart rather than a "please sign in" gate. Building + checking it out as a guest is
+  // covered end to end by the guest-checkout spec.
+  await expect(page.getByText(messages.cart.empty)).toBeVisible();
 });
 
 test("logged-out visitor sees the not-logged-in state on the account page", async ({ page }) => {

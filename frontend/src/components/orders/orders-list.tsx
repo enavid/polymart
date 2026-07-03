@@ -16,40 +16,22 @@ import {
 import { ApiError } from "@/lib/api/client";
 import { listMyOrders } from "@/lib/api/orders";
 import { formatJalaliDateTime, formatMoneyString } from "@/lib/format";
-import { useCurrentUser } from "@/lib/hooks/use-auth";
 import { orderStatusKey } from "@/lib/orders/status";
 
 const ORDERS_KEY = ["orders"] as const;
 
-/** The authenticated shopper's own order history (newest first). */
+/** The current shopper's own order history (newest first) -- user or guest.
+ *
+ * The history is resolved from the request's owner (a user, or a guest's HttpOnly session
+ * cookie), so a guest sees the orders they placed on this device and no one else's. */
 export function OrdersList() {
   const t = useTranslations("orders");
   const tCommon = useTranslations("common");
 
-  const { data: user, isLoading: userLoading } = useCurrentUser();
-
   const query = useQuery({
     queryKey: ORDERS_KEY,
     queryFn: () => listMyOrders(),
-    // Orders live behind auth; only fetch once we know there is a user.
-    enabled: Boolean(user),
   });
-
-  if (userLoading) {
-    return <p>{tCommon("loading")}</p>;
-  }
-
-  if (!user) {
-    return (
-      <div className="flex flex-col gap-4">
-        <h1 className="text-xl font-semibold">{t("title")}</h1>
-        <Alert>{t("loginRequired")}</Alert>
-        <Link href="/login" className="text-sm text-primary hover:underline">
-          {t("goLogin")}
-        </Link>
-      </div>
-    );
-  }
 
   const page = query.data;
 

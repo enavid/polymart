@@ -14,7 +14,7 @@ from decimal import Decimal
 import pytest
 from django.contrib.auth import get_user_model
 
-from src.application.order.ports import OrderNumberGenerator
+from src.application.order.ports import InlineShippingAddress, OrderNumberGenerator
 from src.application.order.use_cases import (
     CancelMyOrder,
     CancelMyOrderCommand,
@@ -105,12 +105,17 @@ def _seed_variant(sku: str, price: str, *, stock: int) -> None:
     DjangoStockRepository().set_quantity(sku, StockQuantity(stock))
 
 
+def _owner(user: object) -> str:
+    """The prefixed owner id the cart/order contexts key a signed-in user by."""
+    return f"u:{user.pk}"
+
+
 def _add_to_cart(owner: str, sku: str, quantity: int) -> None:
-    # The cart context keys a user's cart as ``u:<pk>`` (guest carts use ``g:<token>``);
-    # the order checkout still reads it by the bare pk, so seeding here mirrors what the
-    # cart endpoints store for a signed-in shopper.
+    # Seed the cart exactly as the cart endpoints store it: keyed by the prefixed owner
+    # id (``u:<pk>`` for a user, ``g:<token>`` for a guest). The order checkout reads it
+    # back by the same key, so a user and a guest seed identically here.
     DjangoCartRepository().apply(
-        f"u:{owner}", _CHANNEL, lambda cart: cart.add_item(CartSku(sku), CartQuantity(quantity))
+        owner, _CHANNEL, lambda cart: cart.add_item(CartSku(sku), CartQuantity(quantity))
     )
 
 
@@ -137,7 +142,7 @@ class TestCheckoutHappyPath:
     def test_places_an_order_deducts_stock_clears_cart_and_audits(self) -> None:
         _seed_catalog()
         user = get_user_model().objects.create_user(phone_number="09120000001", password="pw")
-        owner = str(user.pk)
+        owner = _owner(user)
         seed_address(user.pk)
         _add_to_cart(owner, "HB-250", 2)
         _add_to_cart(owner, "DR-250", 1)
@@ -161,11 +166,44 @@ class TestCheckoutHappyPath:
         ).exists()
 
 
+class TestGuestCheckoutIntegration:
+    def test_a_guest_checks_out_with_an_inline_address_through_the_real_stack(self) -> None:
+        # No user, no address book: the guest's cart is keyed by a session token and the
+        # shipping address is captured inline. Exercises the real cart bridge reading a
+        # ``g:`` cart and the order repository writing a guest_token row.
+        _seed_catalog()
+        owner = "g:guest-token-integ"
+        _add_to_cart(owner, "HB-250", 2)
+
+        order = _place_order().execute(
+            PlaceOrderCommand(
+                owner=owner,
+                channel=_CHANNEL,
+                shipping_address=InlineShippingAddress(
+                    recipient_name="Guest Buyer",
+                    phone_number="09121112233",
+                    province="Isfahan",
+                    city="Isfahan",
+                    postal_code="8134567890",
+                    line1="Chaharbagh St, No. 9",
+                    line2=None,
+                ),
+            )
+        )
+
+        assert order.owner == owner
+        assert order.total.amount == Decimal("240000.00")
+        assert order.shipping_address.recipient_name == "Guest Buyer"
+        assert DjangoOrderRepository().get_for_owner(owner, order.number.value).id == order.id
+        assert DjangoStockRepository().get_quantity("HB-250").value == 3
+        assert DjangoCartForCheckout().line_items(owner, _CHANNEL) == ()
+
+
 class TestCheckoutAtomicity:
     def test_an_oversell_rolls_back_the_whole_checkout(self) -> None:
         _seed_catalog()
         user = get_user_model().objects.create_user(phone_number="09120000001", password="pw")
-        owner = str(user.pk)
+        owner = _owner(user)
         seed_address(user.pk)
         # First line deducts fine; the second oversells DR-250 (only 1 in stock).
         _add_to_cart(owner, "HB-250", 2)
@@ -184,7 +222,7 @@ class TestCheckoutAtomicity:
     def test_an_empty_cart_places_nothing(self) -> None:
         _seed_catalog()
         user = get_user_model().objects.create_user(phone_number="09120000001", password="pw")
-        owner = str(user.pk)
+        owner = _owner(user)
         seed_address(user.pk)
 
         with pytest.raises(EmptyCartError):
@@ -196,7 +234,7 @@ class TestCancelIntegration:
     def test_cancel_restocks_and_is_audited(self) -> None:
         _seed_catalog()
         user = get_user_model().objects.create_user(phone_number="09120000001", password="pw")
-        owner = str(user.pk)
+        owner = _owner(user)
         seed_address(user.pk)
         _add_to_cart(owner, "HB-250", 2)
         order = _place_order().execute(_checkout_command(owner))
@@ -221,8 +259,8 @@ class TestCancelIntegration:
         owner = get_user_model().objects.create_user(phone_number="09120000001", password="pw")
         intruder = get_user_model().objects.create_user(phone_number="09120000002", password="pw")
         seed_address(owner.pk)
-        _add_to_cart(str(owner.pk), "HB-250", 1)
-        order = _place_order().execute(_checkout_command(str(owner.pk)))
+        _add_to_cart(_owner(owner), "HB-250", 1)
+        order = _place_order().execute(_checkout_command(_owner(owner)))
 
         cancel = CancelMyOrder(
             unit_of_work=DjangoUnitOfWork(),
@@ -231,6 +269,6 @@ class TestCancelIntegration:
             audit=build_audit_recorder(),
         )
         with pytest.raises(OrderNotFoundError):
-            cancel.execute(CancelMyOrderCommand(owner=str(intruder.pk), number=order.number.value))
+            cancel.execute(CancelMyOrderCommand(owner=_owner(intruder), number=order.number.value))
         # The order is untouched and stock stays deducted.
         assert DjangoStockRepository().get_quantity("HB-250").value == 4

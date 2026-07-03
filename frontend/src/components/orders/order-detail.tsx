@@ -18,7 +18,6 @@ import {
 import { ApiError } from "@/lib/api/client";
 import { cancelOrder, getMyOrder, type Order } from "@/lib/api/orders";
 import { formatJalaliDateTime, formatMoneyString } from "@/lib/format";
-import { useCurrentUser } from "@/lib/hooks/use-auth";
 import { orderStatusKey } from "@/lib/orders/status";
 
 // The happy-path lifecycle, in order, for the status stepper. Cancellation is a
@@ -32,19 +31,21 @@ const TIMELINE: ReadonlyArray<"pending" | "paid" | "fulfilled"> = [
 const ORDER_KEY = (number: string) => ["order", number] as const;
 const ORDERS_LIST_KEY = ["orders"] as const;
 
-/** One of the shopper's own orders: captured lines, status timeline, and cancel. */
+/** One of the shopper's own orders: captured lines, status timeline, and cancel.
+ *
+ * Open to guests as well as signed-in users: the order is resolved from the request's
+ * owner (a user, or a guest's HttpOnly session cookie), so a guest reaches the order
+ * they just placed. An order that isn't the caller's is a 404, so no owner id in the URL
+ * can leak another shopper's order (IDOR-safe for both). */
 export function OrderDetail({ number }: { number: string }) {
   const t = useTranslations("orders");
   const tCommon = useTranslations("common");
   const queryClient = useQueryClient();
   const [confirming, setConfirming] = useState(false);
 
-  const { data: user, isLoading: userLoading } = useCurrentUser();
-
   const query = useQuery({
     queryKey: ORDER_KEY(number),
     queryFn: () => getMyOrder(number),
-    enabled: Boolean(user),
     retry: false,
   });
 
@@ -57,22 +58,6 @@ export function OrderDetail({ number }: { number: string }) {
       queryClient.invalidateQueries({ queryKey: ORDERS_LIST_KEY });
     },
   });
-
-  if (userLoading) {
-    return <p>{tCommon("loading")}</p>;
-  }
-
-  if (!user) {
-    return (
-      <div className="flex flex-col gap-4">
-        <h1 className="text-xl font-semibold">{t("title")}</h1>
-        <Alert>{t("loginRequired")}</Alert>
-        <Link href="/login" className="text-sm text-primary hover:underline">
-          {t("goLogin")}
-        </Link>
-      </div>
-    );
-  }
 
   if (query.isLoading) {
     return <p>{tCommon("loading")}</p>;

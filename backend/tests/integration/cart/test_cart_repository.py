@@ -164,9 +164,7 @@ class TestGuestCartRepository:
         reloaded = repo.get(owner, _CHANNEL)
 
         assert reloaded.owner == owner
-        assert [(line.sku.value, line.quantity.value) for line in reloaded.lines] == [
-            ("HB-250", 3)
-        ]
+        assert [(line.sku.value, line.quantity.value) for line in reloaded.lines] == [("HB-250", 3)]
         # Persisted as a guest row: no user FK, token stored.
         model = CartModel.objects.get(guest_token="guest-token-abc")
         assert model.owner_id is None
