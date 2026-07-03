@@ -44,6 +44,10 @@ class EmptyOrderError(OrderError):
     """Raised when an order would have no lines -- an order must sell something."""
 
 
+class DuplicateOrderLineError(OrderError):
+    """Raised when the same variant would appear on more than one line of an order."""
+
+
 class OrderTotalMismatchError(OrderError):
     """Raised when an order's stated total does not equal the sum of its line totals."""
 

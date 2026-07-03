@@ -27,13 +27,17 @@ from src.application.order.ports import InlineShippingAddress
 from src.application.order.use_cases import (
     DEFAULT_PAGE_LIMIT,
     CancelMyOrderCommand,
+    CreateManualOrderCommand,
     InvalidOrderPageError,
     ListMyOrdersQuery,
+    ManualOrderItem,
     PlaceOrderCommand,
 )
 from src.domain.order.entities import Order
 from src.domain.order.exceptions import (
+    DuplicateOrderLineError,
     EmptyCartError,
+    EmptyOrderError,
     OrderError,
     OrderNotCancellableError,
     OrderNotFoundError,
@@ -43,19 +47,24 @@ from src.domain.order.exceptions import (
     VariantNotFoundError,
     VariantNotPurchasableError,
 )
+from src.interface.api.access.permissions import OrderManagePermission
 from src.interface.api.common import ErrorSerializer
-from src.interface.api.guest import resolve_owner
+from src.interface.api.guest import resolve_owner, user_owner
 from src.interface.api.order.container import (
     build_cancel_my_order,
+    build_create_manual_order,
     build_get_my_order,
+    build_get_order_for_invoice,
     build_list_my_orders,
     build_place_order,
 )
 from src.interface.api.order.serializers import (
+    ManualOrderSerializer,
     OrderListQuerySerializer,
     OrderPageSerializer,
     OrderSerializer,
     PlaceOrderSerializer,
+    PreInvoiceSerializer,
 )
 
 logger = structlog.get_logger(__name__)
@@ -116,6 +125,86 @@ def _order_payload(order: Order) -> dict[str, object]:
             "line2": order.shipping_address.line2,
         },
     }
+
+
+def _pre_invoice_payload(order: Order) -> dict[str, object]:
+    """Project an order to its pre-invoice (proforma) body.
+
+    The full order plus a document marker and a tax placeholder: tax is computed in a
+    later phase, so it is ``null`` and the grand total equals the order total for now.
+    """
+    return {
+        **_order_payload(order),
+        "document_type": "pre_invoice",
+        "tax": None,
+        "grand_total": str(order.total.amount),
+    }
+
+
+class ManualOrderView(APIView):
+    """Create a manual order (a pre-invoice) from staff-supplied lines -- staff only."""
+
+    permission_classes: ClassVar = [OrderManagePermission]
+
+    @extend_schema(
+        operation_id="orders_manual_create",
+        request=ManualOrderSerializer,
+        responses={
+            201: OrderSerializer,
+            400: ErrorSerializer,
+            403: ErrorSerializer,
+            409: ErrorSerializer,
+        },
+    )
+    def post(self, request: Request) -> Response:
+        serializer = ManualOrderSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        command = CreateManualOrderCommand(
+            actor=user_owner(request.user.pk),
+            channel=data["channel"],
+            items=tuple(
+                ManualOrderItem(sku=item["sku"], quantity=item["quantity"])
+                for item in data["items"]
+            ),
+            shipping_address=_inline_shipping(data),  # type: ignore[arg-type]
+        )
+        try:
+            order = build_create_manual_order().execute(command)
+        except UnknownChannelError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        except (DuplicateOrderLineError, EmptyOrderError) as exc:  # pragma: no cover - defensive
+            # The serializer already rejects an empty or duplicated line list with a 400;
+            # this maps the domain's own invariant as a safety net if that ever changes.
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        except VariantNotFoundError as exc:  # pragma: no cover - defensive
+            return Response({"detail": str(exc)}, status=status.HTTP_404_NOT_FOUND)
+        except (OutOfStockError, VariantNotPurchasableError) as exc:
+            # A well-formed request that conflicts with the current stock/price state.
+            return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
+        except OrderError as exc:  # pragma: no cover - defensive catch-all
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(_order_payload(order), status=status.HTTP_201_CREATED)
+
+
+class PreInvoiceView(APIView):
+    """Read any order's pre-invoice (proforma) for printing -- staff only."""
+
+    permission_classes: ClassVar = [OrderManagePermission]
+
+    @extend_schema(
+        operation_id="orders_pre_invoice",
+        responses={200: PreInvoiceSerializer, 403: ErrorSerializer, 404: ErrorSerializer},
+    )
+    def get(self, request: Request, number: str) -> Response:
+        try:
+            order = build_get_order_for_invoice().execute(number=number)
+        except OrderNotFoundError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_404_NOT_FOUND)
+        except OrderError:
+            # A malformed number can never match -- surface as 404, not a 400.
+            return Response({"detail": "order not found"}, status=status.HTTP_404_NOT_FOUND)
+        return Response(_pre_invoice_payload(order))
 
 
 class OrderCollectionView(APIView):

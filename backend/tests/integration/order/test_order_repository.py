@@ -138,6 +138,20 @@ class TestOrderRepository:
         with pytest.raises(OrderNotFoundError):
             DjangoOrderRepository().get_for_owner(_owner(user), "ORD-MISSING0000")
 
+    def test_get_reads_any_order_by_number_not_owner_scoped(self) -> None:
+        # The un-scoped read backs the pre-invoice (gated by manage_orders): it resolves
+        # an order by number alone, regardless of who owns it.
+        owner = _user("09120000001")
+        repo = DjangoOrderRepository()
+        repo.add(_order(_owner(owner)))
+
+        found = repo.get("ORD-ABC123XYZ0")
+
+        assert found.number.value == "ORD-ABC123XYZ0"
+        assert found.owner == _owner(owner)
+        with pytest.raises(OrderNotFoundError):
+            repo.get("ORD-MISSING0000")
+
     def test_lists_newest_first_with_count(self) -> None:
         user = _user()
         repo = DjangoOrderRepository()

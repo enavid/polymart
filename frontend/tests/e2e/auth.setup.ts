@@ -60,6 +60,10 @@ const WARM_ROUTES = [
   "/admin/access",
   "/admin/channels",
   "/admin/audit",
+  "/admin/orders/new",
+  // A dummy pre-invoice route: 404s (no such order), but the dynamic route is now
+  // compiled before the manual-order spec lands on a real one.
+  "/admin/orders/ORD-WARMUP0000/pre-invoice",
 ];
 
 setup("warm up routes so the dev server has compiled them", async ({ page }) => {

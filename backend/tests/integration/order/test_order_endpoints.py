@@ -409,3 +409,162 @@ class TestCancel:
         assert response.status_code == 404
         # Owner's stock deduction stands.
         assert DjangoStockRepository().get_quantity("HB-250").value == 4
+
+
+_MANUAL_URL = "/api/v1/orders/manual/"
+
+
+def _staff_with_order_perm(phone: str = "09120000009") -> AbstractBaseUser:
+    """A staff user granted the global manage_orders permission (the order_admin capability)."""
+    from django.contrib.auth.models import Permission
+
+    user = get_user_model().objects.create_user(phone_number=phone, password="pw", is_staff=True)
+    perm = Permission.objects.get(content_type__app_label="order", codename="manage_orders")
+    user.user_permissions.add(perm)
+    return user
+
+
+def _manual_body(items=None, *, channel: str = _CHANNEL, address=None) -> dict:
+    return {
+        "channel": channel,
+        "items": items if items is not None else [{"sku": "HB-250", "quantity": 2}],
+        "shipping_address": address or _INLINE_ADDRESS,
+    }
+
+
+class TestManualOrder:
+    """Staff with manage_orders create a manual order (a pre-invoice) from explicit lines."""
+
+    def test_staff_creates_a_manual_order_and_stock_is_deducted(self) -> None:
+        _seed_catalog()
+        staff = _staff_with_order_perm()
+        client = _client(staff)
+
+        response = client.post(
+            _MANUAL_URL,
+            _manual_body([{"sku": "HB-250", "quantity": 2}, {"sku": "DR-250", "quantity": 1}]),
+            format="json",
+        )
+
+        assert response.status_code == 201
+        assert response.data["status"] == "pending"
+        assert response.data["total"] == "390000.0000"
+        assert response.data["shipping_address"]["recipient_name"] == "Guest Buyer"
+        # Stock captured exactly as a checkout would.
+        assert DjangoStockRepository().get_quantity("HB-250").value == 3
+        assert DjangoStockRepository().get_quantity("DR-250").value == 0
+        # The manual order is owned by the creating staff, who can read it back.
+        number = response.data["number"]
+        assert client.get(f"{_ORDERS_URL}{number}/").status_code == 200
+
+    def test_a_user_without_the_permission_is_forbidden(self) -> None:
+        _seed_catalog()
+        client = _client(_user("09120000001"))
+
+        assert client.post(_MANUAL_URL, _manual_body(), format="json").status_code == 403
+        # Nothing was created / no stock moved.
+        assert DjangoStockRepository().get_quantity("HB-250").value == 5
+
+    def test_an_anonymous_request_is_unauthorized(self) -> None:
+        # Unauthenticated (no cookie) -> 401; an authenticated user lacking the perm -> 403.
+        _seed_catalog()
+        assert APIClient().post(_MANUAL_URL, _manual_body(), format="json").status_code == 401
+
+    def test_a_duplicate_sku_is_rejected(self) -> None:
+        _seed_catalog()
+        client = _client(_staff_with_order_perm())
+
+        response = client.post(
+            _MANUAL_URL,
+            _manual_body([{"sku": "HB-250", "quantity": 1}, {"sku": "HB-250", "quantity": 2}]),
+            format="json",
+        )
+
+        assert response.status_code == 400
+
+    def test_no_items_is_rejected(self) -> None:
+        _seed_catalog()
+        client = _client(_staff_with_order_perm())
+
+        assert client.post(_MANUAL_URL, _manual_body([]), format="json").status_code == 400
+
+    def test_an_oversell_is_a_conflict_and_writes_nothing(self) -> None:
+        _seed_catalog()  # DR-250 stock is 1
+        client = _client(_staff_with_order_perm())
+
+        response = client.post(
+            _MANUAL_URL, _manual_body([{"sku": "DR-250", "quantity": 2}]), format="json"
+        )
+
+        assert response.status_code == 409
+        assert DjangoStockRepository().get_quantity("DR-250").value == 1
+
+    def test_an_unknown_channel_is_a_400(self) -> None:
+        _seed_catalog()
+        client = _client(_staff_with_order_perm())
+
+        response = client.post(_MANUAL_URL, _manual_body(channel="nope"), format="json")
+
+        assert response.status_code == 400
+
+    def test_a_malformed_inline_phone_is_a_400(self) -> None:
+        _seed_catalog()
+        client = _client(_staff_with_order_perm())
+        bad = {**_INLINE_ADDRESS, "phone_number": "12345"}
+
+        response = client.post(_MANUAL_URL, _manual_body(address=bad), format="json")
+
+        assert response.status_code == 400
+
+
+class TestPreInvoice:
+    """Staff issue a printable pre-invoice for any order (gated by manage_orders)."""
+
+    def test_staff_reads_the_pre_invoice_of_a_manual_order(self) -> None:
+        _seed_catalog()
+        client = _client(_staff_with_order_perm())
+        number = client.post(_MANUAL_URL, _manual_body(), format="json").data["number"]
+
+        response = client.get(f"{_ORDERS_URL}{number}/pre-invoice/")
+
+        assert response.status_code == 200
+        assert response.data["document_type"] == "pre_invoice"
+        assert response.data["tax"] is None
+        assert response.data["grand_total"] == "240000.0000"
+        assert response.data["items"][0]["sku"] == "HB-250"
+
+    def test_staff_can_pre_invoice_any_order_including_a_guest_order(self) -> None:
+        # The pre-invoice is not owner-scoped: a staff member prints a proforma for a
+        # shopper's order they did not place (authorized by the permission, not the owner).
+        _seed_catalog()
+        guest = APIClient()
+        _guest_add_to_cart(guest, "HB-250", 1)
+        number = _guest_checkout(guest).data["number"]
+
+        staff = _client(_staff_with_order_perm())
+        response = staff.get(f"{_ORDERS_URL}{number}/pre-invoice/")
+
+        assert response.status_code == 200
+        assert response.data["grand_total"] == "120000.0000"
+
+    def test_an_unknown_number_is_a_404(self) -> None:
+        _seed_catalog()
+        client = _client(_staff_with_order_perm())
+
+        assert client.get(f"{_ORDERS_URL}ORD-MISSING0000/pre-invoice/").status_code == 404
+
+    def test_a_malformed_number_is_a_404(self) -> None:
+        # Too short to be a valid order number -> surfaced as 404, never a 400 that would
+        # let the shape of a real number be probed.
+        _seed_catalog()
+        client = _client(_staff_with_order_perm())
+
+        assert client.get(f"{_ORDERS_URL}AB/pre-invoice/").status_code == 404
+
+    def test_without_the_permission_it_is_forbidden(self) -> None:
+        _seed_catalog()
+        staff = _client(_staff_with_order_perm())
+        number = staff.post(_MANUAL_URL, _manual_body(), format="json").data["number"]
+
+        plain = _client(_user("09120000001"))
+        assert plain.get(f"{_ORDERS_URL}{number}/pre-invoice/").status_code == 403

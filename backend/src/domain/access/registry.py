@@ -14,19 +14,26 @@ from src.domain.access.permissions import (
 from src.domain.catalog.permissions import CATALOG_PERMISSIONS, MANAGE_CATALOG
 from src.domain.channel.permissions import CHANNEL_PERMISSIONS, MANAGE_CHANNEL
 from src.domain.identity.permissions import IDENTITY_PERMISSIONS, MANAGE_ACCESS
+from src.domain.order.permissions import MANAGE_ORDERS, ORDER_PERMISSIONS
 
 # Role names are stable identifiers (used as Django Group names); keep them in
 # one place so the sync layer and any future assignment UI agree.
 CHANNEL_ADMIN_ROLE = "channel_admin"
 ACCESS_ADMIN_ROLE = "access_admin"
 CATALOG_ADMIN_ROLE = "catalog_admin"
+ORDER_ADMIN_ROLE = "order_admin"
 
 
 def build_default_registry() -> PermissionRegistry:
     """Build the registry with every context's permissions and the base roles."""
     registry = PermissionRegistry()
 
-    for permission in (*CHANNEL_PERMISSIONS, *IDENTITY_PERMISSIONS, *CATALOG_PERMISSIONS):
+    for permission in (
+        *CHANNEL_PERMISSIONS,
+        *IDENTITY_PERMISSIONS,
+        *CATALOG_PERMISSIONS,
+        *ORDER_PERMISSIONS,
+    ):
         registry.register_permission(permission)
 
     # The global "manage all channels" role. Object-scoped channel managers are
@@ -50,6 +57,14 @@ def build_default_registry() -> PermissionRegistry:
         RoleDefinition(
             name=CATALOG_ADMIN_ROLE,
             permissions=frozenset({MANAGE_CATALOG.codename}),
+        )
+    )
+    # The "manage orders" role: create manual orders (pre-invoices) and read any
+    # order's pre-invoice. A shopper's own place/read/cancel is not gated by this.
+    registry.register_role(
+        RoleDefinition(
+            name=ORDER_ADMIN_ROLE,
+            permissions=frozenset({MANAGE_ORDERS.codename}),
         )
     )
 

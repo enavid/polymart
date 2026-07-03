@@ -57,6 +57,32 @@ class PlaceOrderSerializer(serializers.Serializer):
         return attrs
 
 
+class ManualOrderItemSerializer(serializers.Serializer):
+    """One staff-specified line of a manual order (sku + a positive quantity)."""
+
+    sku = serializers.CharField(max_length=64)
+    quantity = serializers.IntegerField(min_value=1)
+
+
+class ManualOrderSerializer(serializers.Serializer):
+    """Request body for a staff member creating a manual order (a pre-invoice).
+
+    The lines are supplied directly (no cart) and the customer's shipping address is
+    captured inline. At least one line is required and a variant may appear at most once;
+    the domain re-validates prices/stock and the total.
+    """
+
+    channel = serializers.CharField()
+    items = ManualOrderItemSerializer(many=True, allow_empty=False)
+    shipping_address = InlineShippingAddressSerializer()
+
+    def validate_items(self, value: list[dict[str, object]]) -> list[dict[str, object]]:
+        skus = [item["sku"] for item in value]
+        if len(skus) != len(set(skus)):
+            raise serializers.ValidationError("a variant may appear on only one line.")
+        return value
+
+
 class ShippingAddressSerializer(serializers.Serializer):
     """Response projection of an order's captured shipping address."""
 
@@ -105,3 +131,16 @@ class OrderPageSerializer(serializers.Serializer):
     limit = serializers.IntegerField()
     offset = serializers.IntegerField()
     results = OrderSerializer(many=True)
+
+
+class PreInvoiceSerializer(OrderSerializer):
+    """Response projection of an order's pre-invoice (proforma).
+
+    The full order plus a ``document_type`` marker and a ``tax`` placeholder: tax is not
+    computed until a later phase, so it is ``null`` and ``grand_total`` equals the order
+    total for now (the field exists so the printable document is forward-compatible).
+    """
+
+    document_type = serializers.CharField()
+    tax = serializers.CharField(allow_null=True)
+    grand_total = serializers.CharField()

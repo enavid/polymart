@@ -9,6 +9,7 @@ import pytest
 
 from src.domain.order.entities import Order, OrderLine
 from src.domain.order.exceptions import (
+    DuplicateOrderLineError,
     EmptyOrderError,
     IllegalOrderTransitionError,
     OrderCurrencyMismatchError,
@@ -114,6 +115,12 @@ class TestOrderInvariants:
     def test_rejects_an_order_with_no_lines(self) -> None:
         with pytest.raises(EmptyOrderError):
             _order(())
+
+    def test_rejects_the_same_variant_on_two_lines(self) -> None:
+        # A manual order takes an arbitrary line list; a variant must appear at most
+        # once (as the persisted unique (order, sku) constraint also enforces).
+        with pytest.raises(DuplicateOrderLineError):
+            _order((_line("HB-250", 1, "120000.00"), _line("HB-250", 2, "120000.00")))
 
     def test_rejects_a_total_that_does_not_match_the_lines(self) -> None:
         line = _line("HB-250", 1, "120000.00")

@@ -18,6 +18,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime
 
 from src.domain.order.exceptions import (
+    DuplicateOrderLineError,
     EmptyOrderError,
     IllegalOrderTransitionError,
     OrderCurrencyMismatchError,
@@ -95,6 +96,14 @@ class Order:
     def __post_init__(self) -> None:
         if not self.lines:
             raise EmptyOrderError("an order must have at least one line")
+        seen: set[str] = set()
+        for line in self.lines:
+            # A variant appears at most once (the persisted unique (order, sku)
+            # constraint enforces the same at the database); catch it here so a manual
+            # order's arbitrary line list can never build a duplicated aggregate.
+            if line.sku.value in seen:
+                raise DuplicateOrderLineError(line.sku.value)
+            seen.add(line.sku.value)
         summed = Money.zero(self.currency)
         for line in self.lines:
             if line.line_total.currency != self.currency:

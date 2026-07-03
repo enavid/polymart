@@ -91,3 +91,39 @@ export function getMyOrder(number: string): Promise<Order> {
 export function cancelOrder(number: string): Promise<Order> {
   return apiPost<Order>(`/orders/${number}/cancel/`);
 }
+
+/** One line of a manual order: a variant SKU and a positive quantity. */
+export interface ManualOrderItem {
+  sku: string;
+  quantity: number;
+}
+
+/** Fields staff supply to create a manual order (a pre-invoice). */
+export interface ManualOrderInput {
+  channel: string;
+  items: ManualOrderItem[];
+  shipping_address: AddressInput;
+}
+
+/**
+ * A pre-invoice (proforma): the full order plus a tax placeholder. Tax is not computed
+ * until a later phase, so `tax` is null and `grand_total` equals the order total for now.
+ */
+export interface PreInvoice extends Order {
+  document_type: "pre_invoice";
+  tax: string | null;
+  grand_total: string;
+}
+
+/**
+ * Create a manual order (a pre-invoice) from staff-supplied lines. Requires the
+ * `manage_orders` permission on the backend; a shopper's own checkout uses `placeOrder`.
+ */
+export function createManualOrder(input: ManualOrderInput): Promise<Order> {
+  return apiPost<Order>("/orders/manual/", input);
+}
+
+/** Read any order's pre-invoice by number (staff only, `manage_orders`). */
+export function getPreInvoice(number: string): Promise<PreInvoice> {
+  return apiGet<PreInvoice>(`/orders/${number}/pre-invoice/`);
+}

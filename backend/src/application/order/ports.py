@@ -56,6 +56,14 @@ class OrderRepository(ABC):
         """Persist a new order (with its lines) and return it with its assigned id."""
 
     @abstractmethod
+    def get(self, number: str) -> Order:
+        """Return any order by number (not owner-scoped), or raise ``OrderNotFoundError``.
+
+        Used only behind the ``manage_orders`` permission (issuing a pre-invoice for any
+        order); every shopper-facing read goes through the owner-scoped methods below.
+        """
+
+    @abstractmethod
     def get_for_owner(self, owner: str, number: str) -> Order:
         """Return the owner's order by number, or raise ``OrderNotFoundError``."""
 

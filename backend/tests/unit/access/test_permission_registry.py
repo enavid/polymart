@@ -131,3 +131,13 @@ class TestDefaultRegistry:
         assert registry.permission("manage_access").resource == "identity"
         admin = next(r for r in registry.roles if r.name == "access_admin")
         assert "manage_access" in admin.permissions
+
+    def test_includes_the_order_management_permission_and_role(self) -> None:
+        from src.domain.access.registry import build_default_registry
+
+        registry = build_default_registry()
+
+        # manage_orders is hosted on the order app's content type.
+        assert registry.permission("manage_orders").resource == "order"
+        admin = next(r for r in registry.roles if r.name == "order_admin")
+        assert "manage_orders" in admin.permissions

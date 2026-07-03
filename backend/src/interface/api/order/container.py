@@ -8,7 +8,9 @@ from __future__ import annotations
 
 from src.application.order.use_cases import (
     CancelMyOrder,
+    CreateManualOrder,
     GetMyOrder,
+    GetOrderForInvoice,
     ListMyOrders,
     PlaceOrder,
 )
@@ -56,3 +58,20 @@ def build_cancel_my_order() -> CancelMyOrder:
         inventory=DjangoInventory(),
         audit=build_audit_recorder(),
     )
+
+
+def build_create_manual_order() -> CreateManualOrder:
+    return CreateManualOrder(
+        unit_of_work=DjangoUnitOfWork(),
+        pricing=DjangoPricingReader(),
+        channels=DjangoChannelReader(),
+        inventory=DjangoInventory(),
+        orders=DjangoOrderRepository(),
+        numbers=SecureOrderNumberGenerator(),
+        clock=SystemClock(),
+        audit=build_audit_recorder(),
+    )
+
+
+def build_get_order_for_invoice() -> GetOrderForInvoice:
+    return GetOrderForInvoice(DjangoOrderRepository())

@@ -106,6 +106,15 @@ class DjangoOrderRepository(OrderRepository):
         )
         return self._load(model.number, owner=order.owner)
 
+    def get(self, number: str) -> Order:
+        # Not owner-scoped: only reachable behind the manage_orders permission (issuing a
+        # pre-invoice for any order). Shopper reads always use the owner-scoped methods.
+        try:
+            model = OrderModel.objects.prefetch_related("lines").get(number=number)
+        except OrderModel.DoesNotExist as exc:
+            raise OrderNotFoundError(number) from exc
+        return order_to_domain(model)
+
     def get_for_owner(self, owner: str, number: str) -> Order:
         return self._load(number, owner=owner)
 

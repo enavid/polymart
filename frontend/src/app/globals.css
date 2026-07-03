@@ -115,3 +115,10 @@ body {
   color: var(--color-foreground);
   font-family: var(--font-sans);
 }
+
+/* Hide interactive controls (e.g. the pre-invoice's Print button) when printing. */
+@media print {
+  .no-print {
+    display: none !important;
+  }
+}

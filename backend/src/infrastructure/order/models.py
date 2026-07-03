@@ -91,6 +91,11 @@ class OrderModel(models.Model):
         db_table = "order_order"
         # Newest first: the default read order for a shopper's history.
         ordering = ("-id",)
+        # codename mirrors src.domain.order.permissions.MANAGE_ORDERS. Hosting it on the
+        # order content type lets the registry sync resolve it by app_label="order".
+        permissions: ClassVar[list[tuple[str, str]]] = [  # type: ignore[assignment]
+            ("manage_orders", "Can manage orders (create manual orders and issue pre-invoices)"),
+        ]
         indexes: ClassVar[list[models.Index]] = [
             models.Index(fields=["owner", "-id"], name="idx_order_owner_recent"),
             # Guest history is scoped by token; a matching index keeps that read cheap.

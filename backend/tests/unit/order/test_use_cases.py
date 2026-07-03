@@ -33,17 +33,23 @@ from src.application.order.ports import (
 from src.application.order.use_cases import (
     CancelMyOrder,
     CancelMyOrderCommand,
+    CreateManualOrder,
+    CreateManualOrderCommand,
     GetMyOrder,
+    GetOrderForInvoice,
     InvalidOrderPageError,
     ListMyOrders,
     ListMyOrdersQuery,
+    ManualOrderItem,
     PlaceOrder,
     PlaceOrderCommand,
 )
 from src.domain.audit.entities import FieldChange
 from src.domain.order.entities import Order
 from src.domain.order.exceptions import (
+    DuplicateOrderLineError,
     EmptyCartError,
+    EmptyOrderError,
     OrderNotCancellableError,
     OrderNotFoundError,
     OutOfStockError,
@@ -177,6 +183,12 @@ class FakeOrders(OrderRepository):
         stored = _with_id(order, self._sequence)
         self._by_number[(order.owner, order.number.value)] = stored
         return stored
+
+    def get(self, number: str) -> Order:
+        for (_owner, num), order in self._by_number.items():
+            if num == number:
+                return order
+        raise OrderNotFoundError(number)
 
     def get_for_owner(self, owner: str, number: str) -> Order:
         try:
@@ -695,3 +707,224 @@ class TestCancelMyOrder:
         )
         with pytest.raises(OrderNotCancellableError):
             cancel.execute(CancelMyOrderCommand(owner="7", number="ORD-TEST01"))
+
+
+# --- CreateManualOrder ---------------------------------------------------
+
+
+def _build_create_manual_order(
+    *,
+    prices: dict[str, Money],
+    stock: dict[str, int],
+    currency: str | None = "IRR",
+    uow: FakeUnitOfWork | None = None,
+    inventory: FakeInventory | None = None,
+    orders: FakeOrders | None = None,
+    audit: RecordingAudit | None = None,
+) -> CreateManualOrder:
+    return CreateManualOrder(
+        unit_of_work=uow or FakeUnitOfWork(),
+        pricing=FakePricing(prices),
+        channels=FakeChannels(currency),
+        inventory=inventory or FakeInventory(stock),
+        orders=orders or FakeOrders(),
+        numbers=FakeNumbers(),
+        clock=FixedClock(),
+        audit=audit or RecordingAudit(),
+    )
+
+
+class TestCreateManualOrder:
+    def test_captures_prices_owner_and_shipping(self) -> None:
+        create = _build_create_manual_order(
+            prices={"HB-250": _money("120000.00"), "DR-250": _money("150000.00")},
+            stock={"HB-250": 5, "DR-250": 5},
+        )
+
+        order = create.execute(
+            CreateManualOrderCommand(
+                actor="u:9",
+                channel="ir-main",
+                items=(ManualOrderItem("HB-250", 2), ManualOrderItem("DR-250", 1)),
+                shipping_address=_INLINE_ADDRESS,
+            )
+        )
+
+        assert order.owner == "u:9"
+        assert order.status is OrderStatus.PENDING
+        assert order.total == _money("390000.00")
+        assert order.shipping_address.recipient_name == "Guest Buyer"
+        assert [line.sku.value for line in order.lines] == ["HB-250", "DR-250"]
+
+    def test_deducts_stock_for_each_line(self) -> None:
+        inventory = FakeInventory({"HB-250": 5})
+        create = _build_create_manual_order(
+            prices={"HB-250": _money("120000.00")}, stock={}, inventory=inventory
+        )
+
+        create.execute(
+            CreateManualOrderCommand(
+                actor="u:9",
+                channel="ir-main",
+                items=(ManualOrderItem("HB-250", 3),),
+                shipping_address=_INLINE_ADDRESS,
+            )
+        )
+
+        assert inventory.stock["HB-250"] == 2
+        assert inventory.deducted == [("HB-250", 3)]
+
+    def test_audits_the_manual_creation_with_origin(self) -> None:
+        audit = RecordingAudit()
+        create = _build_create_manual_order(
+            prices={"HB-250": _money("120000.00")}, stock={"HB-250": 5}, audit=audit
+        )
+
+        create.execute(
+            CreateManualOrderCommand(
+                actor="u:9",
+                channel="ir-main",
+                items=(ManualOrderItem("HB-250", 1),),
+                shipping_address=_INLINE_ADDRESS,
+            )
+        )
+
+        entry = audit.records[0]
+        assert entry["action"] == "order.created_manually"
+        assert entry["actor"] == "u:9"
+        origins = [c.after for c in entry["changes"] if c.field == "origin"]  # type: ignore[attr-defined]
+        assert origins == ["manual"]
+
+    def test_an_oversell_rolls_the_whole_order_back(self) -> None:
+        uow = FakeUnitOfWork()
+        orders = FakeOrders()
+        inventory = FakeInventory({"HB-250": 5, "DR-250": 0})
+        create = _build_create_manual_order(
+            prices={"HB-250": _money("120000.00"), "DR-250": _money("150000.00")},
+            stock={},
+            uow=uow,
+            inventory=inventory,
+            orders=orders,
+        )
+
+        with pytest.raises(OutOfStockError):
+            create.execute(
+                CreateManualOrderCommand(
+                    actor="u:9",
+                    channel="ir-main",
+                    items=(ManualOrderItem("HB-250", 1), ManualOrderItem("DR-250", 1)),
+                    shipping_address=_INLINE_ADDRESS,
+                )
+            )
+
+        assert uow.rolled_back is True
+        assert orders.list_for_owner("u:9", limit=10, offset=0) == ((), 0)
+
+    def test_a_duplicate_sku_is_rejected(self) -> None:
+        create = _build_create_manual_order(
+            prices={"HB-250": _money("120000.00")}, stock={"HB-250": 5}
+        )
+
+        with pytest.raises(DuplicateOrderLineError):
+            create.execute(
+                CreateManualOrderCommand(
+                    actor="u:9",
+                    channel="ir-main",
+                    items=(ManualOrderItem("HB-250", 1), ManualOrderItem("HB-250", 2)),
+                    shipping_address=_INLINE_ADDRESS,
+                )
+            )
+
+    def test_no_items_is_rejected_as_an_empty_order(self) -> None:
+        create = _build_create_manual_order(prices={}, stock={})
+
+        with pytest.raises(EmptyOrderError):
+            create.execute(
+                CreateManualOrderCommand(
+                    actor="u:9", channel="ir-main", items=(), shipping_address=_INLINE_ADDRESS
+                )
+            )
+
+    def test_an_unknown_channel_is_rejected(self) -> None:
+        create = _build_create_manual_order(
+            prices={"HB-250": _money("120000.00")}, stock={"HB-250": 5}, currency=None
+        )
+
+        with pytest.raises(UnknownChannelError):
+            create.execute(
+                CreateManualOrderCommand(
+                    actor="u:9",
+                    channel="nope",
+                    items=(ManualOrderItem("HB-250", 1),),
+                    shipping_address=_INLINE_ADDRESS,
+                )
+            )
+
+    def test_an_unpriced_line_is_rejected(self) -> None:
+        create = _build_create_manual_order(prices={}, stock={"HB-250": 5})
+
+        with pytest.raises(VariantNotPurchasableError):
+            create.execute(
+                CreateManualOrderCommand(
+                    actor="u:9",
+                    channel="ir-main",
+                    items=(ManualOrderItem("HB-250", 1),),
+                    shipping_address=_INLINE_ADDRESS,
+                )
+            )
+
+    def test_never_logs_the_amount(self) -> None:
+        create = _build_create_manual_order(
+            prices={"HB-250": _money("120000.00")}, stock={"HB-250": 5}
+        )
+
+        with capture_logs() as logs:
+            create.execute(
+                CreateManualOrderCommand(
+                    actor="u:9",
+                    channel="ir-main",
+                    items=(ManualOrderItem("HB-250", 1),),
+                    shipping_address=_INLINE_ADDRESS,
+                )
+            )
+
+        assert all("120000" not in str(value) for log in logs for value in log.values())
+
+
+# --- GetOrderForInvoice --------------------------------------------------
+
+
+class TestGetOrderForInvoice:
+    def _seed_order(self, orders: FakeOrders, *, owner: str, number: str) -> None:
+        create = _build_create_manual_order(
+            prices={"HB-250": _money("120000.00")}, stock={"HB-250": 5}, orders=orders
+        )
+        # Reuse the number generator's fixed value by monkeying the actor/number path:
+        create.execute(
+            CreateManualOrderCommand(
+                actor=owner,
+                channel="ir-main",
+                items=(ManualOrderItem("HB-250", 1),),
+                shipping_address=_INLINE_ADDRESS,
+            )
+        )
+
+    def test_reads_any_order_by_number_regardless_of_owner(self) -> None:
+        orders = FakeOrders()
+        self._seed_order(orders, owner="u:5", number="ORD-TEST01")
+
+        # A staff member (not the owner u:5) issues the pre-invoice; not owner-scoped.
+        order = GetOrderForInvoice(orders).execute(number="ORD-TEST01")
+
+        assert order.number.value == "ORD-TEST01"
+        assert order.owner == "u:5"
+
+    def test_an_unknown_number_is_not_found(self) -> None:
+        with pytest.raises(OrderNotFoundError):
+            GetOrderForInvoice(FakeOrders()).execute(number="ORD-NOPE99")
+
+    def test_a_malformed_number_is_rejected(self) -> None:
+        from src.domain.order.exceptions import InvalidOrderNumberError
+
+        with pytest.raises(InvalidOrderNumberError):
+            GetOrderForInvoice(FakeOrders()).execute(number="not a number")

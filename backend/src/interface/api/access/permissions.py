@@ -24,6 +24,7 @@ from src.domain.catalog.permissions import MANAGE_CATALOG
 from src.domain.channel.entities import Channel
 from src.domain.channel.permissions import MANAGE_CHANNEL
 from src.domain.identity.permissions import MANAGE_ACCESS
+from src.domain.order.permissions import MANAGE_ORDERS
 from src.interface.api.access.container import build_access_gateway
 
 
@@ -70,6 +71,21 @@ class CatalogManagePermission(BasePermission):
         if request.method in SAFE_METHODS:
             return True
         return bool(request.user.has_perm(MANAGE_CATALOG.full_name))
+
+
+class OrderManagePermission(BasePermission):
+    """Gate the staff order operations: requires the global manage_orders perm.
+
+    Creating a manual order (a pre-invoice) and reading any order's pre-invoice are
+    privileged, platform-global staff actions -- never object-scoped -- so a global
+    permission (or superuser) is required. A shopper's own place/read/cancel uses the
+    open, owner-scoped storefront endpoints instead and is not gated here.
+    """
+
+    def has_permission(self, request: Request, view: Any) -> bool:
+        if not _is_authenticated(request):
+            return False
+        return bool(request.user.has_perm(MANAGE_ORDERS.full_name))
 
 
 class ScopedChannelManagePermission(BasePermission):

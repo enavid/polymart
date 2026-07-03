@@ -29,6 +29,7 @@ from src.domain.access.registry import (
     ACCESS_ADMIN_ROLE,
     CATALOG_ADMIN_ROLE,
     CHANNEL_ADMIN_ROLE,
+    ORDER_ADMIN_ROLE,
 )
 from src.domain.catalog.entities import (
     Category,
@@ -199,7 +200,7 @@ class Command(BaseCommand):
             staff.is_staff = True
         staff.save()
 
-        for role in (CATALOG_ADMIN_ROLE, ACCESS_ADMIN_ROLE, CHANNEL_ADMIN_ROLE):
+        for role in (CATALOG_ADMIN_ROLE, ACCESS_ADMIN_ROLE, CHANNEL_ADMIN_ROLE, ORDER_ADMIN_ROLE):
             build_assign_role().execute(user_id=staff.pk, role_name=role)
 
         # Start every E2E run from an empty shopper cart, no prior orders, and an

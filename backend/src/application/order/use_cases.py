@@ -12,6 +12,7 @@ actor is the stable user id, and the captured totals live only on the audit entr
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 import structlog
@@ -21,7 +22,6 @@ from src.application.order.ports import (
     AddressReader,
     CartForCheckout,
     ChannelReader,
-    CheckoutLine,
     Clock,
     InlineShippingAddress,
     Inventory,
@@ -61,6 +61,7 @@ MAX_PAGE_LIMIT = 100
 _RESOURCE_ORDER = "order"
 _ACTION_ORDER_PLACED = "order.placed"
 _ACTION_ORDER_CANCELLED = "order.cancelled"
+_ACTION_ORDER_CREATED_MANUALLY = "order.created_manually"
 
 
 class InvalidOrderPageError(Exception):
@@ -81,6 +82,35 @@ def _resolve_shipping_address(
     if owned is None:
         raise UnknownShippingAddressError(address_id)
     return _to_shipping_address(owned)
+
+
+def _capture_and_deduct(
+    items: Sequence[tuple[str, int]],
+    channel: str,
+    currency: str,
+    *,
+    pricing: PricingReader,
+    inventory: Inventory,
+) -> list[PricedItem]:
+    """Capture each item's current price and deduct its stock (inside the caller's txn).
+
+    Shared by checkout (cart-sourced items) and manual order creation (staff-supplied
+    items). A line whose variant has no price in the channel is refused (it could not be
+    sold); ``inventory.deduct`` refuses an oversell. Because the caller runs this inside
+    a unit of work, a failure on any line rolls back the deductions already made.
+    """
+    priced: list[PricedItem] = []
+    for raw_sku, raw_quantity in items:
+        sku = Sku(raw_sku)
+        quantity = OrderQuantity(raw_quantity)
+        unit_price = pricing.price_of(sku.value, channel)
+        if unit_price is None:
+            raise VariantNotPurchasableError(sku.value, channel)
+        if unit_price.currency != currency:  # pragma: no cover - defensive
+            raise VariantNotPurchasableError(sku.value, channel)
+        inventory.deduct(sku.value, quantity.value)
+        priced.append(PricedItem(sku=sku, quantity=quantity, unit_price=unit_price))
+    return priced
 
 
 def _to_shipping_address(owned: OwnedAddress | InlineShippingAddress) -> ShippingAddress:
@@ -156,7 +186,13 @@ class PlaceOrder:
             if not items:
                 raise EmptyCartError(channel.value)
 
-            priced_items = self._capture_and_deduct(items, channel.value, currency)
+            priced_items = _capture_and_deduct(
+                [(item.sku, item.quantity) for item in items],
+                channel.value,
+                currency,
+                pricing=self._pricing,
+                inventory=self._inventory,
+            )
             lines = build_order_lines(priced_items)
             total = order_total(lines, currency)
             order = Order(
@@ -208,27 +244,128 @@ class PlaceOrder:
             return _resolve_shipping_address(self._addresses, command.owner, command.address_id)
         raise UnknownShippingAddressError("")
 
-    def _capture_and_deduct(
-        self, items: tuple[CheckoutLine, ...], channel: str, currency: str
-    ) -> list[PricedItem]:
-        """Capture each line's current price and deduct its stock (under the txn).
 
-        A line whose variant lost its price since being added is refused (it could not
-        be sold); ``inventory.deduct`` refuses an oversell. Because we are inside the
-        unit of work, a failure on any line rolls back the deductions already made.
-        """
-        priced: list[PricedItem] = []
-        for item in items:
-            sku = Sku(item.sku)
-            quantity = OrderQuantity(item.quantity)
-            unit_price = self._pricing.price_of(sku.value, channel)
-            if unit_price is None:
-                raise VariantNotPurchasableError(sku.value, channel)
-            if unit_price.currency != currency:  # pragma: no cover - defensive
-                raise VariantNotPurchasableError(sku.value, channel)
-            self._inventory.deduct(sku.value, quantity.value)
-            priced.append(PricedItem(sku=sku, quantity=quantity, unit_price=unit_price))
-        return priced
+@dataclass(frozen=True)
+class ManualOrderItem:
+    """One staff-specified line of a manual order (a sku and how many)."""
+
+    sku: str
+    quantity: int
+
+
+@dataclass(frozen=True)
+class CreateManualOrderCommand:
+    """Input for a staff member creating a manual order (a pre-invoice).
+
+    ``actor`` is the creating staff's owner id (``u:<pk>``); the manual order is owned by
+    them (so they can read/manage it) and the customer is identified by the captured
+    ``shipping_address`` (recipient + phone), matching the phone-first identity model.
+    """
+
+    actor: str
+    channel: str
+    items: tuple[ManualOrderItem, ...]
+    shipping_address: InlineShippingAddress
+
+
+class CreateManualOrder:
+    """Create a pending order directly from staff-supplied lines (no cart), atomically.
+
+    Behaves like checkout minus the cart: prices are *captured* from the current catalog,
+    the shipping address is *captured* from the inline form, stock is deducted (refusing an
+    oversell), the order is persisted PENDING, and the creation is audited -- all inside one
+    transaction, so any failure leaves stock and trail exactly as they were. The pending
+    order is the pre-invoice; payment (and a paid transition) belongs to a later phase.
+    """
+
+    def __init__(
+        self,
+        *,
+        unit_of_work: UnitOfWork,
+        pricing: PricingReader,
+        channels: ChannelReader,
+        inventory: Inventory,
+        orders: OrderRepository,
+        numbers: OrderNumberGenerator,
+        clock: Clock,
+        audit: AuditRecorder,
+    ) -> None:
+        self._uow = unit_of_work
+        self._pricing = pricing
+        self._channels = channels
+        self._inventory = inventory
+        self._orders = orders
+        self._numbers = numbers
+        self._clock = clock
+        self._audit = audit
+
+    def execute(self, command: CreateManualOrderCommand) -> Order:
+        channel = ChannelRef(command.channel)
+        currency = _resolve_currency(self._channels, channel.value)
+        shipping_address = _to_shipping_address(command.shipping_address)
+
+        with self._uow.atomic():
+            priced_items = _capture_and_deduct(
+                [(item.sku, item.quantity) for item in command.items],
+                channel.value,
+                currency,
+                pricing=self._pricing,
+                inventory=self._inventory,
+            )
+            lines = build_order_lines(priced_items)
+            total = order_total(lines, currency)
+            # An empty line list can build no order (EmptyOrderError from the aggregate)
+            # and a repeated sku is rejected (DuplicateOrderLineError) -- both roll back.
+            order = Order(
+                number=self._numbers.next(),
+                owner=command.actor,
+                channel=channel,
+                currency=currency,
+                lines=lines,
+                total=total,
+                status=OrderStatus.PENDING,
+                placed_at=self._clock.now(),
+                shipping_address=shipping_address,
+            )
+            saved = self._orders.add(order)
+            self._audit.record(
+                action=_ACTION_ORDER_CREATED_MANUALLY,
+                resource_type=_RESOURCE_ORDER,
+                resource_id=saved.number.value,
+                actor=command.actor,
+                changes=(
+                    FieldChange(field="status", after=OrderStatus.PENDING.value),
+                    FieldChange(field="total", after=str(total.amount)),
+                    FieldChange(field="line_count", after=len(lines)),
+                    FieldChange(field="origin", after="manual"),
+                ),
+            )
+
+        logger.info(
+            "manual_order_created",
+            actor=command.actor,
+            channel=channel.value,
+            order_number=saved.number.value,
+            line_count=len(lines),
+            currency=currency,
+        )
+        return saved
+
+
+class GetOrderForInvoice:
+    """Read any order by number to issue its pre-invoice (behind the manage_orders perm).
+
+    Unlike a shopper's own read, this is *not* owner-scoped: staff issuing a pre-invoice
+    may print it for any order. The authorization is enforced at the transport by the
+    ``manage_orders`` permission, so this use case trusts its caller.
+    """
+
+    def __init__(self, orders: OrderRepository) -> None:
+        self._orders = orders
+
+    def execute(self, *, number: str) -> Order:
+        canonical = OrderNumber(number).value
+        return self._orders.get(canonical)
 
 
 @dataclass(frozen=True)
