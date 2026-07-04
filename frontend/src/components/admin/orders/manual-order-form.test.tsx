@@ -52,7 +52,7 @@ describe("ManualOrderForm", () => {
     await user.click(screen.getByRole("button", { name: manual.submit }));
 
     await waitFor(() =>
-      expect(push).toHaveBeenCalledWith("/admin/orders/ORD-MANUAL01/pre-invoice"),
+      expect(push).toHaveBeenCalledWith("/manage/orders/ORD-MANUAL01/pre-invoice"),
     );
     expect(captured).toMatchObject({
       items: [{ sku: "HB-250", quantity: 2 }],

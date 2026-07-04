@@ -53,19 +53,19 @@ const WARM_ROUTES = [
   // A dummy order number compiles the dynamic order route (it renders "not found",
   // but the route is now warm for the checkout/guest specs that land on a real one).
   "/orders/ORD-WARMUP0000",
-  "/admin/catalog/products",
-  "/admin/catalog/products/house-blend",
-  "/admin/catalog/variants/HB-250",
-  "/admin/catalog/collections/featured",
-  "/admin/catalog/categories",
-  "/admin/catalog/collections",
-  "/admin/access",
-  "/admin/channels",
-  "/admin/audit",
-  "/admin/orders/new",
+  "/manage/catalog/products",
+  "/manage/catalog/products/house-blend",
+  "/manage/catalog/variants/HB-250",
+  "/manage/catalog/collections/featured",
+  "/manage/catalog/categories",
+  "/manage/catalog/collections",
+  "/manage/access",
+  "/manage/channels",
+  "/manage/audit",
+  "/manage/orders/new",
   // A dummy pre-invoice route: 404s (no such order), but the dynamic route is now
   // compiled before the manual-order spec lands on a real one.
-  "/admin/orders/ORD-WARMUP0000/pre-invoice",
+  "/manage/orders/ORD-WARMUP0000/pre-invoice",
 ];
 
 setup("warm up routes so the dev server has compiled them", async ({ page }) => {

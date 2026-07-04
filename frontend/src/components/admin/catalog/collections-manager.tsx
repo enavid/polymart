@@ -153,7 +153,7 @@ export function CollectionsManager() {
                 <TableCell>{collection.name}</TableCell>
                 <TableCell>
                   <Link
-                    href={`/admin/catalog/collections/${collection.slug}`}
+                    href={`/manage/catalog/collections/${collection.slug}`}
                     className="text-primary hover:underline"
                   >
                     {t("collections.manage")}

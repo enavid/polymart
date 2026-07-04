@@ -43,17 +43,16 @@ describe("AccountMenu", () => {
     expect(screen.getByRole("menuitem", { name: nav.account })).toBeInTheDocument();
   });
 
-  it("shows the admin entry only for staff", async () => {
+  it("keeps the management entry out of the account menu (it lives in the header)", async () => {
+    // Staff reach management via a visible header button, so the account menu must
+    // not carry a duplicate -- even for a staff user.
     const user = userEvent.setup();
-    const { rerender } = renderWithProviders(
-      <AccountMenu user={shopper} onLogout={() => {}} loggingOut={false} />,
+    renderWithProviders(
+      <AccountMenu user={staff} onLogout={() => {}} loggingOut={false} />,
     );
+
     await user.click(screen.getByRole("button", { name: /Sara Ahmadi/ }));
     expect(screen.queryByRole("menuitem", { name: nav.admin })).not.toBeInTheDocument();
-
-    // The menu stays open across the prop change; staff now sees the admin entry.
-    rerender(<AccountMenu user={staff} onLogout={() => {}} loggingOut={false} />);
-    expect(screen.getByRole("menuitem", { name: nav.admin })).toBeInTheDocument();
   });
 
   it("invokes the logout handler from the menu", async () => {

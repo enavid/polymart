@@ -129,7 +129,7 @@ export function AccountView() {
           />
           {user.is_staff ? (
             <HubTile
-              href="/admin"
+              href="/manage"
               title={t("hubAdmin")}
               description={t("hubAdminDesc")}
             />

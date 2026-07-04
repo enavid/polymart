@@ -344,7 +344,7 @@ export function VariantDetail({ sku }: { sku: string }) {
 
   return (
     <div className="flex flex-col gap-6">
-      <Link href="/admin/catalog/products" className="text-sm text-muted-foreground">
+      <Link href="/manage/catalog/products" className="text-sm text-muted-foreground">
         {t("productDetail.backToProducts")}
       </Link>
 

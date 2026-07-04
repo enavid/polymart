@@ -6,12 +6,15 @@ import { useTranslations } from "next-intl";
 
 import { AccountMenu } from "@/components/layout/account-menu";
 import { ThemeToggle } from "@/components/layout/theme-toggle";
+import { buttonVariants } from "@/components/ui/button";
 import { useCurrentUser, useLogout } from "@/lib/hooks/use-auth";
 
 /**
  * Top navigation: shopping entry points (store, cart) plus a single account
- * entry. Orders, addresses, and the admin panel are folded into the account
- * menu rather than top-level links, so the header stays a shopping surface.
+ * entry. Orders and addresses are folded into the account menu so the header
+ * stays a shopping surface. Staff additionally get a visible entry into the
+ * management area -- surfaced directly (not buried in the account menu) so a
+ * signed-in staff member can see and reach it at a glance.
  */
 export function SiteHeader() {
   const t = useTranslations("nav");
@@ -53,8 +56,16 @@ export function SiteHeader() {
           </Link>
         </nav>
 
-        {/* Trailing utilities: theme switch + account, separated from navigation. */}
+        {/* Trailing utilities: management (staff only) + theme switch + account. */}
         <div className="flex items-center gap-2 border-s border-border ps-3">
+          {user?.is_staff ? (
+            <Link
+              href="/manage"
+              className={buttonVariants({ variant: "outline", size: "sm" })}
+            >
+              {t("admin")}
+            </Link>
+          ) : null}
           <ThemeToggle />
           {user ? (
             <AccountMenu

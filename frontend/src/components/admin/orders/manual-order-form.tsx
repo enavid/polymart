@@ -50,7 +50,7 @@ export function ManualOrderForm() {
   const mutation = useMutation({
     mutationFn: (input: ManualOrderInput) => createManualOrder(input),
     onSuccess: (order) => {
-      router.push(`/admin/orders/${order.number}/pre-invoice`);
+      router.push(`/manage/orders/${order.number}/pre-invoice`);
     },
   });
 

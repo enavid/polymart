@@ -292,7 +292,7 @@ export function CollectionDetail({ slug }: { slug: string }) {
     <div className="flex flex-col gap-6">
       <div>
         <Link
-          href="/admin/catalog/collections"
+          href="/manage/catalog/collections"
           className="text-sm text-primary hover:underline"
         >
           {t("collectionDetail.backToCollections")}

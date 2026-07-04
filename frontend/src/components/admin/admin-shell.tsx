@@ -22,7 +22,7 @@ function isActive(pathname: string | null, href: string): boolean {
   if (!pathname) {
     return false;
   }
-  return href === "/admin" ? pathname === "/admin" : pathname.startsWith(href);
+  return href === "/manage" ? pathname === "/manage" : pathname.startsWith(href);
 }
 
 /**
@@ -42,17 +42,17 @@ export function AdminShell({ children }: { children: ReactNode }) {
   const logout = useLogout();
 
   const items: NavItem[] = [
-    { href: "/admin", label: tAdmin("dashboard"), icon: "▦" },
-    { href: "/admin/catalog", label: t("catalog"), icon: "📦" },
-    { href: "/admin/channels", label: t("channels"), icon: "🏷️" },
-    { href: "/admin/access", label: t("access"), icon: "👥" },
-    { href: "/admin/orders/new", label: t("manualOrders"), icon: "🧾" },
-    { href: "/admin/catalog/import-export", label: tCatalog("navImportExport"), icon: "⇅" },
-    { href: "/admin/audit", label: t("audit"), icon: "🔎" },
+    { href: "/manage", label: tAdmin("dashboard"), icon: "▦" },
+    { href: "/manage/catalog", label: t("catalog"), icon: "📦" },
+    { href: "/manage/channels", label: t("channels"), icon: "🏷️" },
+    { href: "/manage/access", label: t("access"), icon: "👥" },
+    { href: "/manage/orders/new", label: t("manualOrders"), icon: "🧾" },
+    { href: "/manage/catalog/import-export", label: tCatalog("navImportExport"), icon: "⇅" },
+    { href: "/manage/audit", label: t("audit"), icon: "🔎" },
   ];
 
   const brand = (
-    <Link href="/admin" className="flex items-center gap-2 font-bold tracking-tight text-foreground">
+    <Link href="/manage" className="flex items-center gap-2 font-bold tracking-tight text-foreground">
       <span
         aria-hidden
         className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-sm font-black text-primary-foreground"

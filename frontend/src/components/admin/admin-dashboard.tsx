@@ -29,19 +29,19 @@ export function AdminDashboard() {
   });
 
   const kpis = [
-    { label: tAdmin("kpiProducts"), value: products.data?.length, href: "/admin/catalog/products" },
-    { label: tAdmin("kpiChannels"), value: channels.data?.length, href: "/admin/channels" },
-    { label: tAdmin("kpiUsers"), value: users.data?.count, href: "/admin/access" },
+    { label: tAdmin("kpiProducts"), value: products.data?.length, href: "/manage/catalog/products" },
+    { label: tAdmin("kpiChannels"), value: channels.data?.length, href: "/manage/channels" },
+    { label: tAdmin("kpiUsers"), value: users.data?.count, href: "/manage/access" },
   ];
 
   const areas = [
-    { href: "/admin/catalog", title: t("catalog"), desc: tAdmin("hubCatalog") },
-    { href: "/admin/access", title: t("access"), desc: tAdmin("hubAccess") },
-    { href: "/admin/channels", title: t("channels"), desc: tAdmin("hubChannels") },
-    { href: "/admin/orders/new", title: t("manualOrders"), desc: tAdmin("hubManualOrders") },
-    { href: "/admin/audit", title: t("audit"), desc: tAdmin("hubAudit") },
+    { href: "/manage/catalog", title: t("catalog"), desc: tAdmin("hubCatalog") },
+    { href: "/manage/access", title: t("access"), desc: tAdmin("hubAccess") },
+    { href: "/manage/channels", title: t("channels"), desc: tAdmin("hubChannels") },
+    { href: "/manage/orders/new", title: t("manualOrders"), desc: tAdmin("hubManualOrders") },
+    { href: "/manage/audit", title: t("audit"), desc: tAdmin("hubAudit") },
     {
-      href: "/admin/catalog/import-export",
+      href: "/manage/catalog/import-export",
       title: tAdmin("hubImportExportTitle"),
       desc: tAdmin("hubImportExport"),
     },

@@ -4,8 +4,8 @@
  * an inline shipping address, then land on the printable pre-invoice showing the exact
  * server-computed totals.
  *
- *   /admin/orders/new -> fill a line + inline address -> submit ->
- *   /admin/orders/<number>/pre-invoice (number, line, grand total, tax placeholder).
+ *   /manage/orders/new -> fill a line + inline address -> submit ->
+ *   /manage/orders/<number>/pre-invoice (number, line, grand total, tax placeholder).
  *
  * The manual order is a real pending order that deducts stock, so the spec cancels it at
  * the end (the staff member owns it) to restock -- keeping the shared seeded stock pool
@@ -38,7 +38,7 @@ async function fillInlineAddress(page: Page): Promise<void> {
 
 test("staff create a manual order and reach its printable pre-invoice", async ({ page }) => {
   // 1) Open the manual-order form (also reachable from the admin nav).
-  await page.goto("/admin/orders/new");
+  await page.goto("/manage/orders/new");
   await expect(page.getByRole("heading", { name: manual.title })).toBeVisible();
 
   // 2) One line: HB-250 x2 (=240,000), plus the customer's inline shipping address.
@@ -48,7 +48,7 @@ test("staff create a manual order and reach its printable pre-invoice", async ({
   await page.getByRole("button", { name: manual.submit }).click();
 
   // 3) Lands on the printable pre-invoice with the exact server totals.
-  await expect(page).toHaveURL(/\/admin\/orders\/ORD-[A-Z0-9]+\/pre-invoice$/);
+  await expect(page).toHaveURL(/\/manage\/orders\/ORD-[A-Z0-9]+\/pre-invoice$/);
   await expect(page.getByRole("heading", { name: pre.title })).toBeVisible();
   await expect(page.getByText(hb250.sku)).toBeVisible();
   await expect(page.getByText(money(240000)).first()).toBeVisible();

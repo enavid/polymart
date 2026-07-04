@@ -27,7 +27,7 @@ describe("CollectionsManager", () => {
     expect(screen.getByText("Summer")).toBeInTheDocument();
     expect(
       screen.getByRole("link", { name: messages.catalog.collections.manage }),
-    ).toHaveAttribute("href", "/admin/catalog/collections/summer");
+    ).toHaveAttribute("href", "/manage/catalog/collections/summer");
   });
 
   it("shows an empty state when there are no collections", async () => {

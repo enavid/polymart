@@ -8,7 +8,7 @@ import { markSignedIn } from "@/lib/auth/session-hint";
 import messages from "@/i18n/messages/fa.json";
 import { renderWithProviders } from "@/test/utils";
 
-vi.mock("next/navigation", () => ({ usePathname: () => "/admin" }));
+vi.mock("next/navigation", () => ({ usePathname: () => "/manage" }));
 
 const server = setupServer();
 beforeAll(() => server.listen({ onUnhandledRequest: "error" }));

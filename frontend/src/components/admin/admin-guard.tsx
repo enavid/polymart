@@ -1,72 +1,61 @@
 "use client";
 
-import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
-import type { ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 
-import { buttonVariants } from "@/components/ui/button";
+import { hasSignedInHint } from "@/lib/auth/session-hint";
 import { useCurrentUser } from "@/lib/hooks/use-auth";
 
 /**
- * Gate for the admin area. The admin shell must never render for a visitor who
- * is not a signed-in staff member:
+ * Gate for the admin area. There is no separate admin login: staff sign in through
+ * the very same login page as any customer, and the admin area is simply *hidden*
+ * from anyone without access -- never presented as a "you are denied" wall.
  *  - session still resolving -> a neutral loading state;
- *  - not signed in  -> a sign-in prompt (link into login with a return path);
- *  - signed in, not staff -> a plain "forbidden" page, not the panel;
- *  - staff -> the admin shell.
+ *  - not signed in         -> redirect to the shared login (with a return path);
+ *  - signed in, not staff   -> redirect home (the area is hidden, not blocked);
+ *  - staff                  -> the admin shell.
  *
- * The not-signed-in state is a rendered prompt rather than an imperative redirect
- * on purpose: the session hint resolves via `useSyncExternalStore` (false on the
- * hydration tick, then its real value), so an eager `router.replace` would bounce
- * even a legitimately signed-in staff member on the first commit. Rendering a
- * prompt self-heals as the hint settles, exactly like the account page.
+ * Redirecting safely is subtle: `useCurrentUser` stays *disabled* until the session
+ * hint flips (it reads the hint through `useSyncExternalStore`, whose server snapshot
+ * is `false` on the first commit), and a disabled query reports `isLoading === false`
+ * with no data. So we must not treat "no user yet" as "logged out". Instead the effect
+ * reads the hint *directly* -- post-commit `localStorage` is authoritative -- and only
+ * redirects to login when there is genuinely no session, or once the probe has resolved.
+ * That never bounces a legitimately signed-in staff member on the first tick.
  *
  * This is a UX/visibility gate; the API remains the real authority (every admin
  * endpoint independently enforces staff permission).
  */
 export function AdminGuard({ children }: { children: ReactNode }) {
   const t = useTranslations("admin");
-  const { data: user, isLoading } = useCurrentUser();
+  const router = useRouter();
+  const { data: user, isFetched } = useCurrentUser();
 
-  if (isLoading) {
-    return (
-      <div className="flex min-h-screen items-center justify-center p-6 text-muted-foreground">
-        {t("guardLoading")}
-      </div>
-    );
+  useEffect(() => {
+    // No session at all -> straight to the shared login. Reading the hint here (not
+    // during render) avoids the false first-commit snapshot that would bounce staff.
+    if (!hasSignedInHint()) {
+      router.replace("/login?next=/manage");
+      return;
+    }
+    // A session exists: wait for the probe, then act on its result.
+    if (isFetched) {
+      if (!user) {
+        router.replace("/login?next=/manage");
+      } else if (!user.is_staff) {
+        router.replace("/");
+      }
+    }
+  }, [user, isFetched, router]);
+
+  if (user?.is_staff) {
+    return <>{children}</>;
   }
 
-  if (!user) {
-    return (
-      <GuardNotice message={t("guardSignIn")}>
-        <Link
-          href="/login?next=/admin"
-          className={buttonVariants({ variant: "default" })}
-        >
-          {t("guardSignInCta")}
-        </Link>
-      </GuardNotice>
-    );
-  }
-
-  if (!user.is_staff) {
-    return (
-      <GuardNotice message={t("guardForbidden")}>
-        <Link href="/" className={buttonVariants({ variant: "outline" })}>
-          {t("backToStore")}
-        </Link>
-      </GuardNotice>
-    );
-  }
-
-  return <>{children}</>;
-}
-
-function GuardNotice({ message, children }: { message: string; children: ReactNode }) {
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center gap-4 p-6 text-center">
-      <p className="text-lg font-medium">{message}</p>
-      {children}
+    <div className="flex min-h-screen items-center justify-center p-6 text-muted-foreground">
+      {t("guardLoading")}
     </div>
   );
 }

@@ -39,7 +39,7 @@ describe("AdminDashboard", () => {
     // Quick links into the sections are present.
     expect(screen.getByRole("link", { name: /کاتالوگ/ })).toHaveAttribute(
       "href",
-      "/admin/catalog",
+      "/manage/catalog",
     );
     expect(screen.getByText(admin.quickLinks)).toBeInTheDocument();
   });

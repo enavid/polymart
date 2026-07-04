@@ -294,7 +294,7 @@ function VariantsCard({ code }: { code: string }) {
                     <TableCell className="font-medium">{variant.sku}</TableCell>
                     <TableCell>{variant.name}</TableCell>
                     <TableCell>
-                      <Link href={`/admin/catalog/variants/${variant.sku}`}>
+                      <Link href={`/manage/catalog/variants/${variant.sku}`}>
                         {t("productDetail.manageVariant")}
                       </Link>
                     </TableCell>
@@ -425,7 +425,7 @@ export function ProductDetail({ code }: { code: string }) {
 
   return (
     <div className="flex flex-col gap-6">
-      <Link href="/admin/catalog/products" className="text-sm text-muted-foreground">
+      <Link href="/manage/catalog/products" className="text-sm text-muted-foreground">
         {t("productDetail.backToProducts")}
       </Link>
 

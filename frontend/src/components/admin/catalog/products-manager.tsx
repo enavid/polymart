@@ -222,7 +222,7 @@ function ProductRow({ product }: { product: Product }) {
       </TableCell>
       <TableCell>
         <Link
-          href={`/admin/catalog/products/${product.code}`}
+          href={`/manage/catalog/products/${product.code}`}
           className="text-sm font-medium text-primary hover:underline"
         >
           {t("products.manage")}

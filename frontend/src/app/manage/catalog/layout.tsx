@@ -10,12 +10,12 @@ export default async function CatalogLayout({
 }) {
   const t = await getTranslations("catalog");
   const links = [
-    { href: "/admin/catalog/products", label: t("navProducts") },
-    { href: "/admin/catalog/product-types", label: t("navProductTypes") },
-    { href: "/admin/catalog/attributes", label: t("navAttributes") },
-    { href: "/admin/catalog/categories", label: t("navCategories") },
-    { href: "/admin/catalog/collections", label: t("navCollections") },
-    { href: "/admin/catalog/import-export", label: t("navImportExport") },
+    { href: "/manage/catalog/products", label: t("navProducts") },
+    { href: "/manage/catalog/product-types", label: t("navProductTypes") },
+    { href: "/manage/catalog/attributes", label: t("navAttributes") },
+    { href: "/manage/catalog/categories", label: t("navCategories") },
+    { href: "/manage/catalog/collections", label: t("navCollections") },
+    { href: "/manage/catalog/import-export", label: t("navImportExport") },
   ];
   return (
     <div className="flex flex-col gap-6">

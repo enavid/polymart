@@ -7,7 +7,7 @@ import { SiteHeader } from "@/components/layout/site-header";
 
 /**
  * Chooses the chrome for the current route. The storefront gets the shopper
- * header, a centered content column, and the footer; the admin area (`/admin/*`)
+ * header, a centered content column, and the footer; the admin area (`/manage/*`)
  * gets none of that — it renders its own full-width shell (sidebar + admin top
  * bar) so it never inherits the shopper header, login button, or footer.
  *
@@ -22,7 +22,7 @@ export function AppShell({
   footer: ReactNode;
 }) {
   const pathname = usePathname();
-  if (pathname?.startsWith("/admin")) {
+  if (pathname?.startsWith("/manage")) {
     return <>{children}</>;
   }
   return (

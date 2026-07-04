@@ -25,7 +25,7 @@ test("logged-out visitor sees the not-logged-in state on the account page", asyn
 });
 
 test("logged-out visitor cannot see protected admin data (channels)", async ({ page }) => {
-  await page.goto("/admin/channels");
+  await page.goto("/manage/channels");
   // The page loads, but the API rejects the unauthenticated read, so the seeded
   // channel's data never renders -- no protected data is leaked to the browser.
   await expect(page.getByRole("cell", { name: CHANNEL, exact: true })).toHaveCount(0);

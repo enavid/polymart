@@ -1,14 +1,18 @@
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { screen } from "@testing-library/react";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { screen, waitFor } from "@testing-library/react";
 import { setupServer } from "msw/node";
 import { http, HttpResponse } from "msw";
 
 import { AdminGuard } from "@/components/admin/admin-guard";
 import { markSignedIn } from "@/lib/auth/session-hint";
-import messages from "@/i18n/messages/fa.json";
 import { renderWithProviders } from "@/test/utils";
 
-const admin = messages.admin;
+// Admins sign in through the same login as any customer; the admin area is simply
+// hidden (a redirect) from anyone without staff access -- never a "denied" wall.
+const { replace } = vi.hoisted(() => ({ replace: vi.fn() }));
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ replace }),
+}));
 
 function me(isStaff: boolean) {
   return http.get("*/auth/me/", () =>
@@ -26,12 +30,13 @@ const server = setupServer();
 beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
 afterEach(() => {
   server.resetHandlers();
+  replace.mockReset();
   window.localStorage.clear();
 });
 afterAll(() => server.close());
 
 describe("AdminGuard", () => {
-  it("renders the admin content for a staff user", async () => {
+  it("renders the admin content for a staff user without redirecting", async () => {
     markSignedIn();
     server.use(me(true));
 
@@ -42,9 +47,10 @@ describe("AdminGuard", () => {
     );
 
     expect(await screen.findByText("PANEL")).toBeInTheDocument();
+    expect(replace).not.toHaveBeenCalled();
   });
 
-  it("shows a forbidden page (not the panel) for a signed-in non-staff user", async () => {
+  it("sends a signed-in non-staff user home instead of showing the panel", async () => {
     markSignedIn();
     server.use(me(false));
 
@@ -54,24 +60,20 @@ describe("AdminGuard", () => {
       </AdminGuard>,
     );
 
-    expect(await screen.findByText(admin.guardForbidden)).toBeInTheDocument();
+    await waitFor(() => expect(replace).toHaveBeenCalledWith("/"));
     expect(screen.queryByText("PANEL")).not.toBeInTheDocument();
   });
 
-  it("shows a sign-in prompt (never the panel) for an anonymous visitor", async () => {
+  it("sends an anonymous visitor to the shared login with a return path", async () => {
     // No session hint and no /auth/me handler: an unhandled request would fail the
-    // test, proving the guard makes no probe and just prompts to sign in.
+    // test, proving the guard makes no probe and just redirects to the unified login.
     renderWithProviders(
       <AdminGuard>
         <div>PANEL</div>
       </AdminGuard>,
     );
 
-    expect(await screen.findByText(admin.guardSignIn)).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: admin.guardSignInCta })).toHaveAttribute(
-      "href",
-      "/login?next=/admin",
-    );
+    await waitFor(() => expect(replace).toHaveBeenCalledWith("/login?next=/manage"));
     expect(screen.queryByText("PANEL")).not.toBeInTheDocument();
   });
 });

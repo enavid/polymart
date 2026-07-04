@@ -12,8 +12,20 @@
  * SameSite=Lax cookies mean no separate CSRF token is required.
  */
 
+// In the browser, call the backend through a same-origin path ("/api/v1"), which
+// Next proxies to the backend (see next.config.mjs `rewrites`). Same-origin keeps the
+// JWT cookie first-party, so the session persists across a refresh whether the site is
+// opened on localhost or 127.0.0.1. On the server (SSR) a relative URL has no origin to
+// resolve against, so fall back to the absolute backend URL there.
+const BROWSER_API_BASE_URL = "/api/v1";
+const SERVER_API_BASE_URL =
+  process.env.BACKEND_ORIGIN != null
+    ? `${process.env.BACKEND_ORIGIN}/api/v1`
+    : "http://localhost:8000/api/v1";
+
 export const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000/api/v1";
+  process.env.NEXT_PUBLIC_API_BASE_URL ??
+  (typeof window === "undefined" ? SERVER_API_BASE_URL : BROWSER_API_BASE_URL);
 
 /** A failed API call. `detail` carries the backend's human-readable message. */
 export class ApiError extends Error {

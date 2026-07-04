@@ -92,16 +92,8 @@ export function AccountMenu({ user, onLogout, loggingOut }: AccountMenuProps) {
               {link.label}
             </Link>
           ))}
-          {user.is_staff ? (
-            <Link
-              href="/admin"
-              role="menuitem"
-              className={`${itemClass} font-medium text-primary`}
-              onClick={() => setOpen(false)}
-            >
-              {t("admin")}
-            </Link>
-          ) : null}
+          {/* The management entry lives directly in the header for staff (a visible
+              button), not here -- so it stays discoverable without opening the menu. */}
           <button
             type="button"
             role="menuitem"
