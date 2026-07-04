@@ -176,7 +176,9 @@
     "kpiLoadError": "بارگذاری آمار ممکن نشد.",
     "quickLinks": "دسترسی سریع",
     "guardLoading": "در حال بررسی دسترسی…",
-    "menuLabel": "منوی مدیریت"
+    "menuLabel": "منوی مدیریت",
+    "collapseMenu": "جمع کردن منو",
+    "expandMenu": "باز کردن منو"
   },
   "audit": {
     "title": "گزارشِ ممیزی",

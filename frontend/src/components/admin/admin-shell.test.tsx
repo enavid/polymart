@@ -123,4 +123,31 @@ describe("AdminShell", () => {
     // Collapsing the System section removes its sidebar links; the mobile nav copy stays.
     expect(screen.getAllByRole("link", { name: messages.nav.channels })).toHaveLength(1);
   });
+
+  it("collapses the whole sidebar to an icon rail and back", async () => {
+    markSignedIn();
+    server.use(staff());
+    const user = userEvent.setup();
+
+    renderWithProviders(
+      <AdminShell>
+        <div>SECTION CONTENT</div>
+      </AdminShell>,
+    );
+
+    // Expanded: the group headings are visible.
+    await screen.findByText(messages.admin.navGroupSystem);
+
+    // Collapsing to the rail drops the group headings but keeps every section
+    // reachable (icon links carry the label as their accessible name).
+    await user.click(screen.getByRole("button", { name: messages.admin.collapseMenu }));
+    expect(screen.queryByText(messages.admin.navGroupSystem)).not.toBeInTheDocument();
+    expect(
+      screen.getAllByRole("link", { name: messages.nav.channels }).length,
+    ).toBeGreaterThan(0);
+
+    // Expanding restores the headings.
+    await user.click(screen.getByRole("button", { name: messages.admin.expandMenu }));
+    expect(screen.getByText(messages.admin.navGroupSystem)).toBeInTheDocument();
+  });
 });

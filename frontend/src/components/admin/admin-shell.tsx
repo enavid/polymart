@@ -8,6 +8,8 @@ import {
   LayoutDashboard,
   type LucideIcon,
   Package,
+  PanelLeftClose,
+  PanelLeftOpen,
   Receipt,
   ScrollText,
   Shapes,
@@ -67,6 +69,10 @@ export function AdminShell({ children }: { children: ReactNode }) {
   const toggleGroup = (heading: string) =>
     setCollapsed((state) => ({ ...state, [heading]: !state[heading] }));
 
+  // The whole sidebar can collapse to a slim icon rail to reclaim horizontal
+  // space; in that state group headings give way to a flat, icon-only nav.
+  const [railed, setRailed] = useState(false);
+
   // Grouped by concern so the panel stays coherent as it grows: overview,
   // catalog (with its import/export sub-tool), sales, and system administration.
   const groups: NavGroup[] = [
@@ -125,61 +131,109 @@ export function AdminShell({ children }: { children: ReactNode }) {
   const isNested =
     !!activeItem && !!pathname && pathname.startsWith(`${activeItem.href}/`);
 
-  const brand = (
-    <Link href="/manage" className="flex items-center gap-2 font-bold tracking-tight text-foreground">
+  const renderBrand = (compact = false) => (
+    <Link
+      href="/manage"
+      aria-label={tCommon("appName")}
+      className="flex items-center gap-2 font-bold tracking-tight text-foreground"
+    >
       <span
         aria-hidden
-        className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-sm font-black text-primary-foreground"
+        className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary text-sm font-black text-primary-foreground"
       >
         پ
       </span>
-      <span className="flex flex-col leading-tight">
-        <span>{tCommon("appName")}</span>
-        <span className="text-xs font-normal text-muted-foreground">{tAdmin("title")}</span>
-      </span>
+      {compact ? null : (
+        <span className="flex flex-col leading-tight">
+          <span>{tCommon("appName")}</span>
+          <span className="text-xs font-normal text-muted-foreground">{tAdmin("title")}</span>
+        </span>
+      )}
     </Link>
   );
+  const brand = renderBrand(false);
 
   return (
     // The whole admin area is pinned to the viewport height so the page itself
     // never scrolls; the sidebar and the content area each scroll on their own.
     <div className="flex h-screen w-full overflow-hidden bg-background">
-      {/* Sidebar (lg+) */}
-      <aside className="no-scrollbar hidden w-64 shrink-0 flex-col gap-6 overflow-y-auto border-e border-border bg-card p-4 lg:flex">
-        <div className="px-2 pt-2">{brand}</div>
-        <nav aria-label={tAdmin("menuLabel")} className="flex flex-col gap-5">
-          {groups.map((group) => {
-            const isCollapsed = collapsed[group.heading] ?? false;
-            return (
-              <div key={group.heading} className="flex flex-col gap-1">
-                <button
-                  type="button"
-                  onClick={() => toggleGroup(group.heading)}
-                  aria-expanded={!isCollapsed}
-                  className="flex items-center justify-between gap-2 rounded-md px-3 py-1 text-xs font-medium uppercase tracking-wide text-muted-foreground transition-colors hover:text-foreground"
-                >
-                  <span>{group.heading}</span>
-                  <ChevronDown
-                    aria-hidden
-                    className={cn(
-                      "h-3.5 w-3.5 transition-transform",
-                      isCollapsed && "-rotate-90",
-                    )}
-                  />
-                </button>
-                {isCollapsed
-                  ? null
-                  : group.items.map((item) => (
-                      <SidebarLink
-                        key={item.href}
-                        item={item}
-                        active={item.href === activeItem?.href}
-                      />
-                    ))}
-              </div>
-            );
-          })}
-        </nav>
+      {/* Sidebar (lg+): collapses to a slim icon rail via the header toggle. */}
+      <aside
+        className={cn(
+          "no-scrollbar hidden shrink-0 flex-col gap-6 overflow-y-auto border-e border-border bg-card transition-[width] lg:flex",
+          railed ? "w-16 p-2" : "w-64 p-4",
+        )}
+      >
+        <div
+          className={cn(
+            "flex items-center pt-2",
+            railed ? "flex-col gap-3" : "justify-between gap-2 px-2",
+          )}
+        >
+          {renderBrand(railed)}
+          <button
+            type="button"
+            onClick={() => setRailed((value) => !value)}
+            aria-expanded={!railed}
+            aria-label={railed ? tAdmin("expandMenu") : tAdmin("collapseMenu")}
+            title={railed ? tAdmin("expandMenu") : tAdmin("collapseMenu")}
+            className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            {railed ? (
+              <PanelLeftOpen aria-hidden className="h-4 w-4" />
+            ) : (
+              <PanelLeftClose aria-hidden className="h-4 w-4" />
+            )}
+          </button>
+        </div>
+
+        {railed ? (
+          // Icon-only rail: a flat list of every section, headings dropped.
+          <nav aria-label={tAdmin("menuLabel")} className="flex flex-col items-center gap-1">
+            {allItems.map((item) => (
+              <SidebarLink
+                key={item.href}
+                item={item}
+                active={item.href === activeItem?.href}
+                compact
+              />
+            ))}
+          </nav>
+        ) : (
+          <nav aria-label={tAdmin("menuLabel")} className="flex flex-col gap-5">
+            {groups.map((group) => {
+              const isCollapsed = collapsed[group.heading] ?? false;
+              return (
+                <div key={group.heading} className="flex flex-col gap-1">
+                  <button
+                    type="button"
+                    onClick={() => toggleGroup(group.heading)}
+                    aria-expanded={!isCollapsed}
+                    className="flex items-center justify-between gap-2 rounded-md px-3 py-1 text-xs font-medium uppercase tracking-wide text-muted-foreground transition-colors hover:text-foreground"
+                  >
+                    <span>{group.heading}</span>
+                    <ChevronDown
+                      aria-hidden
+                      className={cn(
+                        "h-3.5 w-3.5 transition-transform",
+                        isCollapsed && "-rotate-90",
+                      )}
+                    />
+                  </button>
+                  {isCollapsed
+                    ? null
+                    : group.items.map((item) => (
+                        <SidebarLink
+                          key={item.href}
+                          item={item}
+                          active={item.href === activeItem?.href}
+                        />
+                      ))}
+                </div>
+              );
+            })}
+          </nav>
+        )}
       </aside>
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -258,21 +312,32 @@ export function AdminShell({ children }: { children: ReactNode }) {
   );
 }
 
-function SidebarLink({ item, active }: { item: NavItem; active: boolean }) {
+function SidebarLink({
+  item,
+  active,
+  compact = false,
+}: {
+  item: NavItem;
+  active: boolean;
+  compact?: boolean;
+}) {
   const { Icon } = item;
   return (
     <Link
       href={item.href}
       aria-current={active ? "page" : undefined}
+      aria-label={compact ? item.label : undefined}
+      title={compact ? item.label : undefined}
       className={cn(
-        "flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors",
+        "flex items-center rounded-md text-sm transition-colors",
+        compact ? "h-10 w-10 justify-center" : "gap-3 px-3 py-2",
         active
           ? "bg-primary text-primary-foreground"
           : "text-foreground hover:bg-accent hover:text-accent-foreground",
       )}
     >
       <Icon aria-hidden className="h-4 w-4 shrink-0" />
-      {item.label}
+      {compact ? null : item.label}
     </Link>
   );
 }
