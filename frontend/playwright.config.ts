@@ -22,6 +22,11 @@ export default defineConfig({
   // on the now-warm route; a genuine failure still fails both attempts.
   retries: process.env.CI ? 2 : 1,
   reporter: "list",
+  // A full-stack journey (build a cart, check out, reach the order, cancel) makes many
+  // navigations, each JIT-compiled by the Next.js dev server, so the longest specs can
+  // exceed Playwright's 30s default. Give every test more room; a genuine hang still
+  // fails here, and the per-expect ceiling below keeps individual assertions tight.
+  timeout: 60_000,
   // A little headroom over the 5s default so a cold route compile does not flake.
   expect: { timeout: 10_000 },
   use: {

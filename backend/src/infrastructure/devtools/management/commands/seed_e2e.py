@@ -84,9 +84,13 @@ CHANNEL_SLUG = "ir-main"
 CHANNEL_CURRENCY = "IRR"
 
 SHOPPER_PHONE = "09120000001"
-SHOPPER_PASSWORD = "shopper-pass-123"
+# nosec B105 - deterministic E2E fixture credential, not a real secret; this command
+# refuses to run outside DEBUG (see the command's guard).
+SHOPPER_PASSWORD = "shopper-pass-123"  # nosec B105
 STAFF_PHONE = "09120000009"
-STAFF_PASSWORD = "staff-pass-123"
+# nosec B105 - deterministic E2E fixture credential, not a real secret; this command
+# refuses to run outside DEBUG (see the command's guard).
+STAFF_PASSWORD = "staff-pass-123"  # nosec B105
 
 # A persistent default shipping address for the shopper. Checkout selects it, and the
 # address-book spec is written to preserve it (never deleting this recipient), so the

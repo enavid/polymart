@@ -32,6 +32,7 @@ from src.application.order.ports import (
     PricingReader,
     UnitOfWork,
 )
+from src.application.shared.owner import safe_owner
 from src.domain.audit.entities import FieldChange
 from src.domain.order.entities import Order
 from src.domain.order.exceptions import (
@@ -212,7 +213,7 @@ class PlaceOrder:
                 action=_ACTION_ORDER_PLACED,
                 resource_type=_RESOURCE_ORDER,
                 resource_id=saved.number.value,
-                actor=command.owner,
+                actor=safe_owner(command.owner),
                 changes=(
                     FieldChange(field="status", after=OrderStatus.PENDING.value),
                     FieldChange(field="total", after=str(total.amount)),
@@ -220,10 +221,11 @@ class PlaceOrder:
                 ),
             )
 
-        # Logged outside the money detail: number and shape, never the amount.
+        # Logged outside the money detail: number and shape, never the amount. The owner
+        # is redacted so a guest's session token never reaches the logs (see safe_owner).
         logger.info(
             "order_placed",
-            owner=command.owner,
+            owner=safe_owner(command.owner),
             channel=channel.value,
             order_number=saved.number.value,
             line_count=len(lines),
@@ -332,7 +334,7 @@ class CreateManualOrder:
                 action=_ACTION_ORDER_CREATED_MANUALLY,
                 resource_type=_RESOURCE_ORDER,
                 resource_id=saved.number.value,
-                actor=command.actor,
+                actor=safe_owner(command.actor),
                 changes=(
                     FieldChange(field="status", after=OrderStatus.PENDING.value),
                     FieldChange(field="total", after=str(total.amount)),
@@ -343,7 +345,7 @@ class CreateManualOrder:
 
         logger.info(
             "manual_order_created",
-            actor=command.actor,
+            actor=safe_owner(command.actor),
             channel=channel.value,
             order_number=saved.number.value,
             line_count=len(lines),
@@ -386,7 +388,9 @@ class ListMyOrders:
     def execute(self, query: ListMyOrdersQuery) -> OrderPage:
         limit, offset = self._validated_window(query.limit, query.offset)
         items, total = self._orders.list_for_owner(query.owner, limit=limit, offset=offset)
-        logger.debug("orders_listed", owner=query.owner, count=total, returned=len(items))
+        logger.debug(
+            "orders_listed", owner=safe_owner(query.owner), count=total, returned=len(items)
+        )
         return OrderPage(items=tuple(items), total=total)
 
     @staticmethod
@@ -454,7 +458,7 @@ class CancelMyOrder:
                 action=_ACTION_ORDER_CANCELLED,
                 resource_type=_RESOURCE_ORDER,
                 resource_id=canonical,
-                actor=command.owner,
+                actor=safe_owner(command.owner),
                 changes=(
                     FieldChange(
                         field="status",
@@ -463,5 +467,5 @@ class CancelMyOrder:
                     ),
                 ),
             )
-        logger.info("order_cancelled", owner=command.owner, order_number=canonical)
+        logger.info("order_cancelled", owner=safe_owner(command.owner), order_number=canonical)
         return saved

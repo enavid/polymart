@@ -21,6 +21,7 @@ from src.application.cart.use_cases import (
     UpdateCartItem,
     UpdateCartItemCommand,
 )
+from src.application.shared.owner import safe_owner
 from src.domain.cart.entities import Cart
 from src.domain.cart.exceptions import (
     CartLineNotFoundError,
@@ -225,6 +226,24 @@ class TestAddCartItem:
         assert event["sku"] == "HB-250"
         # A money-sensitive value must never appear in the structured logs.
         assert not any("amount" in key or "price" in key or "total" in key for key in event)
+
+    def test_never_logs_a_guest_owner_token_verbatim(
+        self,
+        carts: FakeCartRepository,
+        pricing: FakeVariantPricingReader,
+        channels: FakeChannelReader,
+    ) -> None:
+        # A guest's owner id embeds their session token (a bearer credential); the log
+        # must carry only its non-reversible fingerprint (see safe_owner), never the raw
+        # token, or the logs would let anyone reconstruct a live guest session.
+        with capture_logs() as logs:
+            AddCartItem(carts, pricing, channels).execute(
+                AddCartItemCommand(owner="g:tok-secret", channel=_CHANNEL, sku="HB-250", quantity=1)
+            )
+
+        event = next(e for e in logs if e["event"] == "cart_item_added")
+        assert event["owner"] == safe_owner("g:tok-secret")
+        assert not any("tok-secret" in str(value) for value in event.values())
 
     def test_two_owners_have_isolated_carts(
         self,

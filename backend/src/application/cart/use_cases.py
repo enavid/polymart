@@ -18,6 +18,7 @@ from dataclasses import dataclass
 import structlog
 
 from src.application.cart.ports import CartRepository, ChannelReader, VariantPricingReader
+from src.application.shared.owner import safe_owner
 from src.domain.cart.entities import Cart
 from src.domain.cart.exceptions import (
     UnknownChannelError,
@@ -74,7 +75,10 @@ class GetCart:
         cart = self._carts.get(query.owner, query.channel)
         priced = _price(cart, self._pricing, currency)
         logger.debug(
-            "cart_read", owner=query.owner, channel=query.channel, line_count=len(priced.lines)
+            "cart_read",
+            owner=safe_owner(query.owner),
+            channel=query.channel,
+            line_count=len(priced.lines),
         )
         return priced
 
@@ -123,7 +127,7 @@ class AddCartItem:
         )
         logger.info(
             "cart_item_added",
-            owner=command.owner,
+            owner=safe_owner(command.owner),
             channel=channel.value,
             sku=sku.value,
             quantity=quantity.value,
@@ -178,7 +182,7 @@ class UpdateCartItem:
         )
         logger.info(
             "cart_item_updated",
-            owner=command.owner,
+            owner=safe_owner(command.owner),
             channel=channel.value,
             sku=sku.value,
             quantity=quantity.value,
@@ -219,7 +223,7 @@ class RemoveCartItem:
         saved = self._carts.apply(command.owner, channel.value, lambda cart: cart.remove_item(sku))
         logger.info(
             "cart_item_removed",
-            owner=command.owner,
+            owner=safe_owner(command.owner),
             channel=channel.value,
             sku=sku.value,
             line_count=len(saved.lines),

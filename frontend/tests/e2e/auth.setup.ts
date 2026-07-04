@@ -67,7 +67,13 @@ const WARM_ROUTES = [
 ];
 
 setup("warm up routes so the dev server has compiled them", async ({ page }) => {
+  // Compiling every route cold, one after another, easily exceeds the 30s default test
+  // timeout (each first hit is a full webpack compile), and this primer asserts nothing
+  // -- so give it room proportional to the route count. If it times out here, the real
+  // specs pay the cold-compile cost instead and flake. A per-goto ceiling keeps a single
+  // stuck route from consuming the whole budget.
+  setup.setTimeout(180_000);
   for (const route of WARM_ROUTES) {
-    await page.goto(route, { waitUntil: "domcontentloaded" });
+    await page.goto(route, { waitUntil: "domcontentloaded", timeout: 60_000 });
   }
 });

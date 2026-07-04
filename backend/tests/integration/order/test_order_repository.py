@@ -38,9 +38,12 @@ from src.infrastructure.catalog.repositories import (
     DjangoStockRepository,
     DjangoVariantRepository,
 )
+from src.infrastructure.order.models import OrderLineModel, OrderModel
 from src.infrastructure.order.repositories import (
+    DjangoCartForCheckout,
     DjangoInventory,
     DjangoOrderRepository,
+    DjangoPricingReader,
 )
 
 pytestmark = [pytest.mark.django_db, pytest.mark.integration]
@@ -226,3 +229,33 @@ class TestInventoryAdapter:
     def test_deduct_unknown_variant_raises(self) -> None:
         with pytest.raises(VariantNotFoundError):
             DjangoInventory().deduct("NOPE-1", 1)
+
+
+class TestCartForCheckoutBridge:
+    def test_clearing_an_owner_with_no_cart_is_a_no_op(self) -> None:
+        # Checkout clears the cart inside its unit of work; an owner who never had a cart
+        # in this channel must clear cleanly (no row to touch), not error.
+        DjangoCartForCheckout().clear("u:404", "ir-main")
+
+        assert DjangoCartForCheckout().line_items("u:404", "ir-main") == ()
+
+
+class TestPricingReaderBridge:
+    def test_an_unpriced_variant_reads_as_none(self) -> None:
+        # A variant with no price row in the channel cannot be captured for an order, so
+        # the reader returns None (the use case then refuses the line).
+        assert DjangoPricingReader().price_of("NO-SUCH-SKU", "ir-main") is None
+
+
+class TestModelRepr:
+    def test_order_and_line_reprs_are_readable(self) -> None:
+        # The admin/debug reprs identify a row at a glance; exercise them directly.
+        user = _user()
+        saved = DjangoOrderRepository().add(_order(_owner(user)))
+
+        order_model = OrderModel.objects.get(id=saved.id)
+        line_model = OrderLineModel.objects.filter(order=order_model).order_by("position").first()
+
+        assert str(order_model) == "ORD-ABC123XYZ0"
+        assert line_model is not None
+        assert str(line_model) == f"{order_model.id}:{line_model.sku}:{line_model.quantity}"

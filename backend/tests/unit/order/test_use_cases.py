@@ -44,6 +44,7 @@ from src.application.order.use_cases import (
     PlaceOrder,
     PlaceOrderCommand,
 )
+from src.application.shared.owner import safe_owner
 from src.domain.audit.entities import FieldChange
 from src.domain.order.entities import Order
 from src.domain.order.exceptions import (
@@ -516,7 +517,10 @@ class TestPlaceOrderInlineShipping:
         )
         assert order.total.amount == Decimal("120000.00")
 
-    def test_audits_the_guest_placement_by_owner_token(self) -> None:
+    def test_audits_the_guest_placement_by_a_redacted_owner_fingerprint(self) -> None:
+        # The guest token is a bearer session credential; it must never reach the durable
+        # audit trail. The actor is the non-reversible fingerprint (see safe_owner), so a
+        # guest stays correlatable without the raw token being persisted.
         audit = RecordingAudit()
         place = _build_place_order(
             cart_items=(CheckoutLine("HB-250", 1),),
@@ -531,7 +535,27 @@ class TestPlaceOrderInlineShipping:
             )
         )
 
-        assert audit.records[-1]["actor"] == "g:tok-xyz"
+        actor = audit.records[-1]["actor"]
+        assert actor == safe_owner("g:tok-xyz")
+        assert "tok-xyz" not in actor
+
+    def test_never_logs_the_raw_guest_token(self) -> None:
+        # A guest's session token is a credential -- it must not appear in any structured
+        # log event emitted while placing their order.
+        place = _build_place_order(
+            cart_items=(CheckoutLine("HB-250", 1),),
+            prices={"HB-250": _money("120000.00")},
+            stock={"HB-250": 5},
+        )
+
+        with capture_logs() as logs:
+            place.execute(
+                PlaceOrderCommand(
+                    owner="g:tok-secret", channel="ir-main", shipping_address=_INLINE_ADDRESS
+                )
+            )
+
+        assert not any("tok-secret" in str(event) for event in logs)
 
     def test_requires_either_an_address_id_or_an_inline_address(self) -> None:
         place = _build_place_order(

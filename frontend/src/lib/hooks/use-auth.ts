@@ -1,5 +1,7 @@
 "use client";
 
+import { useSyncExternalStore } from "react";
+
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
@@ -8,9 +10,28 @@ import {
   type UserProfile,
 } from "@/lib/api/auth";
 import { ApiError } from "@/lib/api/client";
-import { clearSignedIn, hasSignedInHint } from "@/lib/auth/session-hint";
+import {
+  clearSignedIn,
+  hasSignedInHint,
+  subscribeSignedInHint,
+} from "@/lib/auth/session-hint";
 
 export const CURRENT_USER_KEY = ["current-user"] as const;
+
+// The server has no way to know whether a session exists (the hint lives in the
+// browser's localStorage), so it always renders the logged-out branch. Reading the hint
+// through `useSyncExternalStore` with a `false` server snapshot makes the *first* client
+// render agree with the server -- avoiding a hydration mismatch -- and then flips to the
+// real value right after hydration, enabling the `/auth/me/` probe. Every auth-gated page
+// (`/account`, `/cart`, `/orders`, `/addresses`, `/checkout`, the header) is fixed at once
+// because they all branch on `useCurrentUser`.
+function useSignedInHint(): boolean {
+  return useSyncExternalStore(
+    subscribeSignedInHint,
+    hasSignedInHint,
+    () => false,
+  );
+}
 
 /**
  * The signed-in user, or `null` when unauthenticated.
@@ -21,9 +42,10 @@ export const CURRENT_USER_KEY = ["current-user"] as const;
  * page load does not probe again.
  */
 export function useCurrentUser() {
+  const signedInHint = useSignedInHint();
   return useQuery<UserProfile | null>({
     queryKey: CURRENT_USER_KEY,
-    enabled: hasSignedInHint(),
+    enabled: signedInHint,
     queryFn: async () => {
       try {
         return await fetchCurrentUser();
