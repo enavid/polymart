@@ -1,6 +1,6 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useSearchParams } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { useEffect, useState } from "react";
@@ -83,6 +83,9 @@ export function StorefrontProductList() {
         limit,
         offset: applied.offset,
       }),
+    // Keep the current page on screen while the next page loads so paginating
+    // doesn't collapse the results and jerk the scroll position to the top.
+    placeholderData: keepPreviousData,
   });
 
   // Filter choosers, populated from the public storefront taxonomy endpoints.
@@ -124,11 +127,23 @@ export function StorefrontProductList() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <h1 className="text-2xl font-bold tracking-tight">{t("title")}</h1>
-        {searchTerm ? (
+      <div className="flex flex-wrap items-end justify-between gap-x-4 gap-y-1">
+        <div className="flex flex-col gap-1">
+          <h1 className="text-2xl font-bold tracking-tight">{t("title")}</h1>
+          {searchTerm ? (
+            <p className="text-sm text-muted-foreground">
+              {t("searchResultsFor", { term: searchTerm })}
+            </p>
+          ) : null}
+          {page && page.count > 0 ? (
+            <p className="text-sm text-muted-foreground">
+              {t("resultCount", { count: page.count })}
+            </p>
+          ) : null}
+        </div>
+        {page && page.count > 0 ? (
           <p className="text-sm text-muted-foreground">
-            {t("searchResultsFor", { term: searchTerm })}
+            {t("pageStatus", { page: currentPage, pages: pageCount })}
           </p>
         ) : null}
       </div>
@@ -200,17 +215,6 @@ export function StorefrontProductList() {
 
           {page ? (
             <>
-              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border pb-3">
-                <p className="text-sm text-muted-foreground">
-                  {t("resultCount", { count: page.count })}
-                </p>
-                {page.count > 0 ? (
-                  <p className="text-sm text-muted-foreground">
-                    {t("pageStatus", { page: currentPage, pages: pageCount })}
-                  </p>
-                ) : null}
-              </div>
-
               {results.length === 0 ? (
                 <p className="text-muted-foreground">{t("empty")}</p>
               ) : (
