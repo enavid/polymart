@@ -8,70 +8,119 @@
  *   Layer 2 — semantic    : role-based tokens (background, primary, ...) the UI consumes.
  *   Layer 3 — brand/niche : a re-skinning hook that overrides Layer 2 per tenant/theme.
  *
- * UI components only ever reference Layer 2 (via Tailwind utilities like `bg-primary`).
- * Swapping a storefront's look means redefining Layer 3 — no component changes.
+ * UI components only ever reference Layer 2 (via Tailwind utilities like `bg-primary`),
+ * so the whole product changes look by editing tokens here — not components.
+ *
+ * The active palette is chosen by a `light`/`dark` class on <html>, set before
+ * first paint by the inline boot script in `layout.tsx` and toggled at runtime by
+ * the theme control. "Minimal neutral": a near-white/near-black slate canvas with a
+ * single confident indigo accent, airy spacing, soft shadows, medium-rounded cards.
  */
 
+/* Dark styling is driven by an explicit `.dark` class (set by JS from the saved
+ * choice or the OS preference), not the raw media query — so a manual override wins. */
+@custom-variant dark (&:where(.dark, .dark *));
+
 /* ----- Layer 1: primitives ----------------------------------------------- */
-/* Warm "editorial" base: a cream canvas, warm neutrals, a deep espresso accent,
- * and a soft gold. Hue stays in the warm 55-90 range so the whole system reads
- * as one calm, premium family. Layer 3 repaints these per tenant/niche. */
+/* A cool neutral slate scale + an indigo accent + a violet hero partner. Hues stay
+ * in the slate/indigo family so the system reads as one calm, professional set. */
 :root {
-  --primitive-white: oklch(1 0.003 85);
-  --primitive-cream-50: oklch(0.985 0.009 84); /* page canvas */
-  --primitive-cream-100: oklch(0.965 0.012 82); /* muted / subtle fills */
-  --primitive-warm-200: oklch(0.912 0.014 78); /* borders, hairlines */
-  --primitive-warm-400: oklch(0.66 0.02 60);
-  --primitive-warm-500: oklch(0.53 0.022 58); /* muted foreground */
-  --primitive-warm-800: oklch(0.32 0.025 55);
-  --primitive-warm-900: oklch(0.24 0.022 54); /* body text */
-  --primitive-espresso-600: oklch(0.44 0.082 52); /* primary accent */
-  --primitive-espresso-700: oklch(0.37 0.075 50);
-  --primitive-gold-300: oklch(0.86 0.09 82); /* hero / highlight gradient stop */
-  --primitive-gold-500: oklch(0.76 0.115 78);
-  --primitive-danger-500: oklch(0.577 0.245 27.325);
+  --primitive-white: #ffffff;
+  --primitive-slate-50: #f7f8fa; /* page canvas (light) */
+  --primitive-slate-100: #f1f5f9;
+  --primitive-slate-200: #e2e8f0; /* borders, hairlines (light) */
+  --primitive-slate-400: #94a3b8;
+  --primitive-slate-500: #64748b; /* muted foreground (light) */
+  --primitive-slate-700: #334155;
+  --primitive-slate-900: #0f172a; /* body text (light) */
+
+  --primitive-ink-950: #0b0f1a; /* page canvas (dark) */
+  --primitive-ink-900: #131826; /* card / surface (dark) */
+  --primitive-ink-800: #1b2130; /* muted fills (dark) */
+  --primitive-ink-700: #1e2636; /* borders (dark) */
+  --primitive-ink-100: #e8ecf4; /* body text (dark) */
+
+  --primitive-indigo-50: #eef2ff;
+  --primitive-indigo-500: #6366f1;
+  --primitive-indigo-600: #4f46e5; /* primary accent (light) */
+  --primitive-indigo-900: #312e81;
+  --primitive-violet-600: #7c3aed; /* hero gradient partner */
+
+  --primitive-danger-500: #dc2626;
+  --primitive-danger-400: #ef4444;
 }
 
 /* ----- Layer 2: semantic (the contract the UI depends on) ---------------- */
-:root {
+/* Light is the default; `.dark` below repaints the same role tokens. */
+:root,
+.light {
+  color-scheme: light;
+
   --radius: 0.75rem;
 
-  --background: var(--primitive-cream-50);
-  --foreground: var(--primitive-warm-900);
+  --background: var(--primitive-slate-50);
+  --foreground: var(--primitive-slate-900);
   --card: var(--primitive-white);
-  --card-foreground: var(--primitive-warm-900);
+  --card-foreground: var(--primitive-slate-900);
   --popover: var(--primitive-white);
-  --popover-foreground: var(--primitive-warm-900);
-  --primary: var(--primitive-espresso-600);
-  --primary-foreground: var(--primitive-cream-50);
-  --secondary: var(--primitive-cream-100);
-  --secondary-foreground: var(--primitive-warm-900);
-  --muted: var(--primitive-cream-100);
-  --muted-foreground: var(--primitive-warm-500);
-  --accent: var(--primitive-gold-300);
-  --accent-foreground: var(--primitive-warm-900);
+  --popover-foreground: var(--primitive-slate-900);
+  --primary: var(--primitive-indigo-600);
+  --primary-foreground: var(--primitive-white);
+  --secondary: var(--primitive-slate-100);
+  --secondary-foreground: var(--primitive-slate-900);
+  --muted: var(--primitive-slate-100);
+  --muted-foreground: var(--primitive-slate-500);
+  --accent: var(--primitive-indigo-50);
+  --accent-foreground: var(--primitive-indigo-900);
   --destructive: var(--primitive-danger-500);
-  --destructive-foreground: var(--primitive-cream-50);
-  --border: var(--primitive-warm-200);
-  --input: var(--primitive-warm-200);
-  --ring: var(--primitive-espresso-600);
+  --destructive-foreground: var(--primitive-white);
+  --border: var(--primitive-slate-200);
+  --input: var(--primitive-slate-200);
+  --ring: var(--primitive-indigo-600);
 
-  /* Warm hero/thumbnail gradient stops (Layer 3 may override for a tenant). */
-  --hero-from: var(--primitive-espresso-700);
-  --hero-to: var(--primitive-gold-500);
+  /* Indigo → violet hero/thumbnail gradient stops (Layer 3 may override). */
+  --hero-from: var(--primitive-indigo-600);
+  --hero-to: var(--primitive-violet-600);
+}
+
+.dark {
+  color-scheme: dark;
+
+  --background: var(--primitive-ink-950);
+  --foreground: var(--primitive-ink-100);
+  --card: var(--primitive-ink-900);
+  --card-foreground: var(--primitive-ink-100);
+  --popover: var(--primitive-ink-900);
+  --popover-foreground: var(--primitive-ink-100);
+  --primary: var(--primitive-indigo-500);
+  --primary-foreground: var(--primitive-white);
+  --secondary: var(--primitive-ink-800);
+  --secondary-foreground: var(--primitive-ink-100);
+  --muted: var(--primitive-ink-800);
+  --muted-foreground: var(--primitive-slate-400);
+  --accent: var(--primitive-indigo-900);
+  --accent-foreground: var(--primitive-ink-100);
+  --destructive: var(--primitive-danger-400);
+  --destructive-foreground: var(--primitive-white);
+  --border: var(--primitive-ink-700);
+  --input: var(--primitive-ink-700);
+  --ring: var(--primitive-indigo-500);
+
+  --hero-from: var(--primitive-indigo-600);
+  --hero-to: var(--primitive-violet-600);
 }
 
 /* ----- Layer 3: brand/niche override hook -------------------------------- */
-/* Example re-skin: `<html data-theme="cosmetics">` repaints the whole storefront
- * by redefining Layer 2 tokens only. Phase 8 turns this into full theme delivery. */
-[data-theme="cosmetics"] {
-  --background: oklch(0.99 0.006 350);
-  --primary: oklch(0.62 0.18 12);
+/* Example re-skin: `<html data-theme="emerald">` repaints the storefront by
+ * redefining Layer 2 tokens only. Phase 8 turns this into full theme delivery. */
+[data-theme="emerald"] {
+  --primary: #059669;
   --primary-foreground: var(--primitive-white);
-  --accent: oklch(0.9 0.05 350);
-  --ring: oklch(0.62 0.18 12);
-  --hero-from: oklch(0.55 0.19 12);
-  --hero-to: oklch(0.78 0.13 350);
+  --accent: #ecfdf5;
+  --accent-foreground: #064e3b;
+  --ring: #059669;
+  --hero-from: #047857;
+  --hero-to: #10b981;
 }
 
 /* ----- Tailwind theme mapping -------------------------------------------- */

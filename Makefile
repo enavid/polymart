@@ -139,14 +139,17 @@ ps: ## Show the status of native processes
 	done; [ "$$found" = 1 ] || echo "no native processes; run 'make up'"
 
 # --- Database (native) -------------------------------------------------------
-.PHONY: migrate makemigrations seed shell superuser
+.PHONY: migrate makemigrations seed seed-demo shell superuser
 migrate: $(STAMP) ## Apply database migrations (native)
 	$(BACKEND) env $(DJANGO_ENV) $(VBIN)/python manage.py migrate
 
 makemigrations: $(STAMP) ## Create new migrations (native)
 	$(BACKEND) env $(DJANGO_ENV) $(VBIN)/python manage.py makemigrations
 
-seed: migrate ## Load sample data (placeholder until fixtures exist)
+seed: seed-demo ## Load sample demo data (large catalog, dev only)
+
+seed-demo: $(STAMP) migrate ## Seed a large, varied demo catalog (~100 products, idempotent, dev only)
+	$(BACKEND) env $(DJANGO_ENV) $(VBIN)/python manage.py seed_demo
 
 shell: $(STAMP) ## Open a Django shell (native)
 	$(BACKEND) env $(DJANGO_ENV) $(VBIN)/python manage.py shell
