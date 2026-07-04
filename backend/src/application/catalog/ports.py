@@ -10,6 +10,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from dataclasses import dataclass
+from decimal import Decimal
 
 from src.domain.catalog.entities import (
     Attribute,
@@ -357,6 +358,12 @@ class ProductFilters:
     collection: str | None = None
     product_type: str | None = None
     published_only: bool = True
+    # Price-range filtering is scoped to a viewing channel: a product qualifies
+    # when its lowest in-channel base price falls within [min_price, max_price].
+    # A bound is only applied when ``channel`` is also set (price is per-channel).
+    channel: str | None = None
+    min_price: Decimal | None = None
+    max_price: Decimal | None = None
 
 
 @dataclass(frozen=True)

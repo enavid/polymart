@@ -976,6 +976,9 @@ class StorefrontProductListView(APIView):
             category=data.get("category"),
             collection=data.get("collection"),
             product_type=data.get("product_type"),
+            channel=data.get("channel"),
+            min_price=data.get("min_price"),
+            max_price=data.get("max_price"),
             **_window_kwargs(data),
         )
         try:

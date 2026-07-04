@@ -27,7 +27,7 @@ test("a user can log in and land on their account page", async ({ page }) => {
     await route.fulfill({ status: 200, json: USER });
   });
 
-  await page.goto("/login");
+  await page.goto("/login?next=/account");
 
   await page.getByLabel("شمارهٔ موبایل").fill("09123456789");
   await page.getByLabel("رمز عبور").fill("secret123");

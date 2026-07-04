@@ -1440,6 +1440,10 @@ class SearchCatalogProductsQuery:
     category: str | None = None
     collection: str | None = None
     product_type: str | None = None
+    # Price-range filtering, scoped to the viewing channel (see ``ProductFilters``).
+    channel: str | None = None
+    min_price: Decimal | None = None
+    max_price: Decimal | None = None
     limit: int = _DEFAULT_PAGE_LIMIT
     offset: int = 0
 
@@ -1466,6 +1470,9 @@ class SearchCatalogProducts:
             collection=query.collection,
             product_type=query.product_type,
             published_only=True,
+            channel=query.channel,
+            min_price=query.min_price,
+            max_price=query.max_price,
         )
         page = self._repository.search(filters=filters, limit=limit, offset=offset)
         logger.debug(

@@ -51,11 +51,15 @@ describe("HomeLanding", () => {
 
     expect(await screen.findByText("House Blend")).toBeInTheDocument();
     expect(screen.getByText("Dark Roast")).toBeInTheDocument();
-    const viewLinks = screen.getAllByRole("link", { name: messages.storefront.viewProduct });
-    expect(viewLinks.map((a) => a.getAttribute("href"))).toEqual([
+    // Each product card is itself a link to that product's detail page.
+    expect(screen.getByRole("link", { name: /House Blend/ })).toHaveAttribute(
+      "href",
       "/products/house-blend",
+    );
+    expect(screen.getByRole("link", { name: /Dark Roast/ })).toHaveAttribute(
+      "href",
       "/products/dark-roast",
-    ]);
+    );
   });
 
   it("shows the empty state when there are no products", async () => {

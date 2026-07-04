@@ -14,12 +14,14 @@ import { test as setup, expect, type Page } from "@playwright/test";
 import { SHOPPER, SHOPPER_STATE, STAFF, STAFF_STATE } from "./fixtures/seed";
 
 async function logIn(page: Page, phone: string, password: string, canonicalPhone: string) {
-  await page.goto("/login");
+  // Login returns the user to the captured `next` page (default: home). Ask to
+  // return to /account so the session-established assertion below is deterministic.
+  await page.goto("/login?next=/account");
   await page.getByLabel("شمارهٔ موبایل").fill(phone);
   await page.getByLabel("رمز عبور").fill(password);
   await page.getByRole("button", { name: "ورود" }).click();
 
-  // A successful login redirects to the account page and shows the canonical
+  // A successful login redirects to the requested page and shows the canonical
   // phone -- proof the real cookie session is established.
   await expect(page).toHaveURL(/\/account$/);
   await expect(page.getByText(canonicalPhone)).toBeVisible();

@@ -38,6 +38,7 @@ from src.domain.catalog.value_objects import (
     CategorySlug,
     ChannelPrice,
     CollectionSlug,
+    MediaAsset,
     Money,
     ProductCode,
     ProductTypeCode,
@@ -88,7 +89,8 @@ class _Niche:
     products: tuple[str, ...]  # Persian display names
 
 
-# Ten niches x ten products = ~100 products. Names are plain Persian retail names.
+# Ten niches x ten products = ~100 products. Names are plain Persian retail names;
+# each product's demo photo comes from its niche's curated image pool (see below).
 NICHES: tuple[_Niche, ...] = (
     _Niche(
         "elec",
@@ -302,6 +304,102 @@ NICHES: tuple[_Niche, ...] = (
     ),
 )
 
+# Curated, on-theme demo photos per niche (verified Unsplash IDs). Each product
+# draws one from its niche's pool by index, so a category reads as a coherent set
+# of real, professional product shots and no two adjacent cards share an image.
+# These are stable CDN URLs (Unsplash permits hot-linking); no API key is needed.
+_NICHE_IMAGE_IDS: dict[str, tuple[str, ...]] = {
+    "elec": (
+        "photo-1505740420928-5e560c06d30e",
+        "photo-1484704849700-f032a568e944",
+        "photo-1608043152269-423dbba4e7e1",
+        "photo-1587829741301-dc798b83add3",
+        "photo-1527814050087-3793815479db",
+        "photo-1523275335684-37898b6baf30",
+        "photo-1546868871-7041f2a55e12",
+        "photo-1526170375885-4d8ecf77b99f",
+    ),
+    "aprl": (
+        "photo-1521572163474-6864f9cf17ab",
+        "photo-1542272604-787c3835535d",
+        "photo-1560769629-975ec94e6a86",
+        "photo-1434389677669-e08b4cac3105",
+        "photo-1576871337622-98d48d1cf531",
+        "photo-1620799140408-edc6dcb6d633",
+        "photo-1489987707025-afc232f7ea0f",
+    ),
+    "home": (
+        "photo-1556911220-bff31c812dba",
+        "photo-1590794056226-79ef3a8147e1",
+        "photo-1600585152220-90363fe7e115",
+        "photo-1583778176476-4a8b02a64c01",
+        "photo-1556911073-38141963c9e0",
+        "photo-1588854337221-4cf9fa96059c",
+        "photo-1594041680534-e8c8cdebd659",
+        "photo-1585515320310-259814833e62",
+        "photo-1610701596007-11502861dcfa",
+    ),
+    "bety": (
+        "photo-1596462502278-27bfdc403348",
+        "photo-1571781926291-c477ebfd024b",
+        "photo-1512496015851-a90fb38ba796",
+        "photo-1611930022073-b7a4ba5fcccd",
+        "photo-1620916566398-39f1143ab7be",
+        "photo-1608248543803-ba4f8c70ae0b",
+        "photo-1522335789203-aabd1fc54bc9",
+    ),
+    "book": (
+        "photo-1481833761820-0509d3217039",
+        "photo-1512820790803-83ca734da794",
+        "photo-1524995997946-a1c2e315a42f",
+        "photo-1544716278-ca5e3f4abd8c",
+        "photo-1497633762265-9d179a990aa6",
+    ),
+    "sprt": (
+        "photo-1571019613454-1cb2f99b2d8b",
+        "photo-1517836357463-d25dfeac3438",
+        "photo-1534438327276-14e5300c3a48",
+        "photo-1518611012118-696072aa579a",
+        "photo-1526506118085-60ce8714f8c5",
+        "photo-1540497077202-7c8a3999166f",
+        "photo-1584735935682-2f2b69dff9d2",
+        "photo-1538805060514-97d9cc17730c",
+        "photo-1517963879433-6ad2b056d712",
+    ),
+    "toys": (
+        "photo-1587654780291-39c9404d746b",
+        "photo-1566576721346-d4a3b4eaeb55",
+        "photo-1515488042361-ee00e0ddd4e4",
+        "photo-1596461404969-9ae70f2830c1",
+        "photo-1545558014-8692077e9b5c",
+        "photo-1596464716127-f2a82984de30",
+        "photo-1618842676088-c4d48a6a7c9d",
+        "photo-1610484826967-09c5720778c7",
+        "photo-1558060370-d644479cb6f7",
+    ),
+    "groc": (
+        "photo-1586201375761-83865001e31c",
+        "photo-1509358271058-acd22cc93898",
+        "photo-1474979266404-7eaacbcd87c5",
+        "photo-1556909212-d5b604d0c90d",
+        "photo-1518977676601-b53f82aba655",
+    ),
+    "bevr": (
+        "photo-1514432324607-a09d9b4aefdd",
+        "photo-1544787219-7f47ccb76574",
+        "photo-1497935586351-b67a49e012bf",
+        "photo-1556679343-c7306c1976bc",
+        "photo-1461023058943-07fcbe16d735",
+    ),
+    "offc": (
+        "photo-1583485088034-697b5bc54ccd",
+        "photo-1531346878377-a5be20888e57",
+        "photo-1568205612837-017257d2310a",
+        "photo-1519682337058-a94d519337bc",
+        "photo-1524578271613-d550eacf6090",
+    ),
+}
+
 # A few collections built from deterministic slices of the catalog.
 COLLECTION_FEATURED = "demo-featured"
 COLLECTION_BESTSELLERS = "demo-bestsellers"
@@ -329,7 +427,23 @@ class _Product:
     type_code: str
     category: str
     description: str
+    image_url: str
     variants: tuple[_Variant, ...]
+
+
+# Unsplash CDN, resized/optimized to a card-friendly size on the fly.
+_IMAGE_HOST = "https://images.unsplash.com"
+_IMAGE_PARAMS = "w=800&q=80&auto=format&fit=crop"
+
+
+def _image_url(niche_code: str, index: int) -> str:
+    """A stable, on-theme photo URL for the ``index``-th product of a niche.
+
+    The image is chosen from the niche's curated pool by index, so it is
+    deterministic across re-seeds and neighbouring products never collide.
+    """
+    pool = _NICHE_IMAGE_IDS[niche_code]
+    return f"{_IMAGE_HOST}/{pool[index % len(pool)]}?{_IMAGE_PARAMS}"
 
 
 def build_products() -> tuple[_Product, ...]:
@@ -355,13 +469,15 @@ def build_products() -> tuple[_Product, ...]:
                 )
                 for v in range(count)
             )
+            code = f"{niche.code}-{i:02d}"
             products.append(
                 _Product(
-                    code=f"{niche.code}-{i:02d}",
+                    code=code,
                     name=name,
                     type_code=niche.code,
                     category=niche.child_slug,
                     description=f"{name} — کیفیت مناسب از دستهٔ {niche.type_name} با قیمت رقابتی.",
+                    image_url=_image_url(niche.code, i),
                     variants=variants,
                 )
             )
@@ -458,13 +574,21 @@ class Command(BaseCommand):
             ProductModel.objects.filter(code=product.code).update(
                 metadata={"description": product.description}
             )
-            for variant in product.variants:
+            for position, variant in enumerate(product.variants):
                 if not ProductVariantModel.objects.filter(sku=variant.sku).exists():
+                    # Attach the product photo to its first variant (lowest SKU); the
+                    # storefront promotes that as the product's primary image.
+                    media = (
+                        (MediaAsset(url=product.image_url, alt_text=product.name),)
+                        if position == 0
+                        else ()
+                    )
                     variants.add(
                         ProductVariant(
                             product=ProductCode(product.code),
                             sku=Sku(variant.sku),
                             name=variant.name,
+                            media=media,
                         )
                     )
                 prices.replace(

@@ -36,11 +36,11 @@ async function addFromPdp(page: Page, productCode: string, sku: string): Promise
 }
 
 async function logIn(page: Page): Promise<void> {
-  await page.goto("/login");
+  await page.goto("/login?next=/account");
   await page.getByLabel(common.phoneNumber).fill(STAFF.phone);
   await page.getByLabel(common.password).fill(STAFF.password);
   await page.getByRole("button", { name: auth.loginCta }).click();
-  // Login redirects to the account page on success.
+  // Login returns to the requested page (/account) on success.
   await expect(page).toHaveURL(/\/account/);
 }
 

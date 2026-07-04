@@ -53,10 +53,10 @@ describe("VariantDetail", () => {
     renderWithProviders(<VariantDetail sku="HB-001" />);
 
     // The read-only prices table shows a formatted money value (Persian digits,
-    // channel currency), never the raw four-decimal Decimal string.
-    const cell = await screen.findByText(/ریال/);
+    // Toman for the IRR ledger currency), never the raw four-decimal Decimal string.
+    const cell = await screen.findByText(/تومان/);
     expect(cell.textContent).toBe(formatMoneyString("120000.0000", "IRR"));
-    expect(cell.textContent).toContain("۱۲۰"); // Persian digits, not "120000.0000"
+    expect(cell.textContent).toContain("۱۲"); // Persian digits, not "120000.0000"
     expect(screen.queryByText("120000.0000")).not.toBeInTheDocument();
   });
 

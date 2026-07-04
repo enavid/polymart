@@ -32,10 +32,12 @@ test("collection filter narrows to the collection's members only", async ({ page
   await expect(page.getByText(PRODUCTS.lightRoast.name, { exact: true })).toHaveCount(0);
 });
 
-test("pagination previous is disabled on the first page", async ({ page }) => {
+test("pagination controls are hidden when the results fit a single page", async ({ page }) => {
   await page.goto("/products");
   await expect(page.getByText(store.resultCount.replace("{count}", "3"))).toBeVisible();
-  await expect(page.getByRole("button", { name: store.previous })).toBeDisabled();
+  // The numbered pagination only appears when there is more than one page; the
+  // seeded catalog (3 products) fits one page, so there are no prev/next controls.
+  await expect(page.getByRole("button", { name: store.previous })).toHaveCount(0);
 });
 
 test("a variant unavailable in this channel is shown unavailable with no add control", async ({

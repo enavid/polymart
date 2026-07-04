@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
 
-import { ProductThumb, THUMB_TONES, toneIndex } from "@/components/storefront/product-thumb";
+import { ProductThumb } from "@/components/storefront/product-thumb";
 
 describe("ProductThumb", () => {
   it("renders the product image when one is provided", () => {
@@ -31,18 +31,11 @@ describe("ProductThumb", () => {
     expect(screen.getByText("H")).toBeInTheDocument();
   });
 
-  it("picks a stable tone from the name so a catalog reads as varied covers", () => {
-    // Deterministic: same name ⇒ same tone; and it indexes a real palette entry.
-    expect(toneIndex("House Blend")).toBe(toneIndex("House Blend"));
-    expect(toneIndex("House Blend")).toBeLessThan(THUMB_TONES.length);
-    // Two different names generally land on different tones (these two differ).
-    expect(toneIndex("تی‌شرت نخی")).not.toBe(toneIndex("شلوار جین"));
-  });
-
-  it("paints the monogram tile with its name's gradient tone", () => {
+  it("renders the placeholder on the neutral muted surface, not a loud tile", () => {
     const { container } = render(<ProductThumb name="House Blend" />);
     const tile = container.querySelector("[aria-hidden]") as HTMLElement;
-    const [from] = THUMB_TONES[toneIndex("House Blend")];
-    expect(tile.style.backgroundImage).toContain(from);
+    // The placeholder stays inside the design system's neutral palette.
+    expect(tile.className).toContain("bg-muted");
+    expect(tile.className).toContain("text-muted-foreground");
   });
 });

@@ -8,8 +8,8 @@ import { NextIntlClientProvider } from "next-intl";
 import { getLocale, getMessages } from "next-intl/server";
 import type { ReactNode } from "react";
 
+import { AppShell } from "@/components/layout/app-shell";
 import { SiteFooter } from "@/components/layout/site-footer";
-import { SiteHeader } from "@/components/layout/site-header";
 import { Providers } from "@/app/providers";
 
 export const metadata: Metadata = {
@@ -40,9 +40,7 @@ export default async function RootLayout({
       <body className="flex min-h-screen flex-col bg-background text-foreground antialiased">
         <NextIntlClientProvider locale={locale} messages={messages}>
           <Providers>
-            <SiteHeader />
-            <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-8">{children}</main>
-            <SiteFooter />
+            <AppShell footer={<SiteFooter />}>{children}</AppShell>
           </Providers>
         </NextIntlClientProvider>
       </body>

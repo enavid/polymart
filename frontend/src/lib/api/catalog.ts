@@ -338,6 +338,10 @@ export interface StorefrontFilters {
   collection?: string;
   product_type?: string;
   channel?: string;
+  // Exact-string money bounds (the channel currency's ledger unit), applied only
+  // when a channel is set. Sent as strings so the exact Decimal survives.
+  min_price?: string;
+  max_price?: string;
   limit?: number;
   offset?: number;
 }
@@ -352,6 +356,8 @@ export function listStorefrontProducts(
       collection: filters.collection,
       product_type: filters.product_type,
       channel: filters.channel,
+      min_price: filters.min_price,
+      max_price: filters.max_price,
       limit: filters.limit,
       offset: filters.offset,
     })}`,

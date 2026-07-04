@@ -85,7 +85,7 @@ export function AddressBookView() {
       <div className="flex flex-col gap-4">
         <h1 className="text-xl font-semibold">{t("title")}</h1>
         <Alert>{t("loginRequired")}</Alert>
-        <Link href="/login" className="text-sm text-primary hover:underline">
+        <Link href="/login?next=/addresses" className="text-sm text-primary hover:underline">
           {t("goLogin")}
         </Link>
       </div>

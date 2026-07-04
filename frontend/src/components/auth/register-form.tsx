@@ -8,12 +8,6 @@ import { useState, type FormEvent } from "react";
 import { SendCodeButton } from "@/components/auth/send-code-button";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import { FormField } from "@/components/ui/form-field";
 import { register } from "@/lib/api/auth";
 import { ApiError } from "@/lib/api/client";
@@ -49,24 +43,19 @@ export function RegisterForm() {
 
   if (mutation.isSuccess) {
     return (
-      <Card className="mx-auto w-full max-w-sm">
-        <CardContent className="flex flex-col gap-4 pt-6">
-          <Alert variant="success">{t("registerSuccess")}</Alert>
-          <Link href="/login" className="text-sm hover:underline">
-            {t("haveAccount")}
-          </Link>
-        </CardContent>
-      </Card>
+      <div className="flex flex-col gap-4">
+        <Alert variant="success">{t("registerSuccess")}</Alert>
+        <Link href="/login" className="text-sm hover:underline">
+          {t("haveAccount")}
+        </Link>
+      </div>
     );
   }
 
   return (
-    <Card className="mx-auto w-full max-w-sm">
-      <CardHeader>
-        <CardTitle>{t("registerTitle")}</CardTitle>
-      </CardHeader>
-      <CardContent>
-        <form onSubmit={onSubmit} className="flex flex-col gap-4" noValidate>
+    <div className="flex flex-col gap-6">
+      <h1 className="text-2xl font-bold tracking-tight">{t("registerTitle")}</h1>
+      <form onSubmit={onSubmit} className="flex flex-col gap-4" noValidate>
           <FormField
             id="phone_number"
             label={tCommon("phoneNumber")}
@@ -119,14 +108,13 @@ export function RegisterForm() {
           <Button type="submit" disabled={mutation.isPending}>
             {mutation.isPending ? tCommon("loading") : t("registerCta")}
           </Button>
-          <Link
-            href="/login"
-            className="text-sm text-muted-foreground hover:underline"
-          >
-            {t("haveAccount")}
-          </Link>
-        </form>
-      </CardContent>
-    </Card>
+        <Link
+          href="/login"
+          className="text-sm text-muted-foreground hover:underline"
+        >
+          {t("haveAccount")}
+        </Link>
+      </form>
+    </div>
   );
 }

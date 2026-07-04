@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { screen } from "@testing-library/react";
+import { screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { setupServer } from "msw/node";
 import { http, HttpResponse } from "msw";
 
@@ -98,9 +99,9 @@ describe("StorefrontProductList", () => {
 
     renderWithProviders(<StorefrontProductList />);
 
-    // The card shows the localized "from" price (server value, Intl-formatted):
-    // match the stable Persian-grouped digits (bidi/space marks vary).
-    expect(await screen.findByText(/۱۲۰٬۰۰۰/)).toBeInTheDocument();
+    // The card shows the localized "from" price (server value in Toman, the IRR
+    // amount ÷10): match the stable Persian-grouped digits (bidi/space marks vary).
+    expect(await screen.findByText(/۱۲٬۰۰۰/)).toBeInTheDocument();
     // The out-of-stock product is flagged; the in-stock one is not.
     expect(screen.getByText(messages.storefront.outOfStock)).toBeInTheDocument();
   });
@@ -123,5 +124,53 @@ describe("StorefrontProductList", () => {
       await screen.findByRole("option", { name: "Coffee Beans" }),
     ).toBeInTheDocument();
     expect(screen.getByRole("option", { name: "Featured" })).toBeInTheDocument();
+  });
+
+  it("sends the price range to the API as Rial (Toman ×10)", async () => {
+    taxonomy();
+    const urls: string[] = [];
+    server.use(
+      http.get("*/catalog/storefront/products/*", ({ request }) => {
+        urls.push(request.url);
+        return HttpResponse.json({ count: 0, limit: 12, offset: 0, results: [] });
+      }),
+    );
+
+    const user = userEvent.setup();
+    renderWithProviders(<StorefrontProductList />);
+    await screen.findByText(messages.storefront.empty);
+
+    await user.type(screen.getByLabelText(messages.storefront.priceMin), "100");
+    await user.type(screen.getByLabelText(messages.storefront.priceMax), "500");
+    await user.click(
+      screen.getByRole("button", { name: messages.storefront.applyFilters }),
+    );
+
+    await waitFor(() => {
+      const last = urls[urls.length - 1];
+      // 100 Toman -> 1000 Rial, 500 Toman -> 5000 Rial.
+      expect(last).toContain("min_price=1000");
+      expect(last).toContain("max_price=5000");
+    });
+  });
+
+  it("shows numbered pagination and navigates to another page", async () => {
+    taxonomy();
+    const urls: string[] = [];
+    server.use(
+      http.get("*/catalog/storefront/products/*", ({ request }) => {
+        urls.push(request.url);
+        return HttpResponse.json({ count: 30, limit: 12, offset: 0, results: [houseBlend] });
+      }),
+    );
+
+    const user = userEvent.setup();
+    renderWithProviders(<StorefrontProductList />);
+    await screen.findByText("House Blend");
+
+    // 30 items / 12 per page = 3 pages; page 2 is button "۲" (Persian digit).
+    await user.click(screen.getByRole("button", { name: "۲" }));
+
+    await waitFor(() => expect(urls[urls.length - 1]).toContain("offset=12"));
   });
 });

@@ -2,21 +2,16 @@
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { useState, type FormEvent } from "react";
 
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import { FormField } from "@/components/ui/form-field";
 import { login } from "@/lib/api/auth";
 import { ApiError } from "@/lib/api/client";
+import { resolveRedirect } from "@/lib/auth/redirect";
 import { markSignedIn } from "@/lib/auth/session-hint";
 import { CURRENT_USER_KEY } from "@/lib/hooks/use-auth";
 
@@ -24,6 +19,7 @@ export function LoginForm() {
   const t = useTranslations("auth");
   const tCommon = useTranslations("common");
   const router = useRouter();
+  const searchParams = useSearchParams();
   const queryClient = useQueryClient();
   const [phoneNumber, setPhoneNumber] = useState("");
   const [password, setPassword] = useState("");
@@ -37,7 +33,9 @@ export function LoginForm() {
       // cached under ["cart", channel] as a guest is now stale -- drop it so the
       // merged cart is refetched fresh.
       queryClient.invalidateQueries({ queryKey: ["cart"] });
-      router.push("/account");
+      // Return the user to wherever they were when they chose to sign in
+      // (captured as a `next` query param), falling back to the home page.
+      router.push(resolveRedirect(searchParams.get("next")));
     },
   });
 
@@ -58,15 +56,12 @@ export function LoginForm() {
         : null;
 
   return (
-    <Card className="mx-auto w-full max-w-sm">
-      <CardHeader>
-        <CardTitle>{t("loginTitle")}</CardTitle>
-      </CardHeader>
-      <CardContent>
-        {/* method="post" (plus name-less credential fields) is defence in depth:
-            if hydration ever fails, a native fallback submit stays a POST with the
-            values in the request body, never a GET that leaks them into the URL. */}
-        <form onSubmit={onSubmit} method="post" className="flex flex-col gap-4" noValidate>
+    <div className="flex flex-col gap-6">
+      <h1 className="text-2xl font-bold tracking-tight">{t("loginTitle")}</h1>
+      {/* method="post" (plus name-less credential fields) is defence in depth:
+          if hydration ever fails, a native fallback submit stays a POST with the
+          values in the request body, never a GET that leaks them into the URL. */}
+      <form onSubmit={onSubmit} method="post" className="flex flex-col gap-4" noValidate>
           <FormField
             id="phone_number"
             label={tCommon("phoneNumber")}
@@ -94,16 +89,15 @@ export function LoginForm() {
           <Button type="submit" disabled={mutation.isPending}>
             {mutation.isPending ? tCommon("loading") : t("loginCta")}
           </Button>
-          <div className="flex justify-between text-sm text-muted-foreground">
-            <Link href="/register" className="hover:underline">
-              {t("noAccount")}
-            </Link>
-            <Link href="/password-reset" className="hover:underline">
-              {t("forgotPassword")}
-            </Link>
-          </div>
-        </form>
-      </CardContent>
-    </Card>
+        <div className="flex justify-between text-sm text-muted-foreground">
+          <Link href="/register" className="hover:underline">
+            {t("noAccount")}
+          </Link>
+          <Link href="/password-reset" className="hover:underline">
+            {t("forgotPassword")}
+          </Link>
+        </div>
+      </form>
+    </div>
   );
 }

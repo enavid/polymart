@@ -1,33 +1,17 @@
-import { getTranslations } from "next-intl/server";
-import Link from "next/link";
 import type { ReactNode } from "react";
 
-export default async function AdminLayout({
-  children,
-}: {
-  children: ReactNode;
-}) {
-  const t = await getTranslations("nav");
+import { AdminGuard } from "@/components/admin/admin-guard";
+import { AdminShell } from "@/components/admin/admin-shell";
+
+/**
+ * Admin area layout: gate access to staff, then render the dedicated admin shell
+ * (its own sidebar + top bar, full width) around every `/admin/*` page. The
+ * shopper header/footer are intentionally absent here (see `AppShell`).
+ */
+export default function AdminLayout({ children }: { children: ReactNode }) {
   return (
-    <div className="flex flex-col gap-6">
-      <nav className="flex gap-4 border-b border-border pb-3 text-sm">
-        <Link href="/admin/access" className="hover:underline">
-          {t("access")}
-        </Link>
-        <Link href="/admin/channels" className="hover:underline">
-          {t("channels")}
-        </Link>
-        <Link href="/admin/catalog" className="hover:underline">
-          {t("catalog")}
-        </Link>
-        <Link href="/admin/orders/new" className="hover:underline">
-          {t("manualOrders")}
-        </Link>
-        <Link href="/admin/audit" className="hover:underline">
-          {t("audit")}
-        </Link>
-      </nav>
-      {children}
-    </div>
+    <AdminGuard>
+      <AdminShell>{children}</AdminShell>
+    </AdminGuard>
   );
 }

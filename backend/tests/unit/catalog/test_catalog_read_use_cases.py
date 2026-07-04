@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
+
 import pytest
 from structlog.testing import capture_logs
 
@@ -157,6 +159,9 @@ class TestSearchCatalogProducts:
                 category="beverages",
                 collection="featured",
                 product_type="coffee",
+                channel="ir-main",
+                min_price=Decimal("10.00"),
+                max_price=Decimal("50.00"),
             )
         )
 
@@ -167,6 +172,13 @@ class TestSearchCatalogProducts:
             "beverages",
             "featured",
             "coffee",
+        )
+        # The channel + price bounds are forwarded so the adapter can filter by the
+        # product's lowest in-channel price.
+        assert (f.channel, f.min_price, f.max_price) == (
+            "ir-main",
+            Decimal("10.00"),
+            Decimal("50.00"),
         )
 
     def test_applies_the_default_window_when_unspecified(self) -> None:

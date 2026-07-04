@@ -279,6 +279,91 @@ class TestPriceSummaries:
         assert DjangoProductQueryRepository().price_summaries(codes=[], channel="ir-main") == {}
 
 
+class TestPriceRangeFilter:
+    @staticmethod
+    def _seed_priced_range() -> None:
+        types = DjangoProductTypeRepository()
+        types.add(ProductType(code=ProductTypeCode("coffee"), name="Coffee"))
+        products = DjangoProductRepository()
+        coffee = ProductTypeCode("coffee")
+        variants = DjangoVariantRepository()
+        prices = DjangoVariantPriceRepository()
+
+        # Three products priced in ir-main at 100k / 200k / 300k, plus a "cheap"
+        # product whose *lowest* variant is 100k but which also has a 900k variant
+        # (proves the range filters on the from-price, not any variant), plus an
+        # unpriced-in-channel product. All published.
+        for code, name in (
+            ("p-low", "Low"),
+            ("p-mid", "Mid"),
+            ("p-high", "High"),
+            ("p-cheap", "Cheap"),
+            ("p-unpriced", "Unpriced"),
+        ):
+            products.add(Product(code=ProductCode(code), name=name, product_type=coffee))
+            products.set_published(code, True)
+
+        pricing = {
+            "p-low": [("LOW-1", Decimal("100000.00"))],
+            "p-mid": [("MID-1", Decimal("200000.00"))],
+            "p-high": [("HIGH-1", Decimal("300000.00"))],
+            "p-cheap": [("CHEAP-1", Decimal("100000.00")), ("CHEAP-2", Decimal("900000.00"))],
+        }
+        for code, lines in pricing.items():
+            for sku, amount in lines:
+                variants.add(ProductVariant(product=ProductCode(code), sku=Sku(sku), name=sku))
+                prices.replace(sku, (ChannelPrice(channel="ir-main", money=Money(amount, "IRR")),))
+        # p-unpriced has a variant but no price in ir-main.
+        variants.add(
+            ProductVariant(product=ProductCode("p-unpriced"), sku=Sku("UP-1"), name="UP-1")
+        )
+
+    @staticmethod
+    def _codes(**kwargs: object) -> set[str]:
+        page = DjangoProductQueryRepository().search(
+            filters=_filters(channel="ir-main", **kwargs), limit=50, offset=0
+        )
+        return {product.code.value for product in page.items}
+
+    def test_min_price_excludes_cheaper_products(self) -> None:
+        self._seed_priced_range()
+        # from-price >= 150k -> p-mid (200k), p-high (300k). p-low/p-cheap (100k) and
+        # p-unpriced (no in-channel price) are excluded.
+        assert self._codes(min_price=Decimal("150000.00")) == {"p-mid", "p-high"}
+
+    def test_max_price_excludes_pricier_products(self) -> None:
+        self._seed_priced_range()
+        # from-price <= 250k -> p-low, p-cheap (both 100k), p-mid (200k).
+        assert self._codes(max_price=Decimal("250000.00")) == {"p-low", "p-cheap", "p-mid"}
+
+    def test_min_and_max_bound_a_window(self) -> None:
+        self._seed_priced_range()
+        assert self._codes(
+            min_price=Decimal("150000.00"), max_price=Decimal("250000.00")
+        ) == {"p-mid"}
+
+    def test_filters_on_the_lowest_variant_price_not_any_variant(self) -> None:
+        self._seed_priced_range()
+        # p-cheap's lowest variant is 100k (its 900k variant must not pull it into a
+        # high bucket, nor keep it out of a low one).
+        assert "p-cheap" in self._codes(max_price=Decimal("120000.00"))
+        assert "p-cheap" not in self._codes(min_price=Decimal("150000.00"))
+
+    def test_range_without_a_channel_does_not_filter(self) -> None:
+        self._seed_priced_range()
+        # No channel -> price bounds are ignored; every published product is returned.
+        page = DjangoProductQueryRepository().search(
+            filters=_filters(min_price=Decimal("150000.00")), limit=50, offset=0
+        )
+        assert {p.code.value for p in page.items} == {
+            "p-low",
+            "p-mid",
+            "p-high",
+            "p-cheap",
+            "p-unpriced",
+        }
+
+
 class TestPrimaryImages:
     @staticmethod
     def _seed_with_media() -> None:

@@ -139,8 +139,16 @@ class StorefrontProductQuerySerializer(serializers.Serializer):
     collection = serializers.CharField(required=False)
     product_type = serializers.CharField(required=False)
     # When given, each result is enriched with its "from" price + availability
-    # in this channel.
+    # in this channel. A price range (below) also filters against this channel.
     channel = serializers.CharField(required=False)
+    # Money bounds are exact decimals (never floats). They only take effect when a
+    # channel is supplied, since price is per-channel.
+    min_price = serializers.DecimalField(
+        required=False, max_digits=18, decimal_places=4, min_value=0
+    )
+    max_price = serializers.DecimalField(
+        required=False, max_digits=18, decimal_places=4, min_value=0
+    )
     limit = serializers.IntegerField(required=False)
     offset = serializers.IntegerField(required=False)
 

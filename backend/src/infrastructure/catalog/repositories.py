@@ -387,7 +387,29 @@ class DjangoProductQueryRepository(ProductQueryRepository):
             queryset = queryset.filter(
                 Q(name__icontains=filters.search) | Q(code__icontains=filters.search)
             )
+        queryset = DjangoProductQueryRepository._apply_price_range(queryset, filters)
         return queryset.distinct()
+
+    @staticmethod
+    def _apply_price_range(
+        queryset: QuerySet[ProductModel], filters: ProductFilters
+    ) -> QuerySet[ProductModel]:
+        # Price is per-variant, per-channel, so a range only makes sense within a
+        # channel. Filter on the product's *lowest* in-channel base price -- the same
+        # "from" price shown on the card -- so the result matches what the shopper sees.
+        if filters.channel is None or (filters.min_price is None and filters.max_price is None):
+            return queryset
+        queryset = queryset.annotate(
+            from_amount=Min(
+                "variants__prices__amount",
+                filter=Q(variants__prices__channel_slug=filters.channel),
+            )
+        )
+        if filters.min_price is not None:
+            queryset = queryset.filter(from_amount__gte=filters.min_price)
+        if filters.max_price is not None:
+            queryset = queryset.filter(from_amount__lte=filters.max_price)
+        return queryset
 
     def get_published_by_code(self, code: str) -> Product:
         try:

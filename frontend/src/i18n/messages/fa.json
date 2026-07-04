@@ -13,7 +13,20 @@
   },
   "footer": {
     "tagline": "فروشگاه چندمنظورهٔ سفید‌برچسب",
-    "rights": "همهٔ حقوق محفوظ است."
+    "rights": "همهٔ حقوق محفوظ است.",
+    "blurb": "هر چیزی که بخواهید، یک‌جا؛ با تجربهٔ خریدی ساده، سریع و امن.",
+    "shopHeading": "فروشگاه",
+    "allProducts": "همهٔ محصولات",
+    "cart": "سبد خرید",
+    "accountHeading": "حساب من",
+    "account": "حساب کاربری",
+    "orders": "سفارش‌ها",
+    "addresses": "آدرس‌ها",
+    "trustHeading": "چرا پلی‌مارت",
+    "trustFastShipping": "ارسال سریع سراسری",
+    "trustSecurePayment": "پرداخت امن",
+    "trustReturns": "ضمانت بازگشت کالا",
+    "trustSupport": "پشتیبانی پاسخ‌گو"
   },
   "theme": {
     "toggle": "تغییر پوستهٔ روشن/تیره",
@@ -25,8 +38,13 @@
     "heroTitle": "هر چیزی که بخواهید، اینجاست",
     "heroSubtitle": "فروشگاهی چندمنظوره با تجربهٔ خرید ساده و سریع.",
     "shopCta": "مشاهدهٔ فروشگاه",
+    "heroEyebrow": "فروشگاه چندمنظوره",
     "featuredTitle": "محصولات منتخب",
-    "featuredEmpty": "هنوز محصولی برای نمایش نیست."
+    "featuredSubtitle": "منتخب تیم ما، همین حالا",
+    "viewAll": "مشاهدهٔ همه",
+    "featuredEmpty": "هنوز محصولی برای نمایش نیست.",
+    "carouselPrevious": "نمایش قبلی",
+    "carouselNext": "نمایش بعدی"
   },
   "nav": {
     "account": "حساب کاربری",
@@ -68,7 +86,12 @@
     "needCode": "ابتدا کد تأیید را دریافت کنید.",
     "haveAccount": "حساب دارید؟ ورود",
     "noAccount": "حساب ندارید؟ ثبت‌نام",
-    "forgotPassword": "رمز را فراموش کرده‌اید؟"
+    "forgotPassword": "رمز را فراموش کرده‌اید؟",
+    "brandHeading": "به پلی‌مارت خوش آمدید",
+    "brandSubtitle": "ورود و ثبت‌نام سریع با شمارهٔ موبایل؛ خرید امن و پیگیری آسان سفارش‌ها.",
+    "brandPoint1": "دسترسی به سفارش‌ها و آدرس‌ها",
+    "brandPoint2": "تسویه‌حساب سریع و امن",
+    "brandPoint3": "پیگیری لحظه‌ای وضعیت سفارش"
   },
   "account": {
     "title": "حساب کاربری",
@@ -79,7 +102,16 @@
     "yes": "بله",
     "no": "خیر",
     "notLoggedIn": "برای دیدن حساب، وارد شوید.",
-    "goLogin": "ورود"
+    "goLogin": "ورود",
+    "greeting": "خوش آمدید{name}",
+    "profileTitle": "مشخصات حساب",
+    "menuLabel": "منوی حساب کاربری",
+    "hubOrders": "سفارش‌ها",
+    "hubOrdersDesc": "پیگیری و مشاهدهٔ سفارش‌های ثبت‌شده.",
+    "hubAddresses": "آدرس‌ها",
+    "hubAddressesDesc": "مدیریت آدرس‌های ارسال.",
+    "hubAdmin": "پنل مدیریت",
+    "hubAdminDesc": "ابزارهای مدیریت فروشگاه."
   },
   "admin": {
     "title": "پنل مدیریت",
@@ -118,7 +150,21 @@
     "invalidPhone": "شمارهٔ موبایل معتبر نیست.",
     "selectUser": "کاربر",
     "selectUserPlaceholder": "یک کاربر انتخاب کنید",
-    "staffBadge": "کارمند"
+    "staffBadge": "کارمند",
+    "dashboard": "داشبورد",
+    "dashboardSubtitle": "نمای کلی فروشگاه و دسترسی سریع به بخش‌ها.",
+    "backToStore": "بازگشت به فروشگاه",
+    "navGroupManage": "مدیریت",
+    "kpiProducts": "محصولات",
+    "kpiChannels": "کانال‌ها",
+    "kpiUsers": "کاربران",
+    "kpiLoadError": "بارگذاری آمار ممکن نشد.",
+    "quickLinks": "دسترسی سریع",
+    "guardLoading": "در حال بررسی دسترسی…",
+    "guardForbidden": "شما به پنل مدیریت دسترسی ندارید.",
+    "guardSignIn": "برای دسترسی به پنل مدیریت باید با یک حساب کارمند وارد شوید.",
+    "guardSignInCta": "ورود",
+    "menuLabel": "منوی مدیریت"
   },
   "audit": {
     "title": "گزارشِ ممیزی",
@@ -309,6 +355,12 @@
     "filterCollection": "مجموعه",
     "filterProductType": "نوع محصول",
     "filterAll": "همه",
+    "filtersTitle": "فیلترها",
+    "priceRange": "محدودهٔ قیمت (تومان)",
+    "priceMin": "از",
+    "priceMax": "تا",
+    "applyFilters": "اعمال فیلترها",
+    "clearFilters": "حذف فیلترها",
     "allProducts": "همهٔ محصولات",
     "empty": "محصولی یافت نشد.",
     "viewProduct": "مشاهده",
@@ -317,6 +369,7 @@
     "outOfStock": "ناموجود",
     "previous": "قبلی",
     "next": "بعدی",
+    "pageStatus": "صفحهٔ {page} از {pages}",
     "resultCount": "{count} محصول",
     "notFound": "این محصول موجود نیست.",
     "backToList": "بازگشت به فهرست",

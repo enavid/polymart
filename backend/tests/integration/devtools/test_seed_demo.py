@@ -7,6 +7,8 @@ data. Like ``seed_e2e`` it must be idempotent and refuse to run outside DEBUG.
 
 from __future__ import annotations
 
+from itertools import pairwise
+
 import pytest
 from django.core.management import call_command
 from django.core.management.base import CommandError
@@ -18,6 +20,7 @@ from src.infrastructure.catalog.models import (
     CollectionProductModel,
     ProductModel,
     ProductTypeModel,
+    ProductVariantMediaModel,
     ProductVariantModel,
     VariantPriceModel,
     VariantStockModel,
@@ -58,6 +61,19 @@ class TestDemoCatalogShape:
         skus = [v.sku for p in products for v in p.variants]
         assert len(set(skus)) == len(skus)
 
+    def test_gives_every_product_a_stable_real_photo_url(self) -> None:
+        products = build_products()
+        # Every product carries a real, on-topic demo photo (not a placeholder).
+        assert all(p.image_url.startswith("https://images.unsplash.com/") for p in products)
+        # The URL is deterministic across builds (pinned per niche + index).
+        assert {p.code: p.image_url for p in build_products()} == {
+            p.code: p.image_url for p in products
+        }
+        # Neighbouring products in a niche never share an image (curated pools >= 5).
+        for niche in NICHES:
+            urls = [p.image_url for p in products if p.code.startswith(f"{niche.code}-")]
+            assert all(a != b for a, b in pairwise(urls))
+
 
 class TestSeedCatalog:
     def test_seeds_every_product_published_with_variants_prices_and_stock(self) -> None:
@@ -71,6 +87,9 @@ class TestSeedCatalog:
         assert ProductVariantModel.objects.count() == total_variants
         assert VariantPriceModel.objects.count() == total_variants
         assert VariantStockModel.objects.count() == total_variants
+
+        # Each product gets exactly one primary photo, attached to its first variant.
+        assert ProductVariantMediaModel.objects.count() == len(build_products())
 
     def test_seeds_varied_data_to_exercise_the_ui(self) -> None:
         _seed()

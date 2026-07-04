@@ -46,9 +46,10 @@ describe("PreInvoiceView", () => {
     renderWithProviders(<PreInvoiceView number="ORD-MANUAL01" />);
 
     expect(await screen.findByText("ORD-MANUAL01")).toBeInTheDocument();
-    // Money is the exact server value, formatted (fa-IR digits), never recomputed:
-    // 390,000 (the total and grand total) appears with Persian digits + grouping.
-    expect(screen.getAllByText(/۳۹۰[٬,]۰۰۰/).length).toBeGreaterThanOrEqual(2);
+    // Money is the exact server value, formatted (fa-IR digits, Toman for the IRR
+    // ledger currency), never recomputed: the 390,000 IRR total and grand total
+    // render as 39,000 Toman with Persian digits + grouping.
+    expect(screen.getAllByText(/۳۹[٬,]۰۰۰/).length).toBeGreaterThanOrEqual(2);
     // The tax placeholder is shown (null tax -> "computed later" note).
     expect(screen.getByText(pre.taxPending)).toBeInTheDocument();
     expect(screen.getByText("HB-250")).toBeInTheDocument();

@@ -1,18 +1,27 @@
 "use client";
 
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { useTranslations } from "next-intl";
 
+import { AccountMenu } from "@/components/layout/account-menu";
 import { ThemeToggle } from "@/components/layout/theme-toggle";
-import { Button } from "@/components/ui/button";
 import { useCurrentUser, useLogout } from "@/lib/hooks/use-auth";
 
-/** Top navigation. Surfaces admin links only to staff users. */
+/**
+ * Top navigation: shopping entry points (store, cart) plus a single account
+ * entry. Orders, addresses, and the admin panel are folded into the account
+ * menu rather than top-level links, so the header stays a shopping surface.
+ */
 export function SiteHeader() {
   const t = useTranslations("nav");
   const tCommon = useTranslations("common");
+  const pathname = usePathname();
   const { data: user } = useCurrentUser();
   const logout = useLogout();
+
+  // Send "please sign in" back to the current page after login.
+  const loginHref = `/login?next=${encodeURIComponent(pathname || "/")}`;
 
   const linkClass =
     "rounded-md px-2.5 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground";
@@ -42,46 +51,23 @@ export function SiteHeader() {
           <Link href="/cart" className={linkClass}>
             {t("cart")}
           </Link>
-          {user ? (
-            <>
-              <Link href="/orders" className={linkClass}>
-                {t("orders")}
-              </Link>
-              <Link href="/addresses" className={linkClass}>
-                {t("addresses")}
-              </Link>
-              <Link href="/account" className={linkClass}>
-                {t("account")}
-              </Link>
-              {user.is_staff ? (
-                <Link
-                  href="/admin"
-                  className="rounded-md px-2.5 py-1.5 text-sm font-medium text-primary transition-colors hover:bg-accent"
-                >
-                  {t("admin")}
-                </Link>
-              ) : null}
-            </>
-          ) : null}
+        </nav>
 
-          <span className="mx-1 h-5 w-px bg-border" aria-hidden />
+        {/* Trailing utilities: theme switch + account, separated from navigation. */}
+        <div className="flex items-center gap-2 border-s border-border ps-3">
           <ThemeToggle />
-
           {user ? (
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => logout.mutate()}
-              disabled={logout.isPending}
-            >
-              {t("logout")}
-            </Button>
+            <AccountMenu
+              user={user}
+              onLogout={() => logout.mutate()}
+              loggingOut={logout.isPending}
+            />
           ) : (
-            <Link href="/login" className={linkClass}>
+            <Link href={loginHref} className={linkClass}>
               {t("login")}
             </Link>
           )}
-        </nav>
+        </div>
       </div>
     </header>
   );

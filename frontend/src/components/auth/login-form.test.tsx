@@ -8,14 +8,32 @@ import { LoginForm } from "@/components/auth/login-form";
 import messages from "@/i18n/messages/fa.json";
 import { renderWithProviders } from "@/test/utils";
 
-const { push } = vi.hoisted(() => ({ push: vi.fn() }));
-vi.mock("next/navigation", () => ({ useRouter: () => ({ push }) }));
+const { push, searchParams } = vi.hoisted(() => ({
+  push: vi.fn(),
+  searchParams: new URLSearchParams(),
+}));
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push }),
+  useSearchParams: () => searchParams,
+}));
+
+const okUser = {
+  id: 1,
+  phone_number: "+989123456789",
+  email: "",
+  full_name: "Ali",
+  is_staff: false,
+};
 
 const server = setupServer();
 beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
 afterEach(() => {
   server.resetHandlers();
   push.mockReset();
+  // Reset the shared search params between tests (delete every key).
+  for (const key of [...searchParams.keys()]) {
+    searchParams.delete(key);
+  }
 });
 afterAll(() => server.close());
 
@@ -27,23 +45,33 @@ async function fillAndSubmit() {
 }
 
 describe("LoginForm", () => {
-  it("logs in and redirects to the account page on success", async () => {
-    server.use(
-      http.post("*/auth/login/", () =>
-        HttpResponse.json({
-          id: 1,
-          phone_number: "+989123456789",
-          email: "",
-          full_name: "Ali",
-          is_staff: false,
-        }),
-      ),
-    );
+  it("logs in and returns to the home page when no next target is given", async () => {
+    server.use(http.post("*/auth/login/", () => HttpResponse.json(okUser)));
 
     renderWithProviders(<LoginForm />);
     await fillAndSubmit();
 
-    await waitFor(() => expect(push).toHaveBeenCalledWith("/account"));
+    await waitFor(() => expect(push).toHaveBeenCalledWith("/"));
+  });
+
+  it("returns the user to the captured `next` page on success", async () => {
+    searchParams.set("next", "/cart");
+    server.use(http.post("*/auth/login/", () => HttpResponse.json(okUser)));
+
+    renderWithProviders(<LoginForm />);
+    await fillAndSubmit();
+
+    await waitFor(() => expect(push).toHaveBeenCalledWith("/cart"));
+  });
+
+  it("ignores an off-site `next` target (open-redirect guard)", async () => {
+    searchParams.set("next", "https://evil.example.com");
+    server.use(http.post("*/auth/login/", () => HttpResponse.json(okUser)));
+
+    renderWithProviders(<LoginForm />);
+    await fillAndSubmit();
+
+    await waitFor(() => expect(push).toHaveBeenCalledWith("/"));
   });
 
   it("invalidates the cached cart on success so the merged guest cart is refetched", async () => {
