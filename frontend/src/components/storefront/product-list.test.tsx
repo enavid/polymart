@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { setupServer } from "msw/node";
@@ -7,6 +7,11 @@ import { http, HttpResponse } from "msw";
 import { StorefrontProductList } from "@/components/storefront/product-list";
 import messages from "@/i18n/messages/fa.json";
 import { renderWithProviders } from "@/test/utils";
+
+// The search term is read from the URL (`?q=…`); default to no term.
+vi.mock("next/navigation", () => ({
+  useSearchParams: () => new URLSearchParams(),
+}));
 
 const server = setupServer();
 beforeAll(() => server.listen({ onUnhandledRequest: "error" }));

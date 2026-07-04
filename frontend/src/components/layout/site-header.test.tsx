@@ -12,6 +12,8 @@ const nav = messages.nav;
 
 vi.mock("next/navigation", () => ({
   usePathname: () => "/products",
+  useRouter: () => ({ push: vi.fn() }),
+  useSearchParams: () => new URLSearchParams(),
 }));
 
 function me(isStaff: boolean) {

@@ -1,8 +1,9 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
+import { useSearchParams } from "next/navigation";
 import { useTranslations } from "next-intl";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { ProductCard } from "@/components/storefront/product-card";
 import { Alert } from "@/components/ui/alert";
@@ -23,7 +24,6 @@ const limit = 12;
 const RIAL_PER_TOMAN = 10;
 
 interface AppliedFilters {
-  search: string;
   category: string;
   collection: string;
   min_price: string;
@@ -32,7 +32,6 @@ interface AppliedFilters {
 }
 
 const EMPTY_APPLIED: AppliedFilters = {
-  search: "",
   category: "",
   collection: "",
   min_price: "",
@@ -55,18 +54,27 @@ export function StorefrontProductList() {
   const t = useTranslations("storefront");
   const tCommon = useTranslations("common");
 
-  const [search, setSearch] = useState("");
+  // The search term comes from the header search box via the URL (`?q=…`), so the
+  // navbar field and these results stay in sync without shared client state.
+  const searchParams = useSearchParams();
+  const searchTerm = searchParams.get("q") ?? "";
+
   const [category, setCategory] = useState("");
   const [collection, setCollection] = useState("");
   const [minPrice, setMinPrice] = useState("");
   const [maxPrice, setMaxPrice] = useState("");
   const [applied, setApplied] = useState<AppliedFilters>(EMPTY_APPLIED);
 
+  // A new search term returns to the first page of results.
+  useEffect(() => {
+    setApplied((prev) => (prev.offset === 0 ? prev : { ...prev, offset: 0 }));
+  }, [searchTerm]);
+
   const query = useQuery({
-    queryKey: ["storefront-products", applied],
+    queryKey: ["storefront-products", searchTerm, applied],
     queryFn: () =>
       listStorefrontProducts({
-        search: applied.search || undefined,
+        search: searchTerm || undefined,
         category: applied.category || undefined,
         collection: applied.collection || undefined,
         min_price: tomanToRial(applied.min_price),
@@ -89,7 +97,6 @@ export function StorefrontProductList() {
 
   function applyFilters() {
     setApplied({
-      search,
       category,
       collection,
       min_price: minPrice,
@@ -99,7 +106,6 @@ export function StorefrontProductList() {
   }
 
   function clearFilters() {
-    setSearch("");
     setCategory("");
     setCollection("");
     setMinPrice("");
@@ -120,24 +126,11 @@ export function StorefrontProductList() {
     <div className="flex flex-col gap-6">
       <div className="flex flex-wrap items-center justify-between gap-4">
         <h1 className="text-2xl font-bold tracking-tight">{t("title")}</h1>
-        {/* Search is its own bar, distinct from the sidebar filters. */}
-        <div className="flex w-full max-w-md items-end gap-2">
-          <div className="flex flex-1 flex-col gap-1.5">
-            <Label htmlFor="storefront_search">{t("search")}</Label>
-            <Input
-              id="storefront_search"
-              placeholder={t("searchPlaceholder")}
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") applyFilters();
-              }}
-            />
-          </div>
-          <Button type="button" onClick={applyFilters}>
-            {t("search")}
-          </Button>
-        </div>
+        {searchTerm ? (
+          <p className="text-sm text-muted-foreground">
+            {t("searchResultsFor", { term: searchTerm })}
+          </p>
+        ) : null}
       </div>
 
       <div className="grid gap-6 lg:grid-cols-[16rem_1fr]">

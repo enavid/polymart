@@ -348,6 +348,7 @@
     "title": "فروشگاه",
     "searchPlaceholder": "جست‌وجوی محصول…",
     "search": "جست‌وجو",
+    "searchResultsFor": "نتایج جست‌وجو برای «{term}»",
     "filterCategory": "دسته‌بندی",
     "filterCollection": "مجموعه",
     "filterProductType": "نوع محصول",

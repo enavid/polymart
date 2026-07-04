@@ -54,7 +54,7 @@ export async function SiteFooter() {
 
   return (
     <footer className="border-t border-border bg-card/40">
-      <div className="mx-auto w-full max-w-6xl px-4 py-12">
+      <div className="mx-auto w-full max-w-[90rem] px-6 py-12">
         <div className="grid gap-10 sm:grid-cols-2 lg:grid-cols-4">
           {/* Brand column */}
           <div className="flex flex-col gap-3">

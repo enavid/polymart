@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { useTranslations } from "next-intl";
 
 import { AccountMenu } from "@/components/layout/account-menu";
+import { HeaderSearch } from "@/components/layout/header-search";
 import { ThemeToggle } from "@/components/layout/theme-toggle";
 import { buttonVariants } from "@/components/ui/button";
 import { useCurrentUser, useLogout } from "@/lib/hooks/use-auth";
@@ -31,19 +32,23 @@ export function SiteHeader() {
 
   return (
     <header className="sticky top-0 z-20 border-b border-border bg-background/80 backdrop-blur">
-      <div className="mx-auto flex w-full max-w-6xl items-center justify-between gap-4 px-4 py-3">
-        <Link
-          href="/"
-          className="flex items-center gap-2 text-lg font-bold tracking-tight text-foreground"
-        >
-          <span
-            aria-hidden
-            className="inline-flex h-7 w-7 items-center justify-center rounded-lg bg-primary text-sm font-black text-primary-foreground"
+      <div className="mx-auto flex w-full max-w-[90rem] items-center justify-between gap-4 px-6 py-3">
+        {/* Logo + product search sit together at the start of the bar. */}
+        <div className="flex items-center gap-3">
+          <Link
+            href="/"
+            className="flex items-center gap-2 text-lg font-bold tracking-tight text-foreground"
           >
-            پ
-          </span>
-          {tCommon("appName")}
-        </Link>
+            <span
+              aria-hidden
+              className="inline-flex h-7 w-7 items-center justify-center rounded-lg bg-primary text-sm font-black text-primary-foreground"
+            >
+              پ
+            </span>
+            {tCommon("appName")}
+          </Link>
+          <HeaderSearch className="hidden w-56 md:block lg:w-72" />
+        </div>
 
         <nav className="flex items-center gap-1">
           <Link href="/products" className={linkClass}>
