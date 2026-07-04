@@ -14,6 +14,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { FormField } from "@/components/ui/form-field";
+import { Loading } from "@/components/ui/spinner";
 import {
   Table,
   TableBody,
@@ -153,7 +154,7 @@ function PricesCard({ sku }: { sku: string }) {
       </CardHeader>
       <CardContent>
         <div className="flex flex-col gap-4">
-          {query.isLoading ? <p>{tCommon("loading")}</p> : null}
+          {query.isLoading ? <Loading label={tCommon("loading")} /> : null}
 
           {query.data && query.data.length === 0 ? (
             <p className="text-muted-foreground">{t("variantDetail.noPrices")}</p>
@@ -280,7 +281,7 @@ function StockCard({ sku }: { sku: string }) {
       </CardHeader>
       <CardContent>
         <div className="flex flex-col gap-4">
-          {query.isLoading ? <p>{tCommon("loading")}</p> : null}
+          {query.isLoading ? <Loading label={tCommon("loading")} /> : null}
 
           {query.data !== undefined ? (
             <p className="text-sm">
@@ -348,7 +349,7 @@ export function VariantDetail({ sku }: { sku: string }) {
         {t("productDetail.backToProducts")}
       </Link>
 
-      {query.isLoading ? <p>{tCommon("loading")}</p> : null}
+      {query.isLoading ? <Loading label={tCommon("loading")} /> : null}
 
       {query.isError ? (
         <Alert variant="destructive">

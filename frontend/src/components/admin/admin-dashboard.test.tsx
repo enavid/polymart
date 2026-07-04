@@ -43,4 +43,19 @@ describe("AdminDashboard", () => {
     );
     expect(screen.getByText(admin.quickLinks)).toBeInTheDocument();
   });
+
+  it("surfaces a single error banner when a KPI count fails to load", async () => {
+    server.use(
+      http.get("*/catalog/products/", () => HttpResponse.json([{ code: "a" }])),
+      http.get("*/channels/", () => new HttpResponse(null, { status: 500 })),
+      http.get("*/access/users/*", () =>
+        HttpResponse.json({ count: 1, limit: 1, offset: 0, results: [] }),
+      ),
+    );
+
+    renderWithProviders(<AdminDashboard />);
+
+    // The failed channels count raises the banner instead of sitting on a silent dash.
+    expect(await screen.findByText(admin.kpiLoadError)).toBeInTheDocument();
+  });
 });

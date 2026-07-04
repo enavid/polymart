@@ -7,6 +7,7 @@ import { useState, type FormEvent } from "react";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { FormField } from "@/components/ui/form-field";
+import { Loading } from "@/components/ui/spinner";
 import {
   Table,
   TableBody,
@@ -91,7 +92,7 @@ export function AuditViewer() {
         </div>
       </form>
 
-      {query.isLoading ? <p>{tCommon("loading")}</p> : null}
+      {query.isLoading ? <Loading label={tCommon("loading")} /> : null}
 
       {query.isError ? (
         <Alert variant="destructive">

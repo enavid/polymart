@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/card";
 import { FormField } from "@/components/ui/form-field";
 import { Label } from "@/components/ui/label";
+import { Loading } from "@/components/ui/spinner";
 import {
   getCollectionProducts,
   getCollectionRule,
@@ -88,7 +89,7 @@ function MembersCard({ slug }: { slug: string }) {
         <CardTitle>{t("collectionDetail.members")}</CardTitle>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
-        {query.isLoading ? <p>{tCommon("loading")}</p> : null}
+        {query.isLoading ? <Loading label={tCommon("loading")} /> : null}
         <FormField
           id="collection_members"
           label={t("collectionDetail.members")}
@@ -166,7 +167,7 @@ function RuleCard({ slug }: { slug: string }) {
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
         <p className="text-xs text-muted-foreground">{t("collectionDetail.ruleHint")}</p>
-        {query.isLoading ? <p>{tCommon("loading")}</p> : null}
+        {query.isLoading ? <Loading label={tCommon("loading")} /> : null}
 
         {conditions.length === 0 ? (
           <p className="text-muted-foreground">{t("collectionDetail.noConditions")}</p>

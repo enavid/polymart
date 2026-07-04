@@ -10,6 +10,7 @@ from structlog.testing import capture_logs
 from src.application.audit.ports import AuditRecorder
 from src.application.catalog.ports import (
     AttributeRepository,
+    ProductCategoryRepository,
     ProductRepository,
     ProductTypeRepository,
 )
@@ -19,6 +20,7 @@ from src.application.catalog.use_cases import (
     CreateProductCommand,
     GetProduct,
     ListProducts,
+    ListProductsWithCategories,
 )
 from src.domain.audit.entities import FieldChange
 from src.domain.catalog.entities import Attribute, Product, ProductType
@@ -30,7 +32,7 @@ from src.domain.catalog.exceptions import (
     ProductNotFoundError,
     ProductTypeNotFoundError,
 )
-from src.domain.catalog.value_objects import AttributeCode, ProductTypeCode
+from src.domain.catalog.value_objects import AttributeCode, CategorySlug, ProductTypeCode
 
 
 class FakeAttributeRepository(AttributeRepository):
@@ -353,3 +355,40 @@ class TestReads:
             "house-blend",
             "tea-blend",
         ]
+
+    def test_list_with_categories_attaches_each_products_membership(
+        self,
+        products: FakeProductRepository,
+        product_types: FakeProductTypeRepository,
+        attributes: FakeAttributeRepository,
+        audit: FakeAuditRecorder,
+    ) -> None:
+        create = _use_case(products, product_types, attributes, audit)
+        create.execute(_command(code="house-blend", name="House Blend"))
+        create.execute(_command(code="tea-blend", name="Tea Blend"))
+        categories = FakeProductCategoryRepository()
+        categories.replace("house-blend", [CategorySlug("hot-drinks"), CategorySlug("beans")])
+
+        result = ListProductsWithCategories(products, categories).execute()
+
+        # Products keep their code-sorted order, each carrying its own membership
+        # (empty tuple when a product has no categories) in one batched read.
+        assert [(row.product.code.value, [c.value for c in row.categories]) for row in result] == [
+            ("house-blend", ["hot-drinks", "beans"]),
+            ("tea-blend", []),
+        ]
+
+
+class FakeProductCategoryRepository(ProductCategoryRepository):
+    def __init__(self) -> None:
+        self._by_product: dict[str, tuple[CategorySlug, ...]] = {}
+
+    def replace(
+        self, product_code: str, categories: Sequence[CategorySlug]
+    ) -> tuple[CategorySlug, ...]:
+        stored = tuple(categories)
+        self._by_product[product_code] = stored
+        return stored
+
+    def list_for_product(self, product_code: str) -> tuple[CategorySlug, ...]:
+        return self._by_product.get(product_code, ())

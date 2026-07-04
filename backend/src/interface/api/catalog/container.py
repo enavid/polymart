@@ -34,7 +34,7 @@ from src.application.catalog.use_cases import (
     ListAttributes,
     ListCategories,
     ListCollections,
-    ListProducts,
+    ListProductsWithCategories,
     ListProductTypes,
     ListProductVariants,
     SearchCatalogProducts,
@@ -104,8 +104,11 @@ def build_get_product() -> GetProduct:
     return GetProduct(DjangoProductRepository())
 
 
-def build_list_products() -> ListProducts:
-    return ListProducts(DjangoProductRepository())
+def build_list_products_with_categories() -> ListProductsWithCategories:
+    return ListProductsWithCategories(
+        DjangoProductRepository(),
+        DjangoProductCategoryRepository(),
+    )
 
 
 def build_create_variant() -> CreateVariant:

@@ -107,6 +107,31 @@ class TestListForProduct:
         assert DjangoProductCategoryRepository().list_for_product("house-blend") == ()
 
 
+class TestListForProducts:
+    def test_returns_membership_for_many_products_in_one_pass(self) -> None:
+        _seed_product("house-blend")
+        DjangoProductRepository().add(
+            Product(
+                code=ProductCode("tea-blend"), name="Tea", product_type=ProductTypeCode("coffee")
+            )
+        )
+        _seed_categories("coffee", "espresso")
+        repo = DjangoProductCategoryRepository()
+        repo.replace("house-blend", _slugs("coffee", "espresso"))
+
+        result = repo.list_for_products(["house-blend", "tea-blend"])
+
+        # Each requested code is present; membership keeps assignment order and a
+        # product with none maps to an empty tuple.
+        assert {code: [c.value for c in slugs] for code, slugs in result.items()} == {
+            "house-blend": ["coffee", "espresso"],
+            "tea-blend": [],
+        }
+
+    def test_returns_empty_mapping_for_no_codes(self) -> None:
+        assert DjangoProductCategoryRepository().list_for_products([]) == {}
+
+
 def test_product_category_model_str_is_informative() -> None:
     _seed_product()
     _seed_categories("coffee")

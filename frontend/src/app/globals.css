@@ -1,6 +1,14 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 
+/* Scrollable, but without the visible scrollbar chrome (content still scrolls). */
+@utility no-scrollbar {
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
 /*
  * Three-layer design-token system (see docs/02-features-report.md).
  *

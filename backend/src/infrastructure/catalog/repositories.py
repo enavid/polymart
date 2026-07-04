@@ -672,6 +672,24 @@ class DjangoProductCategoryRepository(ProductCategoryRepository):
         )
         return tuple(CategorySlug(link.category.slug) for link in links)
 
+    def list_for_products(
+        self, product_codes: Sequence[str]
+    ) -> dict[str, tuple[CategorySlug, ...]]:
+        # One query for the whole set, grouped in Python by product code and kept
+        # in assignment order, so listing a catalog is a single round trip. Every
+        # requested code is present; one with no membership maps to an empty tuple.
+        grouped: dict[str, list[CategorySlug]] = {code: [] for code in product_codes}
+        if not grouped:
+            return {}
+        links = (
+            ProductCategoryModel.objects.select_related("category", "product")
+            .filter(product__code__in=list(grouped))
+            .order_by("position")
+        )
+        for link in links:
+            grouped[link.product.code].append(CategorySlug(link.category.slug))
+        return {code: tuple(slugs) for code, slugs in grouped.items()}
+
 
 class DjangoCollectionProductRepository(CollectionProductRepository):
     """Persist a collection's product membership with the Django ORM."""

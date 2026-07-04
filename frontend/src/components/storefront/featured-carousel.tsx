@@ -19,8 +19,18 @@ const END_EPSILON = 4;
  * swipe and responsive per-view counts for free; a timer advances one viewport at
  * a time and loops back at the end, and it pauses while the pointer/focus is
  * inside so it never yanks the page out from under a reader.
+ *
+ * `autoAdvance` is on by default (the landing's top strip); the home page's
+ * per-category rows pass it off, since several tracks rotating at once would be
+ * distracting rather than helpful. Manual prev/next always work either way.
  */
-export function FeaturedCarousel({ products }: { products: StorefrontProduct[] }) {
+export function FeaturedCarousel({
+  products,
+  autoAdvance = true,
+}: {
+  products: StorefrontProduct[];
+  autoAdvance?: boolean;
+}) {
   const t = useTranslations("home");
   const trackRef = useRef<HTMLDivElement>(null);
   const pausedRef = useRef(false);
@@ -40,7 +50,7 @@ export function FeaturedCarousel({ products }: { products: StorefrontProduct[] }
   };
 
   useEffect(() => {
-    if (products.length <= 1) {
+    if (!autoAdvance || products.length <= 1) {
       return;
     }
     const id = window.setInterval(() => {
@@ -49,7 +59,7 @@ export function FeaturedCarousel({ products }: { products: StorefrontProduct[] }
       }
     }, AUTO_ADVANCE_MS);
     return () => window.clearInterval(id);
-  }, [products.length]);
+  }, [autoAdvance, products.length]);
 
   return (
     <div

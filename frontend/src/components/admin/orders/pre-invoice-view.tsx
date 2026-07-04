@@ -5,6 +5,7 @@ import { useTranslations } from "next-intl";
 
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { Loading } from "@/components/ui/spinner";
 import {
   Table,
   TableBody,
@@ -36,7 +37,7 @@ export function PreInvoiceView({ number }: PreInvoiceViewProps) {
   });
 
   if (query.isPending) {
-    return <p>{tCommon("loading")}</p>;
+    return <Loading label={tCommon("loading")} />;
   }
   if (query.isError) {
     return <Alert variant="destructive">{t("loadError")}</Alert>;

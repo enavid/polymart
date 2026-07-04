@@ -99,6 +99,9 @@ export interface Product {
   values: AttributeValue[];
   metadata: Record<string, string>;
   is_published: boolean;
+  // Category slugs the product belongs to, in assignment order. Present on the
+  // management list projection; defaults to empty elsewhere.
+  categories?: string[];
 }
 
 export interface CreateProductInput {

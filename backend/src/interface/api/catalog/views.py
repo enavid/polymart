@@ -34,6 +34,7 @@ from src.application.catalog.use_cases import (
     CreateVariantCommand,
     MediaInput,
     ProductImportResult,
+    ProductWithCategories,
     RuleConditionInput,
     SearchCatalogProductsQuery,
     SetCollectionProductsCommand,
@@ -106,7 +107,7 @@ from src.interface.api.catalog.container import (
     build_list_collections,
     build_list_product_types,
     build_list_product_variants,
-    build_list_products,
+    build_list_products_with_categories,
     build_search_catalog_products,
     build_set_collection_products,
     build_set_collection_rule,
@@ -323,6 +324,14 @@ def _product_payload(product: Product) -> dict[str, object]:
     }
 
 
+def _product_list_payload(row: ProductWithCategories) -> dict[str, object]:
+    """Project a product plus its category membership for the management list."""
+    return {
+        **_product_payload(row.product),
+        "categories": [category.value for category in row.categories],
+    }
+
+
 class ProductListCreateView(APIView):
     """List products or create a new one."""
 
@@ -330,8 +339,8 @@ class ProductListCreateView(APIView):
 
     @extend_schema(responses=ProductSerializer(many=True))
     def get(self, request: Request) -> Response:
-        products = build_list_products().execute()
-        return Response([_product_payload(product) for product in products])
+        rows = build_list_products_with_categories().execute()
+        return Response([_product_list_payload(row) for row in rows])
 
     @extend_schema(
         request=CreateProductSerializer,

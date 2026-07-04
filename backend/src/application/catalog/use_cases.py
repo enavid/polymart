@@ -489,6 +489,38 @@ class ListProducts:
 
 
 @dataclass(frozen=True)
+class ProductWithCategories:
+    """A product paired with the category slugs it belongs to (assignment order)."""
+
+    product: Product
+    categories: tuple[CategorySlug, ...]
+
+
+class ListProductsWithCategories:
+    """List every product with its category membership, for the management catalog
+    view where staff group and filter products by category. Memberships are read
+    in one batched query to avoid an N+1 over the catalog."""
+
+    def __init__(
+        self, products: ProductRepository, categories: ProductCategoryRepository
+    ) -> None:
+        self._products = products
+        self._categories = categories
+
+    def execute(self) -> list[ProductWithCategories]:
+        products = self._products.list_all()
+        memberships = self._categories.list_for_products([p.code.value for p in products])
+        logger.debug("products_with_categories_listed", count=len(products))
+        return [
+            ProductWithCategories(
+                product=product,
+                categories=memberships.get(product.code.value, ()),
+            )
+            for product in products
+        ]
+
+
+@dataclass(frozen=True)
 class MediaInput:
     """Raw media input for a variant. Validated into a ``MediaAsset`` by the domain."""
 

@@ -13,6 +13,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { FormField } from "@/components/ui/form-field";
+import { Loading } from "@/components/ui/spinner";
 import {
   Table,
   TableBody,
@@ -153,7 +154,7 @@ export function ProductTypesManager() {
 
       <CreateProductTypeForm onCreated={refreshList} />
 
-      {query.isLoading ? <p>{tCommon("loading")}</p> : null}
+      {query.isLoading ? <Loading label={tCommon("loading")} /> : null}
 
       {query.isError ? (
         <Alert variant="destructive">

@@ -207,6 +207,17 @@ class ProductCategoryRepository(ABC):
     def list_for_product(self, product_code: str) -> tuple[CategorySlug, ...]:
         """Return a product's categories in assignment order (empty if none)."""
 
+    def list_for_products(
+        self, product_codes: Sequence[str]
+    ) -> dict[str, tuple[CategorySlug, ...]]:
+        """Return category membership for many products at once (code -> slugs).
+
+        The default fans out to ``list_for_product``; adapters SHOULD override it
+        with a single query to avoid an N+1 when listing a whole catalog. Codes
+        with no membership map to an empty tuple.
+        """
+        return {code: self.list_for_product(code) for code in product_codes}
+
 
 class CollectionRepository(ABC):
     """Persistence boundary for the Collection aggregate.

@@ -206,6 +206,30 @@ class TestListAndRetrieve:
 
         assert response.status_code == 200
         assert [p["code"] for p in response.data] == ["house-blend", "tea-blend"]
+        # Every list row carries its category membership (empty until assigned).
+        assert all(p["categories"] == [] for p in response.data)
+
+    def test_list_includes_category_membership(self, auth_client: APIClient) -> None:
+        _create_coffee_type(auth_client)
+        auth_client.post(
+            "/api/v1/catalog/products/", _product_body(code="house-blend"), format="json"
+        )
+        for slug in ("hot-drinks", "beans"):
+            auth_client.post(
+                "/api/v1/catalog/categories/", {"slug": slug, "name": slug.title()}, format="json"
+            )
+        auth_client.put(
+            "/api/v1/catalog/products/house-blend/categories/",
+            {"categories": ["hot-drinks", "beans"]},
+            format="json",
+        )
+
+        response = auth_client.get("/api/v1/catalog/products/")
+
+        assert response.status_code == 200
+        row = next(p for p in response.data if p["code"] == "house-blend")
+        # Membership is projected in assignment order, ready for grouping/filtering.
+        assert row["categories"] == ["hot-drinks", "beans"]
 
     def test_retrieves_a_single_product(self, auth_client: APIClient) -> None:
         _create_coffee_type(auth_client)

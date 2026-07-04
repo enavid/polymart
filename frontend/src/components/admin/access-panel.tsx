@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/card";
 import { FormField } from "@/components/ui/form-field";
 import { Label } from "@/components/ui/label";
+import { Loading } from "@/components/ui/spinner";
 import {
   assignRole,
   createUser,
@@ -323,7 +324,7 @@ export function AccessPanel() {
         <p className="mt-1 text-sm text-muted-foreground">{t("userManagementNote")}</p>
       </div>
 
-      {usersQuery.isLoading ? <p>{tCommon("loading")}</p> : null}
+      {usersQuery.isLoading ? <Loading label={tCommon("loading")} /> : null}
       {usersQuery.isError ? (
         <Alert variant="destructive">{t("usersLoadError")}</Alert>
       ) : null}

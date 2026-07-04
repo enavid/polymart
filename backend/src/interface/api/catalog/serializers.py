@@ -82,6 +82,9 @@ class ProductSerializer(serializers.Serializer):
     values = AttributeValueSerializer(many=True)
     metadata = serializers.DictField(child=serializers.CharField())
     is_published = serializers.BooleanField()
+    # Present on the management list projection; absent (defaults to empty) on the
+    # single-product responses that do not carry membership.
+    categories = serializers.ListField(child=serializers.CharField(), required=False, default=list)
 
 
 class SetProductPublishedSerializer(serializers.Serializer):
