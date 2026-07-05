@@ -15,6 +15,7 @@ from src.interface.api.payment.views import (
     PaymentCollectionView,
     PaymentDetailView,
     PaymentForOrderView,
+    PaymentRefundView,
 )
 
 urlpatterns = [
@@ -28,5 +29,12 @@ urlpatterns = [
     ),
     path("payments/callback/", PaymentCallbackView.as_view(), name="payment-callback"),
     path("payments/mock-gateway/", MockGatewayView.as_view(), name="payment-mock-gateway"),
+    # The refund sub-path (an extra segment) is declared before the ``<reference>`` detail
+    # route for clarity, though the extra segment already keeps them distinct.
+    path(
+        "payments/<str:reference>/refund/",
+        PaymentRefundView.as_view(),
+        name="payment-refund",
+    ),
     path("payments/<str:reference>/", PaymentDetailView.as_view(), name="payment-detail"),
 ]

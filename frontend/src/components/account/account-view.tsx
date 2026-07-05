@@ -127,6 +127,11 @@ export function AccountView() {
             title={t("hubAddresses")}
             description={t("hubAddressesDesc")}
           />
+          <HubTile
+            href="/account/wallet"
+            title={t("hubWallet")}
+            description={t("hubWalletDesc")}
+          />
           {user.is_staff ? (
             <HubTile
               href="/manage"

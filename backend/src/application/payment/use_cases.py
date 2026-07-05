@@ -31,6 +31,7 @@ from src.application.payment.ports import (
     PaymentRepository,
     PaymentVerification,
     UnitOfWork,
+    WalletCredit,
 )
 from src.application.shared.owner import safe_owner
 from src.domain.audit.entities import FieldChange
@@ -41,7 +42,9 @@ from src.domain.payment.exceptions import (
     OrderNotPayableError,
     PaymentAlreadyExistsError,
     PaymentNotFoundError,
+    PaymentNotRefundableError,
     PaymentOrderNotFoundError,
+    WalletOwnerRequiredError,
 )
 from src.domain.payment.value_objects import (
     Money,
@@ -62,6 +65,12 @@ _RESOURCE_PAYMENT = "payment"
 _ACTION_PAYMENT_INITIATED = "payment.initiated"
 _ACTION_PAYMENT_CAPTURED = "payment.captured"
 _ACTION_PAYMENT_FAILED = "payment.failed"
+_ACTION_PAYMENT_REFUNDED = "payment.refunded"
+
+# The reason recorded on the wallet credit a refund produces, and the owner prefix a wallet
+# requires (a wallet always belongs to a registered user, never a guest).
+_REFUND_REASON = "refund"
+_USER_OWNER_PREFIX = "u:"
 
 # The statuses from which a callback can still settle a payment; anything else is already
 # resolved and the callback is a no-op (idempotency).
@@ -368,3 +377,103 @@ class CapturePayment:
             reason=reason,
         )
         return failed
+
+
+@dataclass(frozen=True)
+class RefundPaymentCommand:
+    """Input for refunding a captured payment to the shopper's wallet (a staff action).
+
+    ``reference`` is the payment's public handle (from the staff URL); ``actor`` is the
+    resolved staff id performing the refund (``u:<pk>``), recorded on the audit trail. There
+    is no amount here -- a refund always returns the full captured amount, taken from the
+    payment itself, never a client-supplied figure.
+    """
+
+    reference: str
+    actor: str
+
+
+class RefundPayment:
+    """Refund a captured payment to the shopper's wallet, idempotently and atomically.
+
+    Locks the payment by its reference (so two concurrent refunds serialize), and: an
+    already-refunded payment is returned unchanged (idempotency -- a repeat never
+    double-credits the wallet); a payment that is not captured is refused; a guest payment
+    has no wallet to receive the credit and is refused. Otherwise the payment moves to
+    ``refunded``, the shopper's wallet is credited with the full amount, and the refund is
+    audited -- all in one transaction, so any failure leaves the payment and wallet untouched.
+    """
+
+    def __init__(
+        self,
+        *,
+        unit_of_work: UnitOfWork,
+        payments: PaymentRepository,
+        wallet_credit: WalletCredit,
+        audit: AuditRecorder,
+    ) -> None:
+        self._uow = unit_of_work
+        self._payments = payments
+        self._wallet_credit = wallet_credit
+        self._audit = audit
+
+    def execute(self, command: RefundPaymentCommand) -> Payment:
+        # Validate the reference shape up front; a malformed one can never match a payment
+        # (surfaced as "not found" at the transport, never a distinct error).
+        canonical = PaymentReference(command.reference).value
+        with self._uow.atomic():
+            payment = self._payments.get_by_reference_for_update(canonical)
+            if payment is None:
+                raise PaymentNotFoundError(canonical)
+
+            # Idempotency: an already-refunded payment is returned as-is; a repeat must never
+            # credit the wallet twice (the wallet's own source-reference guard backs this up).
+            if payment.status == PaymentStatus.REFUNDED:
+                logger.info(
+                    "payment_refund_ignored",
+                    owner=safe_owner(payment.owner),
+                    payment_reference=payment.reference.value,
+                    status=payment.status.value,
+                )
+                return payment
+
+            if payment.status != PaymentStatus.CAPTURED:
+                raise PaymentNotRefundableError(payment.reference.value, payment.status.value)
+            if not payment.owner.startswith(_USER_OWNER_PREFIX):
+                raise WalletOwnerRequiredError(payment.reference.value)
+
+            refunded = self._payments.update_status(payment.refund())
+            self._wallet_credit.credit(
+                owner=payment.owner,
+                amount=payment.amount.amount,
+                currency=payment.amount.currency,
+                source_reference=payment.reference.value,
+                reason=_REFUND_REASON,
+                actor=command.actor,
+            )
+            self._audit.record(
+                action=_ACTION_PAYMENT_REFUNDED,
+                resource_type=_RESOURCE_PAYMENT,
+                resource_id=payment.reference.value,
+                actor=command.actor,
+                changes=(
+                    FieldChange(
+                        field="status",
+                        before=PaymentStatus.CAPTURED.value,
+                        after=PaymentStatus.REFUNDED.value,
+                    ),
+                    FieldChange(field="amount", after=str(payment.amount.amount)),
+                    FieldChange(field="order", after=payment.order_ref.value),
+                    FieldChange(field="refunded_to", after="wallet"),
+                ),
+            )
+
+        logger.info(
+            "payment_refunded",
+            owner=safe_owner(payment.owner),
+            payment_reference=payment.reference.value,
+            order_number=payment.order_ref.value,
+            currency=payment.amount.currency,
+            actor=command.actor,
+        )
+        return refunded

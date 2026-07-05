@@ -101,6 +101,34 @@ class PaymentNotFoundError(PaymentError):
         self.identifier = identifier
 
 
+class PaymentNotRefundableError(PaymentError):
+    """Raised when a refund is requested for a payment that is not captured.
+
+    Only a captured payment holds funds that can be returned; a pending/failed/cancelled/
+    voided one has nothing to refund. The transport maps this to 409 (a conflict with the
+    payment's current state). An already-refunded payment is *not* an error -- the refund
+    use case treats a repeat as an idempotent no-op.
+    """
+
+    def __init__(self, reference: str, status: str) -> None:
+        super().__init__(f"payment {reference} is not refundable in status {status!r}")
+        self.reference = reference
+        self.status = status
+
+
+class WalletOwnerRequiredError(PaymentError):
+    """Raised when a refund-to-wallet targets a payment with no wallet-capable owner.
+
+    A wallet always belongs to a registered user; a guest payment (owner ``g:<token>``) has
+    no account to hold store credit, so it cannot be refunded to a wallet (a guest refund
+    would return to the gateway -- a later slice). The transport maps this to 409.
+    """
+
+    def __init__(self, reference: str) -> None:
+        super().__init__(f"payment {reference} has no wallet-capable owner to refund to")
+        self.reference = reference
+
+
 class GatewayCannotCaptureError(PaymentError):
     """Raised when a payment awaiting capture is bound to a non-verifiable gateway.
 

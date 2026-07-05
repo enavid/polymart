@@ -99,3 +99,8 @@ class Payment:
     def fail(self) -> Payment:
         """Return a failed copy of the payment (declined/cancelled/gateway error)."""
         return self.transition_to(PaymentStatus.FAILED)
+
+    def refund(self) -> Payment:
+        """Return a refunded copy of the payment. Legal only from a captured state per the
+        state machine (funds must have been collected before they can be returned)."""
+        return self.transition_to(PaymentStatus.REFUNDED)

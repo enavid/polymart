@@ -192,4 +192,99 @@ describe("OrderDetail", () => {
 
     expect(await screen.findByText("cannot cancel")).toBeInTheDocument();
   });
+
+  /** Sign in as a staff member (the refund control is staff-only). */
+  function staffAuthed(payment: Record<string, unknown>) {
+    markSignedIn();
+    server.use(
+      http.get("*/auth/me/", () =>
+        HttpResponse.json({
+          id: 1,
+          phone_number: "+989120000009",
+          email: "",
+          full_name: "Staff",
+          is_staff: true,
+        }),
+      ),
+      http.get(`*/orders/${NUMBER}/`, () => HttpResponse.json(order({ status: "paid" }))),
+      http.get(`*/payments/for-order/${NUMBER}/`, () => HttpResponse.json(payment)),
+    );
+  }
+
+  it("lets staff refund a captured payment to the wallet", async () => {
+    let refunded = false;
+    staffAuthed(codPayment({ method: "online", status: "captured" }));
+    server.use(
+      // The payment re-reads as refunded once the refund POST has landed.
+      http.get(`*/payments/for-order/${NUMBER}/`, () =>
+        HttpResponse.json(
+          codPayment({ method: "online", status: refunded ? "refunded" : "captured" }),
+        ),
+      ),
+      http.post("*/payments/PAY-ABC123XYZ00/refund/", () => {
+        refunded = true;
+        return HttpResponse.json(codPayment({ method: "online", status: "refunded" }));
+      }),
+    );
+
+    renderWithProviders(<OrderDetail number={NUMBER} />);
+
+    const button = await screen.findByRole("button", {
+      name: messages.payment.refundToWallet,
+    });
+    await userEvent.click(button);
+
+    // After the refund lands, the payment shows refunded and the control disappears.
+    expect(await screen.findByText(messages.payment.statusRefunded)).toBeInTheDocument();
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("button", { name: messages.payment.refundToWallet }),
+      ).not.toBeInTheDocument(),
+    );
+  });
+
+  it("does not show the refund control to a non-staff shopper", async () => {
+    authed();
+    server.use(
+      http.get(`*/orders/${NUMBER}/`, () => HttpResponse.json(order({ status: "paid" }))),
+      http.get(`*/payments/for-order/${NUMBER}/`, () =>
+        HttpResponse.json(codPayment({ method: "online", status: "captured" })),
+      ),
+    );
+
+    renderWithProviders(<OrderDetail number={NUMBER} />);
+
+    await screen.findByText(messages.payment.statusCaptured);
+    expect(
+      screen.queryByRole("button", { name: messages.payment.refundToWallet }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("does not show the refund control for a non-captured payment", async () => {
+    staffAuthed(codPayment({ method: "cod", status: "pending" }));
+
+    renderWithProviders(<OrderDetail number={NUMBER} />);
+
+    await screen.findByText(messages.payment.statusPending);
+    expect(
+      screen.queryByRole("button", { name: messages.payment.refundToWallet }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("surfaces a refund conflict (409) without losing the control", async () => {
+    staffAuthed(codPayment({ method: "online", status: "captured" }));
+    server.use(
+      http.post("*/payments/PAY-ABC123XYZ00/refund/", () =>
+        HttpResponse.json({ detail: "not refundable" }, { status: 409 }),
+      ),
+    );
+
+    renderWithProviders(<OrderDetail number={NUMBER} />);
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: messages.payment.refundToWallet }),
+    );
+
+    expect(await screen.findByText("not refundable")).toBeInTheDocument();
+  });
 });

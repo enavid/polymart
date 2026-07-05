@@ -26,7 +26,11 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from src.application.payment.use_cases import InitiatePaymentCommand, PaymentResult
+from src.application.payment.use_cases import (
+    InitiatePaymentCommand,
+    PaymentResult,
+    RefundPaymentCommand,
+)
 from src.domain.payment.entities import Payment
 from src.domain.payment.exceptions import (
     InvalidPaymentMethodError,
@@ -34,17 +38,21 @@ from src.domain.payment.exceptions import (
     PaymentAlreadyExistsError,
     PaymentError,
     PaymentNotFoundError,
+    PaymentNotRefundableError,
     PaymentOrderNotFoundError,
     UnsupportedPaymentMethodError,
+    WalletOwnerRequiredError,
 )
 from src.infrastructure.payment.tasks import capture_online_payment
+from src.interface.api.access.permissions import OrderManagePermission
 from src.interface.api.common import ErrorSerializer
-from src.interface.api.guest import resolve_owner
+from src.interface.api.guest import resolve_owner, user_owner
 from src.interface.api.payment.container import (
     build_get_my_payment,
     build_get_payment_by_gateway_reference,
     build_get_payment_for_order,
     build_initiate_payment,
+    build_refund_payment,
 )
 from src.interface.api.payment.serializers import (
     InitiatePaymentSerializer,
@@ -169,6 +177,45 @@ class PaymentDetailView(APIView):
             # A malformed reference can never match -- surface as 404, not a 400, so the
             # shape of a valid reference is not probed.
             logger.debug("payment_lookup_rejected")
+            return Response({"detail": "payment not found"}, status=status.HTTP_404_NOT_FOUND)
+        return Response(_payment_payload(payment))
+
+
+class PaymentRefundView(APIView):
+    """Refund a captured payment to the shopper's wallet -- staff only.
+
+    A privileged, platform-global staff action (gated by ``manage_orders``): it addresses a
+    payment by its public reference (not owner-scoped -- staff act on any shopper's payment)
+    and returns the full captured amount as internal store credit. Idempotent: refunding an
+    already-refunded payment returns it unchanged without crediting again.
+    """
+
+    permission_classes: ClassVar = [OrderManagePermission]
+
+    @extend_schema(
+        operation_id="payments_refund",
+        request=None,
+        responses={
+            200: PaymentSerializer,
+            403: ErrorSerializer,
+            404: ErrorSerializer,
+            409: ErrorSerializer,
+        },
+    )
+    def post(self, request: Request, reference: str) -> Response:
+        command = RefundPaymentCommand(reference=reference, actor=user_owner(request.user.pk))
+        try:
+            payment = build_refund_payment().execute(command)
+        except PaymentNotFoundError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_404_NOT_FOUND)
+        except (PaymentNotRefundableError, WalletOwnerRequiredError) as exc:
+            # A conflict with the payment's current state (not captured) or an owner that
+            # cannot hold a wallet (a guest) -- well-formed but not honourable.
+            return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
+        except PaymentError:
+            # A malformed reference can never match -- surface as 404, not a 400, so the
+            # shape of a valid reference is not probed.
+            logger.debug("payment_refund_rejected")
             return Response({"detail": "payment not found"}, status=status.HTTP_404_NOT_FOUND)
         return Response(_payment_payload(payment))
 

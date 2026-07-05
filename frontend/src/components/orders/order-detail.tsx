@@ -18,7 +18,9 @@ import {
 import { ApiError } from "@/lib/api/client";
 import { cancelOrder, getMyOrder, type Order } from "@/lib/api/orders";
 import { getPaymentForOrder, type Payment } from "@/lib/api/payments";
+import { refundPaymentToWallet } from "@/lib/api/wallet";
 import { formatJalaliDateTime, formatMoneyString } from "@/lib/format";
+import { useCurrentUser } from "@/lib/hooks/use-auth";
 import { orderStatusKey } from "@/lib/orders/status";
 import { paymentMethodKey, paymentStatusKey } from "@/lib/payments/labels";
 
@@ -33,6 +35,7 @@ const TIMELINE: ReadonlyArray<"pending" | "paid" | "fulfilled"> = [
 const ORDER_KEY = (number: string) => ["order", number] as const;
 const ORDERS_LIST_KEY = ["orders"] as const;
 const PAYMENT_KEY = (number: string) => ["payment", "order", number] as const;
+const WALLET_KEY = ["wallet"] as const;
 
 /** One of the shopper's own orders: captured lines, status timeline, and cancel.
  *
@@ -247,8 +250,54 @@ function PaymentSection({ number }: { number: string }) {
         {payment.method === "cod" ? (
           <p className="text-muted-foreground">{t("codHint")}</p>
         ) : null}
+        <StaffRefundControl payment={payment} number={number} />
       </div>
     </section>
+  );
+}
+
+/**
+ * A staff-only "refund to wallet" control, shown for a captured payment.
+ *
+ * Refunding returns the captured amount as store credit to the shopper's wallet and moves
+ * the payment to `refunded`. Only rendered for staff and only while the payment is captured,
+ * so a shopper never sees it and it disappears once the refund lands. Guards against a double
+ * submit while the request is in flight.
+ */
+function StaffRefundControl({ payment, number }: { payment: Payment; number: string }) {
+  const t = useTranslations("payment");
+  const queryClient = useQueryClient();
+  const { data: user } = useCurrentUser();
+
+  const refund = useMutation({
+    mutationFn: () => refundPaymentToWallet(payment.reference),
+    onSuccess: () => {
+      // Re-read the payment (now refunded) and the shopper's wallet (now credited).
+      void queryClient.invalidateQueries({ queryKey: PAYMENT_KEY(number) });
+      void queryClient.invalidateQueries({ queryKey: WALLET_KEY });
+    },
+  });
+
+  if (!user?.is_staff || payment.status !== "captured") {
+    return null;
+  }
+
+  return (
+    <div className="mt-2 flex flex-col gap-2 border-t border-border pt-2">
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={() => refund.mutate()}
+        disabled={refund.isPending}
+      >
+        {refund.isPending ? t("refunding") : t("refundToWallet")}
+      </Button>
+      {refund.isError ? (
+        <Alert variant="destructive">
+          {refund.error instanceof ApiError ? refund.error.detail : t("refundError")}
+        </Alert>
+      ) : null}
+    </div>
   );
 }
 

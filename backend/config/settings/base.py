@@ -42,6 +42,7 @@ INSTALLED_APPS = [
     "src.infrastructure.order.apps.OrderConfig",
     "src.infrastructure.address.apps.AddressConfig",
     "src.infrastructure.payment.apps.PaymentConfig",
+    "src.infrastructure.wallet.apps.WalletConfig",
     # Developer/E2E tooling (the seed_e2e management command). It carries no
     # models; its one command refuses to run unless DEBUG, so it is inert in
     # production even though it is installed everywhere.
@@ -124,6 +125,11 @@ PAYMENT_RESULT_URL = env("PAYMENT_RESULT_URL", default="/orders")
 # Zarinpal (the real online gateway, production).
 ZARINPAL_MERCHANT_ID = env("ZARINPAL_MERCHANT_ID", default="")
 ZARINPAL_SANDBOX = env.bool("ZARINPAL_SANDBOX", default=True)
+
+# --- Wallet -----------------------------------------------------------------
+# The currency an empty (never-credited) wallet reports. Iran-first, so Rial by default; a
+# wallet's real currency is fixed by its first credit (the refunded payment's currency).
+WALLET_DEFAULT_CURRENCY = env("WALLET_DEFAULT_CURRENCY", default="IRR")
 
 # --- Auth -------------------------------------------------------------------
 AUTHENTICATION_BACKENDS = [

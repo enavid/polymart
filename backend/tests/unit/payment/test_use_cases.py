@@ -135,6 +135,12 @@ class FakePayments(PaymentRepository):
                 return payment
         return None
 
+    def get_by_reference_for_update(self, reference: str) -> Payment | None:
+        for payment in self.saved:
+            if payment.reference.value == reference:
+                return payment
+        return None
+
     def update_status(self, payment: Payment) -> Payment:
         for i, stored in enumerate(self.saved):
             if stored.reference.value == payment.reference.value:

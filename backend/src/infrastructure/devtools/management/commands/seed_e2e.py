@@ -75,6 +75,7 @@ from src.infrastructure.channel.models import ChannelModel
 from src.infrastructure.channel.repositories import DjangoChannelRepository
 from src.infrastructure.identity.models import User
 from src.infrastructure.order.models import OrderModel
+from src.infrastructure.wallet.models import WalletModel
 from src.interface.api.access.container import build_assign_role
 
 logger = structlog.get_logger(__name__)
@@ -216,6 +217,9 @@ class Command(BaseCommand):
         CartModel.objects.filter(owner_id=shopper.pk).delete()
         OrderModel.objects.filter(owner_id=shopper.pk).delete()
         AddressModel.objects.filter(owner_id=shopper.pk).delete()
+        # The wallet accumulates store credit across runs (a refund-to-wallet test credits
+        # it), so reset it too; the cascade removes its ledger. Both users, to be safe.
+        WalletModel.objects.filter(owner_id__in=(shopper.pk, staff.pk)).delete()
         self._seed_shopper_address(shopper.pk)
 
     @staticmethod

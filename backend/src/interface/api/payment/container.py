@@ -22,6 +22,7 @@ from src.application.payment.use_cases import (
     GetPaymentByGatewayReference,
     GetPaymentForOrder,
     InitiatePayment,
+    RefundPayment,
 )
 from src.infrastructure.payment.clock import SystemClock
 from src.infrastructure.payment.gateways import (
@@ -37,7 +38,9 @@ from src.infrastructure.payment.repositories import (
     DjangoPaymentRepository,
     DjangoUnitOfWork,
 )
+from src.infrastructure.payment.wallet_credit import WalletCreditAdapter
 from src.interface.api.audit.container import build_audit_recorder
+from src.interface.api.wallet.container import build_credit_wallet
 
 # Zarinpal endpoints, keyed by whether the sandbox is in use (production config).
 _ZARINPAL_HOSTS = {
@@ -84,6 +87,15 @@ def build_capture_payment() -> CapturePayment:
         payments=DjangoPaymentRepository(),
         gateways=build_gateway_registry(),
         paid_orders=DjangoPaidOrders(),
+        audit=build_audit_recorder(),
+    )
+
+
+def build_refund_payment() -> RefundPayment:
+    return RefundPayment(
+        unit_of_work=DjangoUnitOfWork(),
+        payments=DjangoPaymentRepository(),
+        wallet_credit=WalletCreditAdapter(build_credit_wallet()),
         audit=build_audit_recorder(),
     )
 

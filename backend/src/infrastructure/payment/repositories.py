@@ -121,6 +121,17 @@ class DjangoPaymentRepository(PaymentRepository):
             return None
         return payment_to_domain(model)
 
+    def get_by_reference_for_update(self, reference: str) -> Payment | None:
+        # Not owner-scoped: refund is a staff action addressed by the payment's public
+        # reference (gated by the manage-orders permission at the transport). The row lock
+        # serializes concurrent refunds so only one transitions captured -> refunded.
+        model = (
+            PaymentModel.objects.select_for_update().filter(reference=reference).first()
+        )
+        if model is None:
+            return None
+        return payment_to_domain(model)
+
     def update_status(self, payment: Payment) -> Payment:
         PaymentModel.objects.filter(reference=payment.reference.value).update(
             status=payment.status.value

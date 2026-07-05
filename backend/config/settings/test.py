@@ -2,8 +2,17 @@
 
 from __future__ import annotations
 
+import structlog
+
 from config.settings.base import *  # noqa: F403
 from config.settings.base import env
+
+# The production config caches each structlog logger on first use (a perf optimization).
+# That cache freezes a module-level logger's processor chain, which defeats
+# ``structlog.testing.capture_logs`` (it can no longer redirect an already-bound logger),
+# making the ``test_logs_*`` assertions order-dependent. Caching buys nothing in tests, so
+# disable it here to keep log capture deterministic. Test-only; production is unchanged.
+structlog.configure(cache_logger_on_first_use=False)
 
 DEBUG = False
 PASSWORD_HASHERS = ["django.contrib.auth.hashers.MD5PasswordHasher"]

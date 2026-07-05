@@ -222,6 +222,16 @@ class PaymentRepository(ABC):
         """
 
     @abstractmethod
+    def get_by_reference_for_update(self, reference: str) -> Payment | None:
+        """Return the payment with this public reference under a row lock, or ``None``.
+
+        Used by refund, a *staff* action addressed by the payment's public reference (not
+        owner-scoped -- staff act on any shopper's payment, gated by the manage-orders
+        permission at the transport). The row lock serializes concurrent refunds so only one
+        transitions captured -> refunded; the second observes the refunded status and no-ops.
+        """
+
+    @abstractmethod
     def update_status(self, payment: Payment) -> Payment:
         """Persist a status change for an already-stored payment and return it."""
 
@@ -237,6 +247,30 @@ class PaidOrders(ABC):
     @abstractmethod
     def mark_paid(self, order_number: str) -> None:
         """Transition the order to ``paid``. A no-op if it is already paid (idempotent)."""
+
+
+class WalletCredit(ABC):
+    """Narrow boundary onto the wallet context: credit a shopper's store-credit balance.
+
+    The payment context does not own wallets; a refund only signals that value should be
+    returned as internal credit. The adapter delegates to the wallet's own credit use case,
+    running inside the refund's transaction (so the payment's refund and the wallet credit
+    commit together) and idempotently by ``source_reference`` (a defensive second guard on
+    top of the refund's own captured -> refunded idempotency).
+    """
+
+    @abstractmethod
+    def credit(
+        self,
+        *,
+        owner: str,
+        amount: Decimal,
+        currency: str,
+        source_reference: str,
+        reason: str,
+        actor: str,
+    ) -> None:
+        """Credit ``amount`` (``Decimal``, never a float) to the owner's wallet."""
 
 
 class PaymentReferenceGenerator(ABC):

@@ -123,7 +123,9 @@
     "hubAddresses": "آدرس‌ها",
     "hubAddressesDesc": "مدیریت آدرس‌های ارسال.",
     "hubAdmin": "پنل مدیریت",
-    "hubAdminDesc": "ابزارهای مدیریت فروشگاه."
+    "hubAdminDesc": "ابزارهای مدیریت فروشگاه.",
+    "hubWallet": "کیف پول",
+    "hubWalletDesc": "موجودی و تراکنش‌های اعتبار فروشگاهی شما"
   },
   "admin": {
     "title": "پنل مدیریت",
@@ -504,7 +506,25 @@
     "statusFailed": "ناموفق",
     "statusCancelled": "لغوشده",
     "statusVoided": "باطل‌شده",
-    "statusRefunded": "بازپرداخت‌شده"
+    "statusRefunded": "بازپرداخت‌شده",
+    "refundToWallet": "بازپرداخت به کیف پول",
+    "refunding": "در حال بازپرداخت…",
+    "refundError": "بازپرداخت ناموفق بود."
+  },
+  "wallet": {
+    "title": "کیف پول",
+    "backToAccount": "بازگشت به حساب کاربری",
+    "balanceTitle": "موجودی",
+    "balanceHint": "اعتبار فروشگاهی قابل استفاده در خریدهای بعدی",
+    "statementTitle": "تراکنش‌ها",
+    "empty": "هنوز تراکنشی ندارید.",
+    "date": "تاریخ",
+    "reason": "بابت",
+    "amount": "مبلغ",
+    "balanceAfter": "موجودی پس از تراکنش",
+    "loadError": "بارگذاری کیف پول ناموفق بود.",
+    "reasonRefund": "بازپرداخت",
+    "reasonAdjustment": "تعدیل"
   },
   "manualOrder": {
     "title": "ثبت سفارش دستی (پیش‌فاکتور)",
