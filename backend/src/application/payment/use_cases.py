@@ -22,20 +22,25 @@ from src.application.audit.ports import AuditRecorder
 from src.application.payment.ports import (
     Clock,
     NextActionType,
+    OnlinePaymentGateway,
     OrderReader,
+    PaidOrders,
     PaymentGatewayRegistry,
     PaymentIntent,
     PaymentReferenceGenerator,
     PaymentRepository,
+    PaymentVerification,
     UnitOfWork,
 )
 from src.application.shared.owner import safe_owner
 from src.domain.audit.entities import FieldChange
 from src.domain.payment.entities import Payment
 from src.domain.payment.exceptions import (
+    GatewayCannotCaptureError,
     InvalidPaymentMethodError,
     OrderNotPayableError,
     PaymentAlreadyExistsError,
+    PaymentNotFoundError,
     PaymentOrderNotFoundError,
 )
 from src.domain.payment.value_objects import (
@@ -55,6 +60,12 @@ _PAYABLE_ORDER_STATUS = "pending"
 
 _RESOURCE_PAYMENT = "payment"
 _ACTION_PAYMENT_INITIATED = "payment.initiated"
+_ACTION_PAYMENT_CAPTURED = "payment.captured"
+_ACTION_PAYMENT_FAILED = "payment.failed"
+
+# The statuses from which a callback can still settle a payment; anything else is already
+# resolved and the callback is a no-op (idempotency).
+_SETTLEABLE_STATUSES = frozenset({PaymentStatus.PENDING, PaymentStatus.AUTHORIZED})
 
 
 @dataclass(frozen=True)
@@ -141,6 +152,10 @@ class InitiatePayment:
                     method=method,
                 )
             )
+            # An online gateway hands back its own handle (an "authority"); record it so the
+            # callback can verify this exact payment. COD returns none, leaving it unset.
+            if result.gateway_reference is not None:
+                payment = payment.with_gateway_reference(result.gateway_reference)
             saved = self._payments.add(payment)
             self._audit.record(
                 action=_ACTION_PAYMENT_INITIATED,
@@ -203,3 +218,153 @@ class GetPaymentForOrder:
     def execute(self, *, owner: str, order_number: str) -> Payment:
         canonical = OrderRef(order_number).value
         return self._payments.get_for_order(owner, canonical)
+
+
+class GetPaymentByGatewayReference:
+    """Resolve a payment from a gateway callback's authority (not owner-scoped).
+
+    The callback holds only the unguessable gateway reference, no user session; this read
+    lets the callback learn which order to redirect the shopper back to. It reveals nothing
+    a holder of the authority is not already entitled to.
+    """
+
+    def __init__(self, payments: PaymentRepository) -> None:
+        self._payments = payments
+
+    def execute(self, *, gateway_reference: str) -> Payment:
+        payment = self._payments.find_by_gateway_reference(gateway_reference)
+        if payment is None:
+            raise PaymentNotFoundError(gateway_reference)
+        return payment
+
+
+@dataclass(frozen=True)
+class CapturePaymentCommand:
+    """Input for settling an online payment from its gateway callback.
+
+    ``gateway_reference`` is the provider's authority (from the redirect/webhook), the only
+    handle a callback carries -- there is no user session, so capture is *not* owner-scoped;
+    the unguessable authority plus the server-side ``verify`` are the authority. ``succeeded``
+    is the callback's own status hint (the shopper completed vs cancelled at the gateway); a
+    cancel fails the payment without a verify, while a success is always re-confirmed with the
+    gateway (the redirect is never trusted on its own).
+    """
+
+    gateway_reference: str
+    succeeded: bool
+
+
+class CapturePayment:
+    """Settle an online payment from its callback, idempotently and atomically.
+
+    Locks the payment by its gateway reference (so two concurrent callbacks serialize), and:
+    an already-settled payment is returned unchanged (idempotency -- a repeated callback never
+    double-captures or double-pays the order); a cancelled callback fails a still-open payment;
+    a successful callback re-verifies with the gateway (the source of truth) and, on capture,
+    moves the payment to ``captured``, marks the order ``paid``, and audits ``payment.captured``
+    -- all in one transaction, so a failure anywhere leaves the payment and order untouched.
+    """
+
+    def __init__(
+        self,
+        *,
+        unit_of_work: UnitOfWork,
+        payments: PaymentRepository,
+        gateways: PaymentGatewayRegistry,
+        paid_orders: PaidOrders,
+        audit: AuditRecorder,
+    ) -> None:
+        self._uow = unit_of_work
+        self._payments = payments
+        self._gateways = gateways
+        self._paid_orders = paid_orders
+        self._audit = audit
+
+    def execute(self, command: CapturePaymentCommand) -> Payment:
+        with self._uow.atomic():
+            payment = self._payments.get_by_gateway_reference_for_update(command.gateway_reference)
+            if payment is None:
+                raise PaymentNotFoundError(command.gateway_reference)
+
+            # Idempotency: a payment already settled (captured or spent) is returned as-is; a
+            # duplicate callback must never re-capture or re-pay the order.
+            if payment.status not in _SETTLEABLE_STATUSES:
+                logger.info(
+                    "payment_callback_ignored",
+                    owner=safe_owner(payment.owner),
+                    payment_reference=payment.reference.value,
+                    status=payment.status.value,
+                )
+                return payment
+
+            if not command.succeeded:
+                return self._settle_failed(payment, reason="cancelled_at_gateway")
+
+            verification = self._verify(payment)
+            if not verification.captured:
+                return self._settle_failed(payment, reason="verification_failed")
+            return self._settle_captured(
+                payment, provider_reference=verification.provider_reference
+            )
+
+    def _verify(self, payment: Payment) -> PaymentVerification:
+        gateway = self._gateways.for_method(payment.method)
+        # Capture needs a verifiable (online) gateway with a recorded authority; a payment
+        # lacking either cannot be settled via the callback path (a wiring/logic error).
+        if not isinstance(gateway, OnlinePaymentGateway) or payment.gateway_reference is None:
+            raise GatewayCannotCaptureError(payment.method.value)
+        return gateway.verify(gateway_reference=payment.gateway_reference, amount=payment.amount)
+
+    def _settle_captured(self, payment: Payment, *, provider_reference: str | None) -> Payment:
+        captured = self._payments.update_status(payment.capture())
+        # Money actually moved: mark the order paid in the same transaction.
+        self._paid_orders.mark_paid(payment.order_ref.value)
+        self._audit.record(
+            action=_ACTION_PAYMENT_CAPTURED,
+            resource_type=_RESOURCE_PAYMENT,
+            resource_id=payment.reference.value,
+            actor=safe_owner(payment.owner),
+            changes=(
+                FieldChange(
+                    field="status",
+                    before=PaymentStatus.PENDING.value,
+                    after=PaymentStatus.CAPTURED.value,
+                ),
+                FieldChange(field="amount", after=str(payment.amount.amount)),
+                FieldChange(field="order", after=payment.order_ref.value),
+                FieldChange(field="provider_reference", after=provider_reference),
+            ),
+        )
+        logger.info(
+            "payment_captured",
+            owner=safe_owner(payment.owner),
+            payment_reference=payment.reference.value,
+            order_number=payment.order_ref.value,
+            currency=payment.amount.currency,
+        )
+        return captured
+
+    def _settle_failed(self, payment: Payment, *, reason: str) -> Payment:
+        failed = self._payments.update_status(payment.fail())
+        self._audit.record(
+            action=_ACTION_PAYMENT_FAILED,
+            resource_type=_RESOURCE_PAYMENT,
+            resource_id=payment.reference.value,
+            actor=safe_owner(payment.owner),
+            changes=(
+                FieldChange(
+                    field="status",
+                    before=payment.status.value,
+                    after=PaymentStatus.FAILED.value,
+                ),
+                FieldChange(field="reason", after=reason),
+            ),
+        )
+        logger.info(
+            "payment_failed",
+            owner=safe_owner(payment.owner),
+            payment_reference=payment.reference.value,
+            order_number=payment.order_ref.value,
+            reason=reason,
+        )
+        return failed

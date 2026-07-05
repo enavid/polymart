@@ -16,13 +16,16 @@ from django.db import IntegrityError, transaction
 
 from src.application.payment.ports import (
     OrderReader,
+    PaidOrders,
     PayableOrder,
     PaymentRepository,
     UnitOfWork,
 )
+from src.domain.order.value_objects import OrderStatus
 from src.domain.payment.entities import Payment
 from src.domain.payment.exceptions import PaymentAlreadyExistsError, PaymentNotFoundError
 from src.domain.payment.value_objects import ACTIVE_PAYMENT_STATUSES
+from src.infrastructure.order.mappers import order_to_domain
 from src.infrastructure.order.models import OrderModel
 from src.infrastructure.payment.mappers import payment_to_domain
 from src.infrastructure.payment.models import PaymentModel
@@ -57,6 +60,7 @@ class DjangoPaymentRepository(PaymentRepository):
                 order_number=payment.order_ref.value,
                 **_owner_filter(payment.owner),
                 method=payment.method.value,
+                gateway_reference=payment.gateway_reference,
                 amount=payment.amount.amount,
                 currency_code=payment.amount.currency,
                 status=payment.status.value,
@@ -98,6 +102,32 @@ class DjangoPaymentRepository(PaymentRepository):
             return None
         return payment_to_domain(model)
 
+    def find_by_gateway_reference(self, gateway_reference: str) -> Payment | None:
+        model = PaymentModel.objects.filter(gateway_reference=gateway_reference).first()
+        if model is None:
+            return None
+        return payment_to_domain(model)
+
+    def get_by_gateway_reference_for_update(self, gateway_reference: str) -> Payment | None:
+        # Not owner-scoped: a gateway callback carries only the unguessable authority, no
+        # user session. The row lock serializes concurrent callbacks so only one captures
+        # (the second observes the already-captured status and no-ops).
+        model = (
+            PaymentModel.objects.select_for_update()
+            .filter(gateway_reference=gateway_reference)
+            .first()
+        )
+        if model is None:
+            return None
+        return payment_to_domain(model)
+
+    def update_status(self, payment: Payment) -> Payment:
+        PaymentModel.objects.filter(reference=payment.reference.value).update(
+            status=payment.status.value
+        )
+        model = PaymentModel.objects.get(reference=payment.reference.value)
+        return payment_to_domain(model)
+
 
 class DjangoOrderReader(OrderReader):
     """Read a shopper's order from the order context, for the amount and payability check.
@@ -121,6 +151,33 @@ class DjangoOrderReader(OrderReader):
             total=row["total"],
             status=row["status"],
         )
+
+
+class DjangoPaidOrders(PaidOrders):
+    """Mark an order paid when its payment captures, driving the order's own state machine.
+
+    Runs inside the capture use case's transaction, so the order flips to ``paid`` atomically
+    with the payment's capture. The order row is locked (serializing against a concurrent
+    cancel), the transition is idempotent (an already-paid order is a no-op), and it goes
+    through the order aggregate so an illegal move (e.g. paying a cancelled order) is refused
+    -- which rolls the whole capture back.
+    """
+
+    def mark_paid(self, order_number: str) -> None:
+        try:
+            model = (
+                OrderModel.objects.select_for_update()
+                .prefetch_related("lines")
+                .get(number=order_number)
+            )
+        except OrderModel.DoesNotExist as exc:  # pragma: no cover - defensive
+            # A captured payment always has a real order; treat a missing one as not found.
+            raise PaymentNotFoundError(order_number) from exc
+        if model.status == OrderStatus.PAID.value:
+            return  # idempotent: already paid (a duplicate capture path)
+        order = order_to_domain(model)
+        paid = order.transition_to(OrderStatus.PAID)  # raises if the order is not payable
+        OrderModel.objects.filter(number=order_number).update(status=paid.status.value)
 
 
 class DjangoUnitOfWork(UnitOfWork):

@@ -59,11 +59,23 @@ async function checkoutWithSeededAddress(page: Page): Promise<void> {
   await expect(page).toHaveURL(/\/checkout/);
   await page.locator("label").filter({ hasText: SEED }).getByRole("radio").check();
   await page.getByRole("button", { name: checkout.continue }).click();
-  // The review step offers a payment method: COD is the default (selected), while the
-  // online gateway and card-to-card are shown but not yet available (disabled). Located by
-  // the radio's value (the localized labels contain parentheses, unsafe in a name regex).
+  // The review step offers payment methods: COD is the default (selected) and online is
+  // available; card-to-card is not yet (disabled). Located by the radio's value (the
+  // localized labels contain parentheses, unsafe in a name regex).
   await expect(page.locator('input[type="radio"][value="cod"]')).toBeChecked();
-  await expect(page.locator('input[type="radio"][value="online"]')).toBeDisabled();
+  await expect(page.locator('input[type="radio"][value="card_to_card"]')).toBeDisabled();
+  await page.getByRole("button", { name: checkout.placeOrder }).click();
+}
+
+/** Checkout choosing the online method: select the seeded address, continue, pick online,
+ * and place -- which hands the browser off to the gateway. */
+async function checkoutSelectingOnline(page: Page): Promise<void> {
+  await page.goto("/cart");
+  await page.getByRole("link", { name: cart.checkout }).click();
+  await expect(page).toHaveURL(/\/checkout/);
+  await page.locator("label").filter({ hasText: SEED }).getByRole("radio").check();
+  await page.getByRole("button", { name: checkout.continue }).click();
+  await page.locator('input[type="radio"][value="online"]').check();
   await page.getByRole("button", { name: checkout.placeOrder }).click();
 }
 
@@ -127,11 +139,11 @@ test.describe.serial("shopper cart & checkout", () => {
     await expect(page.getByRole("heading", { name: payment.sectionTitle })).toBeVisible();
     await expect(page.getByText(payment.methodCod)).toBeVisible();
 
-    // The order is already paid-for by COD selection, so a second payment for it is
-    // refused, and an unavailable online method is rejected -- both checked at the API
-    // (the shopper's authenticated cookies ride along on page.request).
+    // A not-yet-available method (card-to-card has no gateway) is rejected at the API as
+    // unsupported (400), before any order/double-payment check -- verified with the
+    // shopper's authenticated cookies riding along on page.request.
     const unsupported = await page.request.post("/api/v1/payments/", {
-      data: { order_number: orderNumber, method: "online" },
+      data: { order_number: orderNumber, method: "card_to_card" },
     });
     expect(unsupported.status()).toBe(400);
 
@@ -180,5 +192,44 @@ test.describe.serial("shopper cart & checkout", () => {
       .getByRole("button", { name: cart.remove })
       .click();
     await expect(page.getByText(cart.empty)).toBeVisible();
+  });
+
+  test("checkout: pay online at the gateway, capturing the order", async ({ page }) => {
+    // Add one DR-250, check out choosing the online method -> the browser is handed off to
+    // the (dev mock) payment gateway.
+    await addFromPdp(page, PRODUCTS.darkRoast.code, dr250.sku);
+    await checkoutSelectingOnline(page);
+
+    // On the mock gateway page: pay. It calls the backend callback, which captures the
+    // payment (server-verified) and redirects back to the now-paid order.
+    await expect(page).toHaveURL(/\/payments\/mock-gateway\//);
+    await page.locator("#mock_pay").click();
+
+    await expect(page).toHaveURL(/\/orders\/ORD-/);
+    await expect(page.getByText(orders.statusPaid).first()).toBeVisible();
+    // The payment block shows the online method (captured drives the order to paid).
+    await expect(page.getByRole("heading", { name: payment.sectionTitle })).toBeVisible();
+    await expect(page.getByText(payment.methodOnline)).toBeVisible();
+  });
+
+  test("checkout: cancelling at the gateway fails the payment, order stays pending", async ({
+    page,
+  }) => {
+    await addFromPdp(page, PRODUCTS.darkRoast.code, dr250.sku);
+    await checkoutSelectingOnline(page);
+
+    // Cancel at the gateway: the callback fails the payment and the order stays pending
+    // (never trusts the redirect -- a cancel is never "paid").
+    await expect(page).toHaveURL(/\/payments\/mock-gateway\//);
+    await page.locator("#mock_cancel").click();
+
+    await expect(page).toHaveURL(/\/orders\/ORD-/);
+    await expect(page.getByText(orders.statusPending).first()).toBeVisible();
+    await expect(page.getByText(payment.statusFailed)).toBeVisible();
+
+    // A pending order is cancellable; cancel to restock so the shared pool stays pristine.
+    await page.getByRole("button", { name: orders.cancel }).click();
+    await page.getByRole("button", { name: orders.cancel }).click();
+    await expect(page.getByText(orders.cancelledNote)).toBeVisible();
   });
 });

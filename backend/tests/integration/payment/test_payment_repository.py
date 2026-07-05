@@ -23,10 +23,11 @@ from src.domain.payment.value_objects import (
     PaymentReference,
     PaymentStatus,
 )
-from src.infrastructure.order.models import OrderModel
+from src.infrastructure.order.models import OrderLineModel, OrderModel
 from src.infrastructure.payment.models import PaymentModel
 from src.infrastructure.payment.repositories import (
     DjangoOrderReader,
+    DjangoPaidOrders,
     DjangoPaymentRepository,
 )
 
@@ -207,3 +208,77 @@ class TestOrderReader:
     def test_unknown_order_is_not_found(self) -> None:
         user = _user()
         assert DjangoOrderReader().get_payable(_owner(user), "ORD-DOESNOTEXIST0") is None
+
+
+def _seed_order_line(order_number: str = _ORDER_NUMBER) -> None:
+    """Attach one line to a seeded order so it rebuilds into a valid Order aggregate."""
+    order = OrderModel.objects.get(number=order_number)
+    OrderLineModel.objects.create(
+        order=order,
+        sku="HB-250",
+        quantity=1,
+        unit_price=Decimal("150.00"),
+        line_total=Decimal("150.00"),
+        position=0,
+    )
+
+
+class TestOnlineCaptureRepository:
+    def test_gateway_reference_round_trips(self) -> None:
+        user = _user()
+        repo = DjangoPaymentRepository()
+        payment = _payment(_owner(user))
+        payment = payment.with_gateway_reference("AUTH-XYZ-1")
+
+        repo.add(payment)
+        reloaded = repo.get_for_owner(_owner(user), "PAY-ABCDEFGH1234")
+        assert reloaded.gateway_reference == "AUTH-XYZ-1"
+
+    def test_get_by_gateway_reference_finds_it(self) -> None:
+        user = _user()
+        repo = DjangoPaymentRepository()
+        repo.add(_payment(_owner(user)).with_gateway_reference("AUTH-1"))
+
+        # Not owner-scoped: a callback resolves the payment by authority alone.
+        found = repo.get_by_gateway_reference_for_update("AUTH-1")
+        assert found is not None
+        assert found.reference.value == "PAY-ABCDEFGH1234"
+        assert repo.get_by_gateway_reference_for_update("NOPE") is None
+
+    def test_update_status_persists_the_new_status(self) -> None:
+        user = _user()
+        repo = DjangoPaymentRepository()
+        saved = repo.add(_payment(_owner(user)).with_gateway_reference("AUTH-1"))
+
+        repo.update_status(saved.capture())
+        reloaded = repo.get_for_owner(_owner(user), "PAY-ABCDEFGH1234")
+        assert reloaded.status is PaymentStatus.CAPTURED
+
+
+class TestDjangoPaidOrders:
+    def test_marks_a_pending_order_paid(self) -> None:
+        user = _user()
+        _seed_order(owner_pk=user.pk)
+        _seed_order_line()
+
+        DjangoPaidOrders().mark_paid(_ORDER_NUMBER)
+
+        assert OrderModel.objects.get(number=_ORDER_NUMBER).status == "paid"
+
+    def test_is_idempotent_on_an_already_paid_order(self) -> None:
+        user = _user()
+        _seed_order(owner_pk=user.pk, status="paid")
+        _seed_order_line()
+
+        DjangoPaidOrders().mark_paid(_ORDER_NUMBER)  # no-op, no error
+        assert OrderModel.objects.get(number=_ORDER_NUMBER).status == "paid"
+
+    def test_refuses_to_pay_a_cancelled_order(self) -> None:
+        from src.domain.order.exceptions import IllegalOrderTransitionError
+
+        user = _user()
+        _seed_order(owner_pk=user.pk, status="cancelled")
+        _seed_order_line()
+
+        with pytest.raises(IllegalOrderTransitionError):
+            DjangoPaidOrders().mark_paid(_ORDER_NUMBER)

@@ -28,7 +28,11 @@ import {
 import { getCart, type Cart } from "@/lib/api/cart";
 import { ApiError } from "@/lib/api/client";
 import { placeOrder, type Order, type PlaceOrderShipping } from "@/lib/api/orders";
-import { initiatePayment, type PaymentMethod } from "@/lib/api/payments";
+import {
+  initiatePayment,
+  type PaymentInitiation,
+  type PaymentMethod,
+} from "@/lib/api/payments";
 import { formatMoneyString } from "@/lib/format";
 import { useCurrentUser } from "@/lib/hooks/use-auth";
 import { paymentMethodKey } from "@/lib/payments/labels";
@@ -47,7 +51,7 @@ type Step = "address" | "review";
  */
 const PAYMENT_METHODS: ReadonlyArray<{ value: PaymentMethod; enabled: boolean }> = [
   { value: "cod", enabled: true },
-  { value: "online", enabled: false },
+  { value: "online", enabled: true },
   { value: "card_to_card", enabled: false },
 ];
 
@@ -128,25 +132,36 @@ interface CheckoutInput {
   method: PaymentMethod;
 }
 
+interface CheckoutOutcome {
+  order: Order;
+  initiation: PaymentInitiation;
+}
+
 /**
- * Hook: place the order, initiate the chosen payment against it, then drop the cached
- * cart and go to the order. Placement and payment are two bounded contexts, so this is
- * two sequential calls; for COD the payment simply records "pay on delivery" (no external
- * step), and the order confirmation shows it.
+ * Hook: place the order, initiate the chosen payment against it, then either send the
+ * shopper to the gateway (online) or to the order confirmation (COD). Placement and
+ * payment are two bounded contexts, so this is two sequential calls. For an online method
+ * the backend returns `next_action: "redirect"` with a gateway URL; for COD it is `"none"`
+ * and the order confirmation shows the pay-on-delivery payment.
  */
 function useCheckout(channel: string) {
   const queryClient = useQueryClient();
   const router = useRouter();
   return useMutation({
-    mutationFn: async ({ shipping, method }: CheckoutInput) => {
+    mutationFn: async ({ shipping, method }: CheckoutInput): Promise<CheckoutOutcome> => {
       const order = await placeOrder(channel, shipping);
-      await initiatePayment(order.number, method);
-      return order;
+      const initiation = await initiatePayment(order.number, method);
+      return { order, initiation };
     },
-    onSuccess: (order: Order) => {
+    onSuccess: ({ order, initiation }: CheckoutOutcome) => {
       // The cart is now consumed; drop the cached copy so a revisit refetches the
       // (empty) cart rather than showing stale lines.
       queryClient.removeQueries({ queryKey: CART_KEY(channel) });
+      if (initiation.next_action === "redirect" && initiation.redirect_url) {
+        // Hand the shopper off to the payment gateway; it will redirect back to the order.
+        window.location.assign(initiation.redirect_url);
+        return;
+      }
       router.push(`/orders/${order.number}`);
     },
   });
@@ -566,6 +581,9 @@ function PaymentMethodStep({
               </span>
               {value === "cod" ? (
                 <span className="text-muted-foreground">{t("codHint")}</span>
+              ) : null}
+              {value === "online" ? (
+                <span className="text-muted-foreground">{t("onlineHint")}</span>
               ) : null}
             </span>
           </label>

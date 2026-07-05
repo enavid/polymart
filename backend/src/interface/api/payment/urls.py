@@ -10,6 +10,8 @@ from __future__ import annotations
 from django.urls import path
 
 from src.interface.api.payment.views import (
+    MockGatewayView,
+    PaymentCallbackView,
     PaymentCollectionView,
     PaymentDetailView,
     PaymentForOrderView,
@@ -17,11 +19,14 @@ from src.interface.api.payment.views import (
 
 urlpatterns = [
     path("payments/", PaymentCollectionView.as_view(), name="payments"),
-    # Declared before the ``<reference>`` detail route so "for-order" is not read as one.
+    # The fixed sub-paths are declared before the ``<reference>`` detail route so they are
+    # never read as a reference.
     path(
         "payments/for-order/<str:number>/",
         PaymentForOrderView.as_view(),
         name="payment-for-order",
     ),
+    path("payments/callback/", PaymentCallbackView.as_view(), name="payment-callback"),
+    path("payments/mock-gateway/", MockGatewayView.as_view(), name="payment-mock-gateway"),
     path("payments/<str:reference>/", PaymentDetailView.as_view(), name="payment-detail"),
 ]

@@ -20,7 +20,9 @@ from src.application.audit.ports import AuditRecorder
 from src.application.payment.ports import (
     Clock,
     NextActionType,
+    OnlinePaymentGateway,
     OrderReader,
+    PaidOrders,
     PayableOrder,
     PaymentGateway,
     PaymentGatewayRegistry,
@@ -28,9 +30,12 @@ from src.application.payment.ports import (
     PaymentReferenceGenerator,
     PaymentRepository,
     PaymentStartResult,
+    PaymentVerification,
     UnitOfWork,
 )
 from src.application.payment.use_cases import (
+    CapturePayment,
+    CapturePaymentCommand,
     GetMyPayment,
     GetPaymentForOrder,
     InitiatePayment,
@@ -40,6 +45,7 @@ from src.application.shared.owner import safe_owner
 from src.domain.audit.entities import FieldChange
 from src.domain.payment.entities import Payment
 from src.domain.payment.exceptions import (
+    GatewayCannotCaptureError,
     InvalidPaymentMethodError,
     OrderNotPayableError,
     PaymentAlreadyExistsError,
@@ -99,6 +105,7 @@ class FakePayments(PaymentRepository):
             amount=payment.amount,
             status=payment.status,
             created_at=payment.created_at,
+            gateway_reference=payment.gateway_reference,
             id=len(self.saved) + 1,
         )
         self.saved.append(stored)
@@ -118,6 +125,22 @@ class FakePayments(PaymentRepository):
 
     def active_for_order(self, owner: str, order_number: str) -> Payment | None:
         return self._active.get((owner, order_number))
+
+    def find_by_gateway_reference(self, gateway_reference: str) -> Payment | None:
+        return self.get_by_gateway_reference_for_update(gateway_reference)
+
+    def get_by_gateway_reference_for_update(self, gateway_reference: str) -> Payment | None:
+        for payment in self.saved:
+            if payment.gateway_reference == gateway_reference:
+                return payment
+        return None
+
+    def update_status(self, payment: Payment) -> Payment:
+        for i, stored in enumerate(self.saved):
+            if stored.reference.value == payment.reference.value:
+                self.saved[i] = payment
+                return payment
+        raise PaymentNotFoundError(payment.reference.value)
 
 
 class RecordingGateway(PaymentGateway):
@@ -435,3 +458,185 @@ class TestReads:
         payments.add(self._payment(owner="u:99"))
         with pytest.raises(PaymentNotFoundError):
             GetPaymentForOrder(payments).execute(owner=_OWNER, order_number=_ORDER_NUMBER)
+
+
+# --- CapturePayment ------------------------------------------------------
+
+
+class FakePaidOrders(PaidOrders):
+    def __init__(self) -> None:
+        self.paid: list[str] = []
+
+    def mark_paid(self, order_number: str) -> None:
+        self.paid.append(order_number)
+
+
+class FakeOnlineGateway(OnlinePaymentGateway):
+    """An online gateway whose verify() outcome is fixed by the test."""
+
+    def __init__(self, *, captured: bool = True, provider_reference: str = "RID-1") -> None:
+        self._captured = captured
+        self._provider_reference = provider_reference
+        self.verified: list[str] = []
+
+    @property
+    def method(self) -> PaymentMethod:
+        return PaymentMethod.ONLINE
+
+    def start(self, intent: PaymentIntent) -> PaymentStartResult:  # pragma: no cover - unused here
+        return PaymentStartResult(
+            next_action=NextActionType.REDIRECT,
+            redirect_url="https://gw/pay",
+            gateway_reference="AUTH1",
+        )
+
+    def verify(self, *, gateway_reference: str, amount: Money) -> PaymentVerification:
+        self.verified.append(gateway_reference)
+        return PaymentVerification(
+            captured=self._captured,
+            provider_reference=self._provider_reference if self._captured else None,
+        )
+
+
+_AUTHORITY = "AUTH-XYZ-1"
+
+
+def _online_payment(status: PaymentStatus = PaymentStatus.PENDING, owner: str = _OWNER) -> Payment:
+    return Payment(
+        reference=PaymentReference("PAY-ONLINE1"),
+        order_ref=OrderRef(_ORDER_NUMBER),
+        owner=owner,
+        method=PaymentMethod.ONLINE,
+        amount=Money(amount=Decimal("150.00"), currency="IRR"),
+        status=status,
+        created_at=datetime(2026, 7, 5, tzinfo=UTC),
+        gateway_reference=_AUTHORITY,
+    )
+
+
+def _build_capture(
+    *,
+    payment: Payment,
+    gateway: OnlinePaymentGateway | None = None,
+    uow: FakeUnitOfWork | None = None,
+    paid: FakePaidOrders | None = None,
+    audit: RecordingAudit | None = None,
+) -> tuple[CapturePayment, FakePaidOrders, RecordingAudit, FakeUnitOfWork]:
+    uow = uow or FakeUnitOfWork()
+    payments = FakePayments()
+    payments.add(payment)
+    paid = paid or FakePaidOrders()
+    audit = audit or RecordingAudit()
+    registry = PaymentGatewayRegistry((gateway or FakeOnlineGateway(),))
+    use_case = CapturePayment(
+        unit_of_work=uow, payments=payments, gateways=registry, paid_orders=paid, audit=audit
+    )
+    return use_case, paid, audit, uow
+
+
+class TestCapturePayment:
+    def test_success_captures_and_marks_the_order_paid(self) -> None:
+        gateway = FakeOnlineGateway(captured=True, provider_reference="RID-9")
+        use_case, paid, audit, uow = _build_capture(payment=_online_payment(), gateway=gateway)
+
+        result = use_case.execute(
+            CapturePaymentCommand(gateway_reference=_AUTHORITY, succeeded=True)
+        )
+
+        assert result.status is PaymentStatus.CAPTURED
+        assert uow.committed is True
+        assert gateway.verified == [_AUTHORITY]  # server re-verified, never trusted the redirect
+        assert paid.paid == [_ORDER_NUMBER]  # order marked paid in the same transaction
+        entry = next(r for r in audit.records if r["action"] == "payment.captured")
+        fields = {c.field: c.after for c in entry["changes"]}  # type: ignore[attr-defined]
+        assert fields["status"] == "captured"
+        assert fields["amount"] == "150.00"
+        assert fields["provider_reference"] == "RID-9"
+
+    def test_is_idempotent_on_a_repeated_callback(self) -> None:
+        gateway = FakeOnlineGateway(captured=True)
+        use_case, paid, audit, _ = _build_capture(payment=_online_payment(), gateway=gateway)
+        first = use_case.execute(
+            CapturePaymentCommand(gateway_reference=_AUTHORITY, succeeded=True)
+        )
+        assert first.status is PaymentStatus.CAPTURED
+
+        # A duplicate callback must not re-verify, re-capture, or re-pay the order.
+        second = use_case.execute(
+            CapturePaymentCommand(gateway_reference=_AUTHORITY, succeeded=True)
+        )
+        assert second.status is PaymentStatus.CAPTURED
+        assert gateway.verified == [_AUTHORITY]  # only the first verified
+        assert paid.paid == [_ORDER_NUMBER]  # order paid exactly once
+        assert len([r for r in audit.records if r["action"] == "payment.captured"]) == 1
+
+    def test_a_cancelled_callback_fails_without_verifying(self) -> None:
+        gateway = FakeOnlineGateway(captured=True)
+        use_case, paid, audit, _ = _build_capture(payment=_online_payment(), gateway=gateway)
+
+        result = use_case.execute(
+            CapturePaymentCommand(gateway_reference=_AUTHORITY, succeeded=False)
+        )
+
+        assert result.status is PaymentStatus.FAILED
+        assert gateway.verified == []  # a cancel never calls the gateway
+        assert paid.paid == []  # the order is not paid
+        assert any(r["action"] == "payment.failed" for r in audit.records)
+
+    def test_a_failed_verification_fails_the_payment(self) -> None:
+        gateway = FakeOnlineGateway(captured=False)
+        use_case, paid, _, _ = _build_capture(payment=_online_payment(), gateway=gateway)
+
+        result = use_case.execute(
+            CapturePaymentCommand(gateway_reference=_AUTHORITY, succeeded=True)
+        )
+
+        assert result.status is PaymentStatus.FAILED
+        assert gateway.verified == [_AUTHORITY]  # verified, but the gateway said no
+        assert paid.paid == []
+
+    def test_an_already_failed_payment_is_left_untouched(self) -> None:
+        gateway = FakeOnlineGateway(captured=True)
+        use_case, paid, _, _ = _build_capture(
+            payment=_online_payment(status=PaymentStatus.FAILED), gateway=gateway
+        )
+
+        result = use_case.execute(
+            CapturePaymentCommand(gateway_reference=_AUTHORITY, succeeded=True)
+        )
+
+        assert result.status is PaymentStatus.FAILED  # unchanged
+        assert gateway.verified == []
+        assert paid.paid == []
+
+    def test_an_unknown_reference_is_not_found(self) -> None:
+        use_case, *_ = _build_capture(payment=_online_payment())
+        with pytest.raises(PaymentNotFoundError):
+            use_case.execute(CapturePaymentCommand(gateway_reference="NOPE", succeeded=True))
+
+    def test_a_non_online_gateway_cannot_capture(self) -> None:
+        # A payment awaiting capture whose method resolves to a COD (offline) gateway.
+        payment = Payment(
+            reference=PaymentReference("PAY-BADGW01"),
+            order_ref=OrderRef(_ORDER_NUMBER),
+            owner=_OWNER,
+            method=PaymentMethod.COD,
+            amount=Money(amount=Decimal("150.00"), currency="IRR"),
+            status=PaymentStatus.PENDING,
+            created_at=datetime(2026, 7, 5, tzinfo=UTC),
+            gateway_reference=_AUTHORITY,
+        )
+        uow = FakeUnitOfWork()
+        payments = FakePayments()
+        payments.add(payment)
+        registry = PaymentGatewayRegistry((RecordingGateway(PaymentMethod.COD),))
+        use_case = CapturePayment(
+            unit_of_work=uow,
+            payments=payments,
+            gateways=registry,
+            paid_orders=FakePaidOrders(),
+            audit=RecordingAudit(),
+        )
+        with pytest.raises(GatewayCannotCaptureError):
+            use_case.execute(CapturePaymentCommand(gateway_reference=_AUTHORITY, succeeded=True))
+        assert uow.rolled_back is True

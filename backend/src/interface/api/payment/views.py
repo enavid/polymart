@@ -12,9 +12,13 @@ another's order (IDOR is structurally impossible for guests and users alike).
 
 from __future__ import annotations
 
+from html import escape
 from typing import ClassVar
+from urllib.parse import quote
 
 import structlog
+from django.conf import settings
+from django.http import HttpResponse, HttpResponseRedirect
 from drf_spectacular.utils import extend_schema
 from rest_framework import status
 from rest_framework.permissions import AllowAny
@@ -33,10 +37,12 @@ from src.domain.payment.exceptions import (
     PaymentOrderNotFoundError,
     UnsupportedPaymentMethodError,
 )
+from src.infrastructure.payment.tasks import capture_online_payment
 from src.interface.api.common import ErrorSerializer
 from src.interface.api.guest import resolve_owner
 from src.interface.api.payment.container import (
     build_get_my_payment,
+    build_get_payment_by_gateway_reference,
     build_get_payment_for_order,
     build_initiate_payment,
 )
@@ -165,3 +171,81 @@ class PaymentDetailView(APIView):
             logger.debug("payment_lookup_rejected")
             return Response({"detail": "payment not found"}, status=status.HTTP_404_NOT_FOUND)
         return Response(_payment_payload(payment))
+
+
+def _callback_param(request: Request, *names: str) -> str | None:
+    """Read the first present query param among ``names`` (gateways vary on casing)."""
+    for name in names:
+        value = request.query_params.get(name)
+        if value:
+            return value
+    return None
+
+
+class PaymentCallbackView(APIView):
+    """The online gateway callback (the "webhook"): settle a payment and return the shopper.
+
+    The gateway redirects the shopper's browser here with the authority + a status. Settlement
+    is handed to an idempotent Celery task (so a duplicate callback never double-captures), and
+    the browser is redirected to the storefront order page to see the result. Not owner-scoped:
+    the callback carries only the unguessable authority (the server re-verifies with the gateway
+    inside the task, so a spoofed "success" cannot capture without the gateway's confirmation).
+    """
+
+    permission_classes: ClassVar = [AllowAny]
+
+    @extend_schema(
+        operation_id="payments_callback",
+        responses={302: None, 400: ErrorSerializer, 404: ErrorSerializer},
+    )
+    def get(self, request: Request) -> HttpResponse:
+        authority = _callback_param(request, "Authority", "authority")
+        gateway_status = _callback_param(request, "Status", "status")
+        if authority is None:
+            return Response({"detail": "missing authority"}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            payment = build_get_payment_by_gateway_reference().execute(gateway_reference=authority)
+        except PaymentNotFoundError:
+            return Response({"detail": "payment not found"}, status=status.HTTP_404_NOT_FOUND)
+        except PaymentError:  # pragma: no cover - defensive
+            return Response({"detail": "payment not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        # Settle out of band (idempotent). Eager in tests, so the result is ready immediately.
+        capture_online_payment.delay(authority, succeeded=gateway_status == "OK")
+
+        target = f"{settings.PAYMENT_RESULT_URL}/{quote(payment.order_ref.value)}"
+        return HttpResponseRedirect(target)
+
+
+class MockGatewayView(APIView):
+    """A DEBUG/mock-only stand-in for the gateway's hosted payment page.
+
+    Renders a minimal "Pay"/"Cancel" screen that links back to the callback with the
+    authority and an OK/NOK status -- letting the full redirect->callback flow run offline in
+    dev and E2E. Refuses to serve unless the mock online gateway is the one wired
+    (``PAYMENT_ONLINE_MOCK``), so it is inert in production.
+    """
+
+    permission_classes: ClassVar = [AllowAny]
+
+    @extend_schema(operation_id="payments_mock_gateway", responses={200: None, 404: None})
+    def get(self, request: Request) -> HttpResponse:
+        if not settings.PAYMENT_ONLINE_MOCK:
+            return HttpResponse(status=status.HTTP_404_NOT_FOUND)
+        authority = request.query_params.get("authority", "")
+        callback = settings.PAYMENT_CALLBACK_URL
+        safe_authority = quote(authority)
+        pay = f"{callback}?Authority={safe_authority}&Status=OK"
+        cancel = f"{callback}?Authority={safe_authority}&Status=NOK"
+        # authority is echoed only inside an href we build with quote(); escape() guards the
+        # visible text too so the mock page cannot be turned into an XSS vector.
+        body = (
+            "<!doctype html><html lang='en'><head><meta charset='utf-8'>"
+            "<title>Mock gateway</title></head><body>"
+            "<h1>Mock payment gateway</h1>"
+            f"<p>Authority: {escape(authority)}</p>"
+            f"<a id='mock_pay' href='{pay}'>Pay</a> "
+            f"<a id='mock_cancel' href='{cancel}'>Cancel</a>"
+            "</body></html>"
+        )
+        return HttpResponse(body, content_type="text/html")

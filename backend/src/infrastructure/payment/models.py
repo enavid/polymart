@@ -25,6 +25,8 @@ _GUEST_TOKEN_MAX_LENGTH = 64
 _CURRENCY_CODE_MAX_LENGTH = 3
 _METHOD_MAX_LENGTH = 16
 _STATUS_MAX_LENGTH = 16
+# A gateway authority/token (e.g. Zarinpal's 36-char authority); 128 leaves ample headroom.
+_GATEWAY_REFERENCE_MAX_LENGTH = 128
 # Money precision mirrors the order/catalog stored precision, so a captured amount is
 # persisted losslessly (18 total digits, 4 decimal places).
 _AMOUNT_MAX_DIGITS = 18
@@ -60,6 +62,13 @@ class PaymentModel(models.Model):
         max_length=_GUEST_TOKEN_MAX_LENGTH, null=True, blank=True
     )
     method = models.CharField(max_length=_METHOD_MAX_LENGTH)
+    # The gateway's own handle for this payment (an online gateway's "authority"/token),
+    # recorded at initiation and used to look the payment up on the callback. NULL for an
+    # offline method (COD) that has no external reference; unique when present so a callback
+    # resolves exactly one payment.
+    gateway_reference = models.CharField(
+        max_length=_GATEWAY_REFERENCE_MAX_LENGTH, null=True, blank=True, unique=True
+    )
     amount = models.DecimalField(
         max_digits=_AMOUNT_MAX_DIGITS, decimal_places=_AMOUNT_DECIMAL_PLACES
     )

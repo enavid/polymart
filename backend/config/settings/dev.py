@@ -7,6 +7,12 @@ from config.settings.base import *  # noqa: F403
 DEBUG = True
 ALLOWED_HOSTS = ["*"]
 
+# Run Celery tasks inline (no separate worker needed for local dev / the E2E harness), so a
+# gateway callback settles the payment synchronously and the result is visible immediately.
+# Production runs a real worker (eager off) for genuinely async processing.
+CELERY_TASK_ALWAYS_EAGER = True
+CELERY_TASK_EAGER_PROPAGATES = True
+
 # The Next.js storefront runs on :3000. Allow both hostnames a developer might
 # use so the cookie-JWT flow works regardless of how the dev server is opened.
 # (Browsers treat localhost and 127.0.0.1 as distinct origins.)

@@ -158,8 +158,9 @@ class TestUserCodPayment:
         user = _user("09120000001")
         client, number = _place_user_order(user)
 
-        # 'online' is a recognised method with no gateway registered yet.
-        response = _initiate(client, number, method="online")
+        # 'card_to_card' is a recognised method with no gateway registered yet (online now
+        # has one). It is rejected as unsupported.
+        response = _initiate(client, number, method="card_to_card")
         assert response.status_code == 400
 
     def test_an_unknown_method_is_rejected_by_the_serializer(self) -> None:
@@ -269,3 +270,115 @@ class TestPaymentReads:
         client = _client(_user("09120000001"))
         # A malformed order number can never match; surfaced as 404, not a 400.
         assert client.get(f"{_PAYMENTS_URL}for-order/bad!!/").status_code == 404
+
+
+class TestOnlinePayment:
+    """The full online flow via the mock gateway: initiate -> redirect -> callback ->
+    capture -> order paid, plus idempotency, failure, and spoofing."""
+
+    def _initiate_online(self, client: APIClient, number: str) -> str:
+        response = _initiate(client, number, method="online")
+        assert response.status_code == 201, response.data
+        assert response.data["status"] == "pending"
+        assert response.data["next_action"] == "redirect"
+        assert "/payments/mock-gateway/" in response.data["redirect_url"]
+        # The mock authority is derived from the payment reference.
+        return f"MOCK-{response.data['reference']}"
+
+    def _callback(self, client: APIClient, authority: str, status_value: str):
+        return client.get(
+            f"{_PAYMENTS_URL}callback/?Authority={authority}&Status={status_value}"
+        )
+
+    def test_successful_callback_captures_and_pays_the_order(self) -> None:
+        _seed_catalog()
+        user = _user("09120000001")
+        client, number = _place_user_order(user)
+        authority = self._initiate_online(client, number)
+
+        # The order is not paid until the callback settles it.
+        assert client.get(f"{_ORDERS_URL}{number}/").data["status"] == "pending"
+
+        response = self._callback(client, authority, "OK")
+        assert response.status_code == 302
+        assert f"/orders/{number}" in response["Location"]
+
+        # Eager Celery: the capture ran, so the payment is captured and the order paid.
+        assert client.get(f"{_PAYMENTS_URL}for-order/{number}/").data["status"] == "captured"
+        assert client.get(f"{_ORDERS_URL}{number}/").data["status"] == "paid"
+
+    def test_callback_is_idempotent(self) -> None:
+        _seed_catalog()
+        user = _user("09120000001")
+        client, number = _place_user_order(user)
+        authority = self._initiate_online(client, number)
+
+        assert self._callback(client, authority, "OK").status_code == 302
+        # A duplicate callback must not change anything (no double capture / double pay).
+        assert self._callback(client, authority, "OK").status_code == 302
+        assert client.get(f"{_PAYMENTS_URL}for-order/{number}/").data["status"] == "captured"
+        assert client.get(f"{_ORDERS_URL}{number}/").data["status"] == "paid"
+
+    def test_a_cancelled_callback_fails_the_payment_and_leaves_the_order_pending(self) -> None:
+        _seed_catalog()
+        user = _user("09120000001")
+        client, number = _place_user_order(user)
+        authority = self._initiate_online(client, number)
+
+        assert self._callback(client, authority, "NOK").status_code == 302
+        assert client.get(f"{_PAYMENTS_URL}for-order/{number}/").data["status"] == "failed"
+        assert client.get(f"{_ORDERS_URL}{number}/").data["status"] == "pending"
+
+    def test_a_failed_attempt_frees_the_order_for_a_retry(self) -> None:
+        _seed_catalog()
+        user = _user("09120000001")
+        client, number = _place_user_order(user)
+        authority = self._initiate_online(client, number)
+        self._callback(client, authority, "NOK")  # first attempt fails
+
+        # The failed payment no longer holds the order, so a fresh online attempt succeeds.
+        retry_authority = self._initiate_online(client, number)
+        assert self._callback(client, retry_authority, "OK").status_code == 302
+        assert client.get(f"{_ORDERS_URL}{number}/").data["status"] == "paid"
+
+    def test_an_unknown_authority_is_not_found(self) -> None:
+        _seed_catalog()
+        client = _client(_user("09120000001"))
+        assert self._callback(client, "MOCK-NOPE", "OK").status_code == 404
+
+    def test_a_missing_authority_is_a_bad_request(self) -> None:
+        _seed_catalog()
+        client = _client(_user("09120000001"))
+        assert client.get(f"{_PAYMENTS_URL}callback/?Status=OK").status_code == 400
+
+    def test_the_mock_gateway_page_renders_pay_and_cancel(self) -> None:
+        _seed_catalog()
+        client = APIClient()
+        response = client.get(f"{_PAYMENTS_URL}mock-gateway/?authority=MOCK-ABC")
+        assert response.status_code == 200
+        assert b"mock_pay" in response.content
+        assert b"mock_cancel" in response.content
+        assert b"Status=OK" in response.content
+        assert b"Status=NOK" in response.content
+
+    def test_the_mock_gateway_page_is_inert_when_not_in_mock_mode(self) -> None:
+        # In production (real gateway wired) the dev mock page must not be served.
+        from django.test import override_settings
+
+        with override_settings(PAYMENT_ONLINE_MOCK=False):
+            response = APIClient().get(f"{_PAYMENTS_URL}mock-gateway/?authority=MOCK-ABC")
+        assert response.status_code == 404
+
+    def test_a_guest_pays_online_end_to_end(self) -> None:
+        _seed_catalog()
+        client = APIClient()
+        client.post(
+            _CART_ITEMS_URL, {"channel": _CHANNEL, "sku": "HB-250", "quantity": 1}, format="json"
+        )
+        number = client.post(
+            _ORDERS_URL, {"channel": _CHANNEL, "shipping_address": _INLINE_ADDRESS}, format="json"
+        ).data["number"]
+        authority = self._initiate_online(client, number)
+
+        assert self._callback(client, authority, "OK").status_code == 302
+        assert client.get(f"{_ORDERS_URL}{number}/").data["status"] == "paid"

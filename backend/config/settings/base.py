@@ -109,6 +109,22 @@ CELERY_BROKER_URL = env("CELERY_BROKER_URL", default=REDIS_URL)
 CELERY_RESULT_BACKEND = env("CELERY_RESULT_BACKEND", default=REDIS_URL)
 CELERY_TASK_ACKS_LATE = True
 
+# --- Payments (online gateway) ----------------------------------------------
+# Use the offline mock online gateway (no real PSP) by default in dev/test; production
+# (DEBUG=False) wires the real Zarinpal adapter. Mirrors the OTP dev-sender guard.
+PAYMENT_ONLINE_MOCK = env.bool("PAYMENT_ONLINE_MOCK", default=DEBUG)
+# The browser is sent here for the mock gateway page, and a gateway redirects back here (the
+# callback). Relative paths resolve against the storefront origin, which proxies /api to the
+# backend; production sets an absolute callback URL the PSP can reach.
+PAYMENT_MOCK_GATEWAY_URL = env("PAYMENT_MOCK_GATEWAY_URL", default="/api/v1/payments/mock-gateway/")
+PAYMENT_CALLBACK_URL = env("PAYMENT_CALLBACK_URL", default="/api/v1/payments/callback/")
+# After the callback settles a payment, the browser is redirected to this storefront path
+# with the order number appended, to show the result.
+PAYMENT_RESULT_URL = env("PAYMENT_RESULT_URL", default="/orders")
+# Zarinpal (the real online gateway, production).
+ZARINPAL_MERCHANT_ID = env("ZARINPAL_MERCHANT_ID", default="")
+ZARINPAL_SANDBOX = env.bool("ZARINPAL_SANDBOX", default=True)
+
 # --- Auth -------------------------------------------------------------------
 AUTHENTICATION_BACKENDS = [
     "django.contrib.auth.backends.ModelBackend",

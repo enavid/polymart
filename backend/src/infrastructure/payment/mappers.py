@@ -35,5 +35,6 @@ def payment_to_domain(model: PaymentModel) -> Payment:
         amount=Money(amount=model.amount, currency=model.currency_code),
         status=PaymentStatus(model.status),
         created_at=model.created_at,
+        gateway_reference=model.gateway_reference,
         id=model.pk,
     )

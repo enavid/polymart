@@ -97,3 +97,31 @@ class TestStateMachine:
             _payment(PaymentStatus.FAILED).transition_to(PaymentStatus.CAPTURED)
         assert exc.value.current == "failed"
         assert exc.value.target == "captured"
+
+    def test_capture_and_fail_helpers(self) -> None:
+        assert _payment(PaymentStatus.PENDING).capture().status is PaymentStatus.CAPTURED
+        assert _payment(PaymentStatus.PENDING).fail().status is PaymentStatus.FAILED
+        assert _payment(PaymentStatus.AUTHORIZED).capture().status is PaymentStatus.CAPTURED
+
+    def test_capture_from_a_terminal_state_is_illegal(self) -> None:
+        with pytest.raises(IllegalPaymentTransitionError):
+            _payment(PaymentStatus.FAILED).capture()
+
+
+class TestGatewayReference:
+    def test_defaults_to_none(self) -> None:
+        assert _payment().gateway_reference is None
+
+    def test_sets_the_reference_once(self) -> None:
+        payment = _payment().with_gateway_reference("A0000000000001")
+        assert payment.gateway_reference == "A0000000000001"
+
+    def test_refuses_to_overwrite(self) -> None:
+        payment = _payment().with_gateway_reference("A1")
+        with pytest.raises(ValueError):
+            payment.with_gateway_reference("A2")
+
+    def test_transition_carries_the_reference(self) -> None:
+        captured = _payment().with_gateway_reference("A1").capture()
+        assert captured.gateway_reference == "A1"
+        assert captured.status is PaymentStatus.CAPTURED

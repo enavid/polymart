@@ -99,3 +99,16 @@ class PaymentNotFoundError(PaymentError):
     def __init__(self, identifier: str) -> None:
         super().__init__(f"payment not found: {identifier}")
         self.identifier = identifier
+
+
+class GatewayCannotCaptureError(PaymentError):
+    """Raised when a payment awaiting capture is bound to a non-verifiable gateway.
+
+    Capture requires an online gateway (one that can ``verify``); a payment whose method has
+    only an offline adapter cannot be captured via the callback path. This is a wiring/logic
+    guard, not a normal runtime condition.
+    """
+
+    def __init__(self, method: str) -> None:
+        super().__init__(f"gateway for method {method!r} cannot capture (not an online gateway)")
+        self.method = method

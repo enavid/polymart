@@ -239,11 +239,11 @@ describe("CheckoutView", () => {
     await screen.findByText("Sara Ahmadi");
     await userEvent.click(screen.getByRole("button", { name: checkout.continue }));
 
-    // The review step offers COD (selectable) and the not-yet-available methods (disabled).
-    // Labels wrap extra hint/badge text, so match the method name as a substring.
+    // The review step offers COD (default) and online (both selectable); card-to-card is
+    // not yet available (disabled). Labels wrap hint/badge text, so match as a substring.
     const cod = await screen.findByLabelText(payment.methodCod, { exact: false });
     expect(cod).toBeChecked();
-    expect(screen.getByLabelText(payment.methodOnline, { exact: false })).toBeDisabled();
+    expect(screen.getByLabelText(payment.methodOnline, { exact: false })).toBeEnabled();
     expect(screen.getByLabelText(payment.methodCardToCard, { exact: false })).toBeDisabled();
 
     await userEvent.click(screen.getByRole("button", { name: checkout.placeOrder }));
@@ -251,6 +251,70 @@ describe("CheckoutView", () => {
     await waitFor(() => expect(push).toHaveBeenCalledWith("/orders/ORD-ABC123XYZ0"));
     // The chosen method (COD) is initiated against the just-placed order.
     expect(paidBody).toEqual({ order_number: "ORD-ABC123XYZ0", method: "cod" });
+  });
+
+  it("redirects to the gateway when the online method is chosen", async () => {
+    authed();
+    const assign = vi.fn();
+    // jsdom's window.location.assign is not implemented; replace it for this test.
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: { ...window.location, assign },
+    });
+    let paidBody: unknown;
+    server.use(
+      http.get("*/cart/", () => HttpResponse.json(cartWithLine)),
+      http.get("*/addresses/", () => HttpResponse.json([savedAddress])),
+      http.post("*/orders/", () =>
+        HttpResponse.json(
+          {
+            number: "ORD-ONLINE0001",
+            channel: "ir-main",
+            currency: "IRR",
+            status: "pending",
+            total: "240000.0000",
+            placed_at: "2026-07-02T12:00:00Z",
+            items: [],
+            shipping_address: { ...savedAddress },
+          },
+          { status: 201 },
+        ),
+      ),
+      http.post("*/payments/", async ({ request }) => {
+        paidBody = await request.json();
+        return HttpResponse.json(
+          {
+            reference: "PAY-ONLINE00001",
+            order_number: "ORD-ONLINE0001",
+            method: "online",
+            amount: "240000.0000",
+            currency: "IRR",
+            status: "pending",
+            created_at: "2026-07-02T12:00:00Z",
+            next_action: "redirect",
+            redirect_url: "/api/v1/payments/mock-gateway/?authority=MOCK-PAY-ONLINE00001",
+          },
+          { status: 201 },
+        );
+      }),
+    );
+
+    renderWithProviders(<CheckoutView />);
+    await screen.findByText("Sara Ahmadi");
+    await userEvent.click(screen.getByRole("button", { name: checkout.continue }));
+
+    // Choose online, then place the order.
+    await userEvent.click(await screen.findByLabelText(payment.methodOnline, { exact: false }));
+    await userEvent.click(screen.getByRole("button", { name: checkout.placeOrder }));
+
+    // The browser is handed off to the gateway URL; it does NOT navigate to the order yet.
+    await waitFor(() =>
+      expect(assign).toHaveBeenCalledWith(
+        "/api/v1/payments/mock-gateway/?authority=MOCK-PAY-ONLINE00001",
+      ),
+    );
+    expect(paidBody).toEqual({ order_number: "ORD-ONLINE0001", method: "online" });
+    expect(push).not.toHaveBeenCalled();
   });
 
   it("surfaces a place-order conflict (e.g. oversell) without navigating", async () => {

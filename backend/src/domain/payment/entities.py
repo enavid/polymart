@@ -63,6 +63,10 @@ class Payment:
     amount: Money
     status: PaymentStatus
     created_at: datetime
+    # The gateway's own handle for this payment (an online gateway's "authority"/token),
+    # captured when the payment is started and used to verify/capture it on the callback.
+    # ``None`` for an offline method (COD) that has no external reference.
+    gateway_reference: str | None = field(default=None)
     id: int | None = field(default=None)
 
     def transition_to(self, target: PaymentStatus) -> Payment:
@@ -75,3 +79,23 @@ class Payment:
         if target not in _ALLOWED_TRANSITIONS[self.status]:
             raise IllegalPaymentTransitionError(self.status.value, target.value)
         return replace(self, status=target)
+
+    def with_gateway_reference(self, gateway_reference: str) -> Payment:
+        """Return a copy carrying the gateway's handle for this payment.
+
+        Set once, right after the gateway starts the payment (an online gateway hands back
+        the ``authority`` the callback later verifies against). Refuses to overwrite an
+        existing reference, so a started payment's identity at the gateway is stable.
+        """
+        if self.gateway_reference is not None:
+            raise ValueError("gateway_reference is already set")
+        return replace(self, gateway_reference=gateway_reference)
+
+    def capture(self) -> Payment:
+        """Return a captured copy of the payment (funds collected). Legal only from a
+        pending/authorized state per the state machine."""
+        return self.transition_to(PaymentStatus.CAPTURED)
+
+    def fail(self) -> Payment:
+        """Return a failed copy of the payment (declined/cancelled/gateway error)."""
+        return self.transition_to(PaymentStatus.FAILED)
