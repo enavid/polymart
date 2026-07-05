@@ -483,6 +483,27 @@
     "statusFulfilled": "ارسال‌شده",
     "statusCancelled": "لغوشده"
   },
+  "payment": {
+    "sectionTitle": "پرداخت",
+    "method": "روش پرداخت",
+    "chooseMethod": "روش پرداخت را انتخاب کنید",
+    "status": "وضعیت پرداخت",
+    "reference": "کد پیگیری پرداخت",
+    "comingSoon": "به‌زودی",
+    "codHint": "هنگام تحویل سفارش، مبلغ را نقدی پرداخت می‌کنید.",
+    "none": "پرداختی برای این سفارش ثبت نشده است.",
+    "loadError": "بارگذاری اطلاعات پرداخت ممکن نشد.",
+    "methodCod": "پرداخت در محل (نقدی هنگام تحویل)",
+    "methodCardToCard": "کارت‌به‌کارت",
+    "methodOnline": "پرداخت آنلاین",
+    "statusPending": "در انتظار پرداخت",
+    "statusAuthorized": "تأیید اولیه",
+    "statusCaptured": "پرداخت‌شده",
+    "statusFailed": "ناموفق",
+    "statusCancelled": "لغوشده",
+    "statusVoided": "باطل‌شده",
+    "statusRefunded": "بازپرداخت‌شده"
+  },
   "manualOrder": {
     "title": "ثبت سفارش دستی (پیش‌فاکتور)",
     "description": "برای مشتری سفارش بسازید؛ سفارش در وضعیت «در انتظار پرداخت» می‌ماند و می‌توانید پیش‌فاکتور آن را چاپ کنید.",

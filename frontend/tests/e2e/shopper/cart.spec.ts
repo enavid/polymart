@@ -18,6 +18,7 @@
 
 import { expect, test, type Page } from "@playwright/test";
 
+import { formatCurrency } from "../../../src/lib/format";
 import messages from "../../../src/i18n/messages/fa.json";
 import { PRODUCTS, SHOPPER_ADDRESS, STAFF_STATE } from "../fixtures/seed";
 
@@ -25,6 +26,7 @@ const cart = messages.cart;
 const store = messages.storefront;
 const orders = messages.orders;
 const checkout = messages.checkout;
+const payment = messages.payment;
 const SEED = SHOPPER_ADDRESS.recipientName;
 const hb250 = PRODUCTS.houseBlend.variants[0]; // 120,000
 const hb500 = PRODUCTS.houseBlend.variants[1]; // 200,000
@@ -32,7 +34,9 @@ const dr250 = PRODUCTS.darkRoast.variants[0]; // 150,000, stock 5
 const lr250 = PRODUCTS.lightRoast.variants[0]; // 100,000, stock 0 (priced but unstocked)
 
 function money(amount: number): string {
-  return new Intl.NumberFormat("fa-IR", { style: "currency", currency: "IRR" }).format(amount);
+  // Delegate to the app's own formatter (its single source of truth) so the E2E
+  // assertions render money exactly as the UI does -- IRR presented in Toman.
+  return formatCurrency(amount, "IRR");
 }
 
 async function addFromPdp(page: Page, productCode: string, sku: string): Promise<void> {
@@ -55,6 +59,11 @@ async function checkoutWithSeededAddress(page: Page): Promise<void> {
   await expect(page).toHaveURL(/\/checkout/);
   await page.locator("label").filter({ hasText: SEED }).getByRole("radio").check();
   await page.getByRole("button", { name: checkout.continue }).click();
+  // The review step offers a payment method: COD is the default (selected), while the
+  // online gateway and card-to-card are shown but not yet available (disabled). Located by
+  // the radio's value (the localized labels contain parentheses, unsafe in a name regex).
+  await expect(page.locator('input[type="radio"][value="cod"]')).toBeChecked();
+  await expect(page.locator('input[type="radio"][value="online"]')).toBeDisabled();
   await page.getByRole("button", { name: checkout.placeOrder }).click();
 }
 
@@ -114,6 +123,18 @@ test.describe.serial("shopper cart & checkout", () => {
     await expect(page.getByRole("heading", { name: orders.shippingAddress })).toBeVisible();
     await expect(page.getByText(SEED)).toBeVisible();
 
+    // The payment initiated at checkout is shown: cash on delivery, awaiting collection.
+    await expect(page.getByRole("heading", { name: payment.sectionTitle })).toBeVisible();
+    await expect(page.getByText(payment.methodCod)).toBeVisible();
+
+    // The order is already paid-for by COD selection, so a second payment for it is
+    // refused, and an unavailable online method is rejected -- both checked at the API
+    // (the shopper's authenticated cookies ride along on page.request).
+    const unsupported = await page.request.post("/api/v1/payments/", {
+      data: { order_number: orderNumber, method: "online" },
+    });
+    expect(unsupported.status()).toBe(400);
+
     // The cart is now empty (consumed by checkout).
     await page.goto("/cart");
     await expect(page.getByText(cart.empty)).toBeVisible();
@@ -122,11 +143,14 @@ test.describe.serial("shopper cart & checkout", () => {
     await page.goto("/orders");
     await expect(page.getByText(orderNumber).first()).toBeVisible();
 
-    // IDOR: the staff user (a different account) must not be able to see it.
+    // IDOR: the staff user (a different account) must not be able to see the order, nor
+    // read its payment (the payment read is owner-scoped, so it 404s for another account).
     const staffContext = await browser.newContext({ storageState: STAFF_STATE });
     const staffPage = await staffContext.newPage();
     await staffPage.goto(`/orders/${orderNumber}`);
     await expect(staffPage.getByText(orders.notFound)).toBeVisible();
+    const stolen = await staffPage.request.get(`/api/v1/payments/for-order/${orderNumber}/`);
+    expect(stolen.status()).toBe(404);
     await staffContext.close();
 
     // Cancel the order via the inline confirmation; stock is returned.

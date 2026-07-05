@@ -6,6 +6,7 @@
 
 import { expect, test } from "@playwright/test";
 
+import { formatCurrency } from "../../../src/lib/format";
 import messages from "../../../src/i18n/messages/fa.json";
 import { PRODUCTS, PUBLISHED_PRODUCT_COUNT } from "../fixtures/seed";
 
@@ -13,7 +14,9 @@ const store = messages.storefront;
 
 /** Reproduce the UI's money formatting so we assert the *displayed* server value. */
 function money(amount: number): string {
-  return new Intl.NumberFormat("fa-IR", { style: "currency", currency: "IRR" }).format(amount);
+  // Delegate to the app's own formatter (its single source of truth) so the E2E
+  // assertions render money exactly as the UI does -- IRR presented in Toman.
+  return formatCurrency(amount, "IRR");
 }
 
 test("home page shows the hero, a shop CTA, and featured products", async ({ page }) => {

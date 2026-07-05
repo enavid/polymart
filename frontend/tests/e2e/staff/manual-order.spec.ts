@@ -14,6 +14,7 @@
 
 import { expect, test, type Page } from "@playwright/test";
 
+import { formatCurrency } from "../../../src/lib/format";
 import messages from "../../../src/i18n/messages/fa.json";
 import { ADDRESS, PRODUCTS } from "../fixtures/seed";
 
@@ -24,7 +25,9 @@ const addresses = messages.addresses;
 const hb250 = PRODUCTS.houseBlend.variants[0]; // 120,000
 
 function money(amount: number): string {
-  return new Intl.NumberFormat("fa-IR", { style: "currency", currency: "IRR" }).format(amount);
+  // Delegate to the app's own formatter (its single source of truth) so the E2E
+  // assertions render money exactly as the UI does -- IRR presented in Toman.
+  return formatCurrency(amount, "IRR");
 }
 
 async function fillInlineAddress(page: Page): Promise<void> {

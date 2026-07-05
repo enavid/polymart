@@ -17,8 +17,10 @@ import {
 } from "@/components/ui/table";
 import { ApiError } from "@/lib/api/client";
 import { cancelOrder, getMyOrder, type Order } from "@/lib/api/orders";
+import { getPaymentForOrder, type Payment } from "@/lib/api/payments";
 import { formatJalaliDateTime, formatMoneyString } from "@/lib/format";
 import { orderStatusKey } from "@/lib/orders/status";
+import { paymentMethodKey, paymentStatusKey } from "@/lib/payments/labels";
 
 // The happy-path lifecycle, in order, for the status stepper. Cancellation is a
 // terminal branch shown separately rather than a step.
@@ -30,6 +32,7 @@ const TIMELINE: ReadonlyArray<"pending" | "paid" | "fulfilled"> = [
 
 const ORDER_KEY = (number: string) => ["order", number] as const;
 const ORDERS_LIST_KEY = ["orders"] as const;
+const PAYMENT_KEY = (number: string) => ["payment", "order", number] as const;
 
 /** One of the shopper's own orders: captured lines, status timeline, and cancel.
  *
@@ -118,6 +121,8 @@ export function OrderDetail({ number }: { number: string }) {
         </div>
       </section>
 
+      <PaymentSection number={order.number} />
+
       <Table>
         <TableHeader>
           <TableRow>
@@ -191,6 +196,59 @@ export function OrderDetail({ number }: { number: string }) {
         ) : null}
       </div>
     </div>
+  );
+}
+
+/**
+ * The order's payment: method and status, read owner-scoped from the payment context.
+ *
+ * A pending order created before its payment (a rare window, or a legacy order) has none,
+ * which the backend returns as a 404; that is shown as a muted "no payment" note rather
+ * than an error. The amount is not repeated here -- it is the order total shown below --
+ * so there is a single source of truth for money on the page.
+ */
+function PaymentSection({ number }: { number: string }) {
+  const t = useTranslations("payment");
+
+  const query = useQuery({
+    queryKey: PAYMENT_KEY(number),
+    queryFn: () => getPaymentForOrder(number),
+    retry: false,
+  });
+
+  if (query.isLoading) {
+    return null;
+  }
+
+  if (query.isError) {
+    const notFound = query.error instanceof ApiError && query.error.status === 404;
+    return (
+      <section className="flex flex-col gap-2">
+        <h2 className="text-sm font-medium text-muted-foreground">{t("sectionTitle")}</h2>
+        <p className="text-sm text-muted-foreground">{notFound ? t("none") : t("loadError")}</p>
+      </section>
+    );
+  }
+
+  const payment = query.data as Payment;
+
+  return (
+    <section className="flex flex-col gap-2">
+      <h2 className="text-sm font-medium text-muted-foreground">{t("sectionTitle")}</h2>
+      <div className="flex flex-col gap-1 rounded-xl border border-border p-4 text-sm">
+        <div className="flex items-center justify-between">
+          <span className="text-muted-foreground">{t("method")}</span>
+          <span className="font-medium">{t(paymentMethodKey(payment.method))}</span>
+        </div>
+        <div className="flex items-center justify-between">
+          <span className="text-muted-foreground">{t("status")}</span>
+          <span className="font-medium">{t(paymentStatusKey(payment.status))}</span>
+        </div>
+        {payment.method === "cod" ? (
+          <p className="text-muted-foreground">{t("codHint")}</p>
+        ) : null}
+      </div>
+    </section>
   );
 }
 

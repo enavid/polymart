@@ -28,14 +28,30 @@ import {
 import { getCart, type Cart } from "@/lib/api/cart";
 import { ApiError } from "@/lib/api/client";
 import { placeOrder, type Order, type PlaceOrderShipping } from "@/lib/api/orders";
+import { initiatePayment, type PaymentMethod } from "@/lib/api/payments";
 import { formatMoneyString } from "@/lib/format";
 import { useCurrentUser } from "@/lib/hooks/use-auth";
+import { paymentMethodKey } from "@/lib/payments/labels";
 import { STOREFRONT_CHANNEL } from "@/lib/storefront/channel";
 
 const CART_KEY = (channel: string) => ["cart", channel] as const;
 const ADDRESSES_KEY = ["addresses"] as const;
 
 type Step = "address" | "review";
+
+/**
+ * The payment methods offered at checkout. Only COD is wired end to end in this slice;
+ * the online gateway and card-to-card are shown so the choice is visible but disabled
+ * ("coming soon") until their slices land. The backend is the source of truth -- it
+ * rejects an unsupported method -- so a disabled option can never be submitted.
+ */
+const PAYMENT_METHODS: ReadonlyArray<{ value: PaymentMethod; enabled: boolean }> = [
+  { value: "cod", enabled: true },
+  { value: "online", enabled: false },
+  { value: "card_to_card", enabled: false },
+];
+
+const DEFAULT_METHOD: PaymentMethod = "cod";
 
 /** The seven display fields shared by a saved address and a guest's inline one. */
 type ShippingDisplay = {
@@ -107,12 +123,26 @@ export function CheckoutView() {
   );
 }
 
-/** Hook: place the order and, on success, drop the cached cart and go to the order. */
-function usePlaceOrder(channel: string) {
+interface CheckoutInput {
+  shipping: PlaceOrderShipping;
+  method: PaymentMethod;
+}
+
+/**
+ * Hook: place the order, initiate the chosen payment against it, then drop the cached
+ * cart and go to the order. Placement and payment are two bounded contexts, so this is
+ * two sequential calls; for COD the payment simply records "pay on delivery" (no external
+ * step), and the order confirmation shows it.
+ */
+function useCheckout(channel: string) {
   const queryClient = useQueryClient();
   const router = useRouter();
   return useMutation({
-    mutationFn: (shipping: PlaceOrderShipping) => placeOrder(channel, shipping),
+    mutationFn: async ({ shipping, method }: CheckoutInput) => {
+      const order = await placeOrder(channel, shipping);
+      await initiatePayment(order.number, method);
+      return order;
+    },
     onSuccess: (order: Order) => {
       // The cart is now consumed; drop the cached copy so a revisit refetches the
       // (empty) cart rather than showing stale lines.
@@ -160,7 +190,7 @@ function UserCheckout({ cart, channel }: FlowProps) {
     },
   });
 
-  const place = usePlaceOrder(channel);
+  const place = useCheckout(channel);
 
   if (addressesQuery.isLoading) {
     return <p>{tCommon("loading")}</p>;
@@ -215,7 +245,7 @@ function UserCheckout({ cart, channel }: FlowProps) {
           address={selected}
           cart={cart}
           onBack={() => setStep("address")}
-          onPlace={() => place.mutate({ addressId: selected.id })}
+          onPlace={(method) => place.mutate({ shipping: { addressId: selected.id }, method })}
           placing={place.isPending}
           placeError={place.isError ? t("placeError") : null}
           blocked={hasUnavailable}
@@ -234,7 +264,7 @@ function GuestCheckout({ cart, channel }: FlowProps) {
   const [step, setStep] = useState<Step>("address");
   const [shipping, setShipping] = useState<AddressInput | null>(null);
 
-  const place = usePlaceOrder(channel);
+  const place = useCheckout(channel);
 
   const hasUnavailable = cart.items.some((line) => !line.available);
 
@@ -270,7 +300,9 @@ function GuestCheckout({ cart, channel }: FlowProps) {
           address={inlineToDisplay(shipping)}
           cart={cart}
           onBack={() => setStep("address")}
-          onPlace={() => place.mutate({ shippingAddress: shipping })}
+          onPlace={(method) =>
+            place.mutate({ shipping: { shippingAddress: shipping }, method })
+          }
           placing={place.isPending}
           placeError={place.isError ? t("placeError") : null}
           blocked={hasUnavailable}
@@ -413,7 +445,7 @@ interface ReviewStepProps {
   address: ShippingDisplay;
   cart: Cart;
   onBack: () => void;
-  onPlace: () => void;
+  onPlace: (method: PaymentMethod) => void;
   placing: boolean;
   placeError: string | null;
   blocked: boolean;
@@ -422,6 +454,7 @@ interface ReviewStepProps {
 function ReviewStep({ address, cart, onBack, onPlace, placing, placeError, blocked }: ReviewStepProps) {
   const t = useTranslations("checkout");
   const tCart = useTranslations("cart");
+  const [method, setMethod] = useState<PaymentMethod>(DEFAULT_METHOD);
 
   return (
     <div className="flex flex-col gap-6">
@@ -444,6 +477,8 @@ function ReviewStep({ address, cart, onBack, onPlace, placing, placeError, block
           </CardContent>
         </Card>
       </section>
+
+      <PaymentMethodStep method={method} onSelect={setMethod} />
 
       <section className="flex flex-col gap-2">
         <h3 className="text-sm font-medium text-muted-foreground">{t("orderSummary")}</h3>
@@ -481,10 +516,61 @@ function ReviewStep({ address, cart, onBack, onPlace, placing, placeError, block
         <Button type="button" variant="outline" onClick={onBack} disabled={placing}>
           {t("back")}
         </Button>
-        <Button type="button" onClick={onPlace} disabled={placing || blocked}>
+        <Button type="button" onClick={() => onPlace(method)} disabled={placing || blocked}>
           {placing ? t("placing") : t("placeOrder")}
         </Button>
       </div>
     </div>
+  );
+}
+
+/**
+ * The payment-method chooser shown in the review step. Only enabled methods are
+ * selectable; the others render disabled with a "coming soon" note so the roadmap is
+ * visible without offering a path that the backend would reject.
+ */
+function PaymentMethodStep({
+  method,
+  onSelect,
+}: {
+  method: PaymentMethod;
+  onSelect: (method: PaymentMethod) => void;
+}) {
+  const t = useTranslations("payment");
+
+  return (
+    <section className="flex flex-col gap-2">
+      <h3 className="text-sm font-medium text-muted-foreground">{t("method")}</h3>
+      <fieldset className="flex flex-col gap-3">
+        <legend className="sr-only">{t("chooseMethod")}</legend>
+        {PAYMENT_METHODS.map(({ value, enabled }) => (
+          <label
+            key={value}
+            className={`flex cursor-pointer items-start gap-3 rounded-xl border border-border p-4 ${
+              enabled ? "" : "cursor-not-allowed opacity-60"
+            }`}
+          >
+            <input
+              type="radio"
+              name="payment_method"
+              className="mt-1"
+              value={value}
+              checked={method === value}
+              disabled={!enabled}
+              onChange={() => onSelect(value)}
+            />
+            <span className="flex flex-col gap-1 text-sm">
+              <span className="flex items-center gap-2 font-medium">
+                {t(paymentMethodKey(value))}
+                {enabled ? null : <Badge variant="inactive">{t("comingSoon")}</Badge>}
+              </span>
+              {value === "cod" ? (
+                <span className="text-muted-foreground">{t("codHint")}</span>
+              ) : null}
+            </span>
+          </label>
+        ))}
+      </fieldset>
+    </section>
   );
 }

@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { screen, waitFor } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { setupServer } from "msw/node";
 import { http, HttpResponse } from "msw";
@@ -17,6 +17,22 @@ afterEach(() => {
 });
 afterAll(() => server.close());
 
+const NUMBER = "ORD-ABC123XYZ0";
+
+/** A COD payment for the order (used as the default in `authed`). */
+function codPayment(overrides: Record<string, unknown> = {}) {
+  return {
+    reference: "PAY-ABC123XYZ00",
+    order_number: NUMBER,
+    method: "cod",
+    amount: "240000.0000",
+    currency: "IRR",
+    status: "pending",
+    created_at: "2026-07-02T12:00:00Z",
+    ...overrides,
+  };
+}
+
 function authed() {
   markSignedIn();
   server.use(
@@ -29,10 +45,11 @@ function authed() {
         is_staff: false,
       }),
     ),
+    // The order-detail page reads the order's payment; default to a COD one so every
+    // test has it. Tests about the payment block itself override this handler.
+    http.get(`*/payments/for-order/${NUMBER}/`, () => HttpResponse.json(codPayment())),
   );
 }
-
-const NUMBER = "ORD-ABC123XYZ0";
 
 function order(overrides: Record<string, unknown> = {}) {
   return {
@@ -68,10 +85,42 @@ describe("OrderDetail", () => {
     expect(await screen.findByText("HB-250")).toBeInTheDocument();
     // The total shown is the backend string, formatted -- never recomputed client-side.
     expect(screen.getByText(messages.orders.total)).toBeInTheDocument();
-    expect(screen.getByText(messages.orders.statusPending)).toBeInTheDocument();
+    // The order-status label appears in the timeline (the payment status shares the same
+    // Persian text, so scope this to the timeline list).
+    const timeline = screen.getByRole("list", { name: messages.orders.timeline });
+    expect(within(timeline).getByText(messages.orders.statusPending)).toBeInTheDocument();
     // The captured shipping address is shown.
     expect(screen.getByText(messages.orders.shippingAddress)).toBeInTheDocument();
     expect(screen.getByText("Sara Ahmadi")).toBeInTheDocument();
+  });
+
+  it("shows the payment method and status block", async () => {
+    authed();
+    server.use(http.get(`*/orders/${NUMBER}/`, () => HttpResponse.json(order())));
+
+    renderWithProviders(<OrderDetail number={NUMBER} />);
+
+    const heading = await screen.findByText(messages.payment.sectionTitle);
+    const section = heading.closest("section") as HTMLElement;
+    expect(within(section).getByText(messages.payment.methodCod)).toBeInTheDocument();
+    // The payment status (pending) is shown via its localized label, scoped to the block.
+    expect(within(section).getByText(messages.payment.statusPending)).toBeInTheDocument();
+  });
+
+  it("shows a muted note when the order has no payment (404)", async () => {
+    authed();
+    server.use(
+      http.get(`*/orders/${NUMBER}/`, () => HttpResponse.json(order())),
+      http.get(`*/payments/for-order/${NUMBER}/`, () =>
+        HttpResponse.json({ detail: "payment not found" }, { status: 404 }),
+      ),
+    );
+
+    renderWithProviders(<OrderDetail number={NUMBER} />);
+
+    // The order still renders; the payment section shows the "none" note, not an error.
+    expect(await screen.findByText("HB-250")).toBeInTheDocument();
+    expect(await screen.findByText(messages.payment.none)).toBeInTheDocument();
   });
 
   it("shows a not-found message for another user's / missing order (404)", async () => {

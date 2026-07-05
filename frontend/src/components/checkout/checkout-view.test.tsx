@@ -68,6 +68,26 @@ const checkout = messages.checkout;
 
 const addresses = messages.addresses;
 
+const payment = messages.payment;
+
+/** A COD initiation response for the just-placed order (next_action "none"). */
+function codInitiation(orderNumber: string) {
+  return HttpResponse.json(
+    {
+      reference: "PAY-ABC123XYZ00",
+      order_number: orderNumber,
+      method: "cod",
+      amount: "240000.0000",
+      currency: "IRR",
+      status: "pending",
+      created_at: "2026-07-02T12:00:00Z",
+      next_action: "none",
+      redirect_url: null,
+    },
+    { status: 201 },
+  );
+}
+
 describe("CheckoutView", () => {
   it("lets a guest check out with an inline shipping address (no login)", async () => {
     // No session: the guest sees an inline shipping form instead of an address book,
@@ -99,6 +119,7 @@ describe("CheckoutView", () => {
           { status: 201 },
         );
       }),
+      http.post("*/payments/", () => codInitiation("ORD-GUEST00001")),
     );
 
     renderWithProviders(<CheckoutView />);
@@ -169,6 +190,7 @@ describe("CheckoutView", () => {
           { status: 201 },
         );
       }),
+      http.post("*/payments/", () => codInitiation("ORD-ABC123XYZ0")),
     );
 
     renderWithProviders(<CheckoutView />);
@@ -184,6 +206,51 @@ describe("CheckoutView", () => {
     await waitFor(() => expect(push).toHaveBeenCalledWith("/orders/ORD-ABC123XYZ0"));
     // The chosen saved address id is what was submitted (a snapshot is captured server-side).
     expect(placedBody).toEqual({ channel: "ir-main", address_id: "ADDR-HOME000001" });
+  });
+
+  it("initiates a COD payment for the placed order and shows the method choices", async () => {
+    authed();
+    let paidBody: unknown;
+    server.use(
+      http.get("*/cart/", () => HttpResponse.json(cartWithLine)),
+      http.get("*/addresses/", () => HttpResponse.json([savedAddress])),
+      http.post("*/orders/", () =>
+        HttpResponse.json(
+          {
+            number: "ORD-ABC123XYZ0",
+            channel: "ir-main",
+            currency: "IRR",
+            status: "pending",
+            total: "240000.0000",
+            placed_at: "2026-07-02T12:00:00Z",
+            items: [],
+            shipping_address: { ...savedAddress },
+          },
+          { status: 201 },
+        ),
+      ),
+      http.post("*/payments/", async ({ request }) => {
+        paidBody = await request.json();
+        return codInitiation("ORD-ABC123XYZ0");
+      }),
+    );
+
+    renderWithProviders(<CheckoutView />);
+    await screen.findByText("Sara Ahmadi");
+    await userEvent.click(screen.getByRole("button", { name: checkout.continue }));
+
+    // The review step offers COD (selectable) and the not-yet-available methods (disabled).
+    // Labels wrap extra hint/badge text, so match the method name as a substring.
+    const cod = await screen.findByLabelText(payment.methodCod, { exact: false });
+    expect(cod).toBeChecked();
+    expect(screen.getByLabelText(payment.methodOnline, { exact: false })).toBeDisabled();
+    expect(screen.getByLabelText(payment.methodCardToCard, { exact: false })).toBeDisabled();
+
+    await userEvent.click(screen.getByRole("button", { name: checkout.placeOrder }));
+
+    await waitFor(() => expect(push).toHaveBeenCalledWith("/orders/ORD-ABC123XYZ0"));
+    // The chosen method (COD) is initiated against the just-placed order.
+    expect(paidBody).toEqual({ order_number: "ORD-ABC123XYZ0", method: "cod" });
   });
 
   it("surfaces a place-order conflict (e.g. oversell) without navigating", async () => {

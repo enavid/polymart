@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useTranslations } from "next-intl";
+import { Suspense } from "react";
 
 import { AccountMenu } from "@/components/layout/account-menu";
 import { HeaderSearch } from "@/components/layout/header-search";
@@ -47,7 +48,11 @@ export function SiteHeader() {
             </span>
             {tCommon("appName")}
           </Link>
-          <HeaderSearch className="hidden w-56 md:block lg:w-72" />
+          {/* HeaderSearch reads `useSearchParams`, which must sit under a Suspense
+              boundary or every statically-prerendered page bails out of the build. */}
+          <Suspense fallback={<div className="hidden w-56 md:block lg:w-72" />}>
+            <HeaderSearch className="hidden w-56 md:block lg:w-72" />
+          </Suspense>
         </div>
 
         <nav className="flex items-center gap-1">

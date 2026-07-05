@@ -16,10 +16,13 @@ const account = messages.account;
 test("account page shows the signed-in shopper's profile", async ({ page }) => {
   await page.goto("/account");
 
+  // Scope profile assertions to <main>: the header account menu also shows the shopper's
+  // name, so an unscoped getByText would match two elements (strict-mode violation).
+  const main = page.getByRole("main");
   await expect(page.getByRole("heading", { name: account.title })).toBeVisible();
-  await expect(page.getByText(SHOPPER.canonicalPhone)).toBeVisible();
-  await expect(page.getByText(SHOPPER.fullName, { exact: true })).toBeVisible();
+  await expect(main.getByText(SHOPPER.canonicalPhone)).toBeVisible();
+  await expect(main.getByText(SHOPPER.fullName, { exact: true })).toBeVisible();
   // The shopper is not staff.
-  await expect(page.getByText(account.staffLabel)).toBeVisible();
-  await expect(page.getByText(account.no, { exact: true })).toBeVisible();
+  await expect(main.getByText(account.staffLabel)).toBeVisible();
+  await expect(main.getByText(account.no, { exact: true })).toBeVisible();
 });
