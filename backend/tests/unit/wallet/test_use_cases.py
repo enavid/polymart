@@ -21,11 +21,16 @@ from src.application.wallet.ports import Clock, UnitOfWork, WalletRepository
 from src.application.wallet.use_cases import (
     CreditWallet,
     CreditWalletCommand,
+    DebitWallet,
+    DebitWalletCommand,
     GetMyWallet,
 )
 from src.domain.audit.entities import FieldChange
 from src.domain.wallet.entities import Wallet, WalletMovement, WalletTransaction
-from src.domain.wallet.exceptions import WalletCurrencyMismatchError
+from src.domain.wallet.exceptions import (
+    InsufficientWalletFundsError,
+    WalletCurrencyMismatchError,
+)
 from src.domain.wallet.value_objects import Money, TransactionType
 
 _OWNER = "u:7"
@@ -236,6 +241,127 @@ class TestCreditWallet:
             use_case.execute(_credit_command())
 
         event = next(log for log in logs if log["event"] == "wallet_credited")
+        assert "amount" not in event  # money detail lives on the audit entry, not the log
+        assert event["currency"] == "IRR"
+
+
+# --- DebitWallet ---------------------------------------------------------
+
+
+def _build_debit(
+    *, wallets: FakeWallets | None = None, uow: FakeUnitOfWork | None = None
+) -> tuple[DebitWallet, FakeWallets, FakeUnitOfWork, RecordingAudit]:
+    wallets = wallets or FakeWallets()
+    uow = uow or FakeUnitOfWork()
+    audit = RecordingAudit()
+    use_case = DebitWallet(unit_of_work=uow, wallets=wallets, clock=FakeClock(), audit=audit)
+    return use_case, wallets, uow, audit
+
+
+def _debit_command(
+    *, amount: str = "150.00", source_reference: str | None = "PAY-XYZ"
+) -> DebitWalletCommand:
+    return DebitWalletCommand(
+        owner=_OWNER,
+        amount=Decimal(amount),
+        currency="IRR",
+        reason="order_payment",
+        actor=_OWNER,
+        source_reference=source_reference,
+    )
+
+
+def _seed_funded(wallets: FakeWallets, balance: str) -> None:
+    wallets.seed(
+        Wallet.empty(owner=_OWNER, currency="IRR")
+        .credit(_money(balance), reason="refund", source_reference="SEED", at=_AT)
+        .wallet
+    )
+
+
+class TestDebitWallet:
+    def test_debits_an_existing_wallet_and_records_a_ledger_entry(self) -> None:
+        wallets = FakeWallets()
+        _seed_funded(wallets, "150.00")
+        use_case, _, uow, _ = _build_debit(wallets=wallets)
+
+        txn = use_case.execute(_debit_command())
+
+        assert txn.type == TransactionType.DEBIT
+        assert txn.amount == _money("150.00")
+        assert txn.balance_after == _money("0")
+        assert wallets.get_for_owner(_OWNER).balance == _money("0")
+        assert uow.committed is True
+        assert wallets.locked == [_OWNER]  # the wallet row was locked
+
+    def test_leaves_the_remaining_balance_on_a_partial_spend(self) -> None:
+        wallets = FakeWallets()
+        _seed_funded(wallets, "150.00")
+        use_case, _, _, _ = _build_debit(wallets=wallets)
+
+        use_case.execute(_debit_command(amount="60.00"))
+
+        assert wallets.get_for_owner(_OWNER).balance == _money("90.00")
+
+    def test_records_a_money_audit_entry_with_before_and_after_balance(self) -> None:
+        wallets = FakeWallets()
+        _seed_funded(wallets, "150.00")
+        use_case, _, _, audit = _build_debit(wallets=wallets)
+
+        use_case.execute(_debit_command())
+
+        assert len(audit.records) == 1
+        record = audit.records[0]
+        assert record["action"] == "wallet.debited"
+        assert record["resource_type"] == "wallet"
+        assert record["actor"] == _OWNER
+        balance_change = next(c for c in record["changes"] if c.field == "balance")
+        assert balance_change.before == "150.00"
+        assert balance_change.after == "0.00"
+
+    def test_refuses_a_debit_that_exceeds_the_balance_and_rolls_back(self) -> None:
+        wallets = FakeWallets()
+        _seed_funded(wallets, "100.00")
+        use_case, _, uow, audit = _build_debit(wallets=wallets)
+
+        with pytest.raises(InsufficientWalletFundsError):
+            use_case.execute(_debit_command(amount="150.00"))
+
+        assert wallets.get_for_owner(_OWNER).balance == _money("100.00")  # untouched
+        assert uow.rolled_back is True
+        assert uow.committed is False
+        assert audit.records == []
+
+    def test_refuses_a_debit_from_a_wallet_that_does_not_exist(self) -> None:
+        use_case, wallets, uow, _ = _build_debit()
+
+        with pytest.raises(InsufficientWalletFundsError):
+            use_case.execute(_debit_command())
+
+        assert wallets.get_for_owner(_OWNER) is None  # no wallet was created
+        assert uow.rolled_back is True
+
+    def test_is_idempotent_on_a_repeated_source_reference(self) -> None:
+        wallets = FakeWallets()
+        _seed_funded(wallets, "150.00")
+        use_case, _, _, audit = _build_debit(wallets=wallets)
+
+        first = use_case.execute(_debit_command(amount="150.00"))
+        second = use_case.execute(_debit_command(amount="150.00"))  # same source reference
+
+        assert first.id == second.id  # the same stored entry is returned
+        assert wallets.get_for_owner(_OWNER).balance == _money("0")  # not debited twice
+        assert len(audit.records) == 1  # only the first debit was audited
+
+    def test_logs_the_debit_without_the_amount(self) -> None:
+        wallets = FakeWallets()
+        _seed_funded(wallets, "150.00")
+        use_case, _, _, _ = _build_debit(wallets=wallets)
+
+        with capture_logs() as logs:
+            use_case.execute(_debit_command())
+
+        event = next(log for log in logs if log["event"] == "wallet_debited")
         assert "amount" not in event  # money detail lives on the audit entry, not the log
         assert event["currency"] == "IRR"
 

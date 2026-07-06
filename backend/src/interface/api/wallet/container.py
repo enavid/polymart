@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from django.conf import settings
 
-from src.application.wallet.use_cases import CreditWallet, GetMyWallet
+from src.application.wallet.use_cases import CreditWallet, DebitWallet, GetMyWallet
 from src.infrastructure.wallet.clock import SystemClock
 from src.infrastructure.wallet.repositories import DjangoUnitOfWork, DjangoWalletRepository
 from src.interface.api.audit.container import build_audit_recorder
@@ -18,6 +18,15 @@ from src.interface.api.audit.container import build_audit_recorder
 
 def build_credit_wallet() -> CreditWallet:
     return CreditWallet(
+        unit_of_work=DjangoUnitOfWork(),
+        wallets=DjangoWalletRepository(),
+        clock=SystemClock(),
+        audit=build_audit_recorder(),
+    )
+
+
+def build_debit_wallet() -> DebitWallet:
+    return DebitWallet(
         unit_of_work=DjangoUnitOfWork(),
         wallets=DjangoWalletRepository(),
         clock=SystemClock(),

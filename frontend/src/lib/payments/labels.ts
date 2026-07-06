@@ -12,6 +12,7 @@ const METHOD_KEYS: Record<PaymentMethod, string> = {
   cod: "methodCod",
   card_to_card: "methodCardToCard",
   online: "methodOnline",
+  wallet: "methodWallet",
 };
 
 const STATUS_KEYS: Record<PaymentStatus, string> = {

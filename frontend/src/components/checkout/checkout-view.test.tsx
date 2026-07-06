@@ -33,6 +33,36 @@ function authed() {
         is_staff: false,
       }),
     ),
+    // Default: an empty wallet, so the checkout's wallet read is always satisfied and the
+    // pay-with-wallet option is not offered. Tests that need a funded wallet override this.
+    http.get("*/wallet/", () =>
+      HttpResponse.json({ balance: "0", currency: "IRR", transactions: [] }),
+    ),
+  );
+}
+
+/** A funded wallet read for the pay-with-wallet tests. */
+function walletBalance(balance: string) {
+  return http.get("*/wallet/", () =>
+    HttpResponse.json({ balance, currency: "IRR", transactions: [] }),
+  );
+}
+
+/** A captured wallet-payment initiation (settled instantly; next_action "none"). */
+function walletInitiation(orderNumber: string) {
+  return HttpResponse.json(
+    {
+      reference: "PAY-WALLET00001",
+      order_number: orderNumber,
+      method: "wallet",
+      amount: "240000.0000",
+      currency: "IRR",
+      status: "captured",
+      created_at: "2026-07-02T12:00:00Z",
+      next_action: "none",
+      redirect_url: null,
+    },
+    { status: 201 },
   );
 }
 
@@ -136,8 +166,13 @@ describe("CheckoutView", () => {
     await userEvent.type(screen.getByLabelText(addresses.line1), "Chaharbagh St, No. 9");
     await userEvent.click(screen.getByRole("button", { name: addresses.save }));
 
-    // Review step: place the order.
-    await userEvent.click(await screen.findByRole("button", { name: checkout.placeOrder }));
+    // Review step: a guest is never offered pay-with-wallet (no account, no wallet).
+    await screen.findByRole("button", { name: checkout.placeOrder });
+    expect(
+      screen.queryByLabelText(payment.methodWallet, { exact: false }),
+    ).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: checkout.placeOrder }));
 
     await waitFor(() => expect(push).toHaveBeenCalledWith("/orders/ORD-GUEST00001"));
     // A one-off inline address is submitted -- never an address_id (a guest has no book).
@@ -315,6 +350,67 @@ describe("CheckoutView", () => {
     );
     expect(paidBody).toEqual({ order_number: "ORD-ONLINE0001", method: "online" });
     expect(push).not.toHaveBeenCalled();
+  });
+
+  it("offers pay-with-wallet when the balance covers the order and settles it instantly", async () => {
+    authed();
+    let paidBody: unknown;
+    server.use(
+      http.get("*/cart/", () => HttpResponse.json(cartWithLine)),
+      http.get("*/addresses/", () => HttpResponse.json([savedAddress])),
+      walletBalance("300000.0000"), // covers the 240000 order total
+      http.post("*/orders/", () =>
+        HttpResponse.json(
+          {
+            number: "ORD-WALLET0001",
+            channel: "ir-main",
+            currency: "IRR",
+            status: "pending",
+            total: "240000.0000",
+            placed_at: "2026-07-02T12:00:00Z",
+            items: [],
+            shipping_address: { ...savedAddress },
+          },
+          { status: 201 },
+        ),
+      ),
+      http.post("*/payments/", async ({ request }) => {
+        paidBody = await request.json();
+        return walletInitiation("ORD-WALLET0001");
+      }),
+    );
+
+    renderWithProviders(<CheckoutView />);
+    await screen.findByText("Sara Ahmadi");
+    await userEvent.click(screen.getByRole("button", { name: checkout.continue }));
+
+    // The wallet option is offered and selectable (the balance covers the total).
+    const walletOption = await screen.findByLabelText(payment.methodWallet, { exact: false });
+    expect(walletOption).toBeEnabled();
+    await userEvent.click(walletOption);
+    await userEvent.click(screen.getByRole("button", { name: checkout.placeOrder }));
+
+    // A captured wallet payment is settled server-side; the shopper lands on the paid order.
+    await waitFor(() => expect(push).toHaveBeenCalledWith("/orders/ORD-WALLET0001"));
+    expect(paidBody).toEqual({ order_number: "ORD-WALLET0001", method: "wallet" });
+  });
+
+  it("shows pay-with-wallet disabled when the balance is short", async () => {
+    authed();
+    server.use(
+      http.get("*/cart/", () => HttpResponse.json(cartWithLine)),
+      http.get("*/addresses/", () => HttpResponse.json([savedAddress])),
+      walletBalance("100000.0000"), // some credit, but less than the 240000 total
+    );
+
+    renderWithProviders(<CheckoutView />);
+    await screen.findByText("Sara Ahmadi");
+    await userEvent.click(screen.getByRole("button", { name: checkout.continue }));
+
+    // The option is shown (there is some credit) but not selectable, with an explanation.
+    const walletOption = await screen.findByLabelText(payment.methodWallet, { exact: false });
+    expect(walletOption).toBeDisabled();
+    expect(screen.getByText(payment.walletInsufficient)).toBeInTheDocument();
   });
 
   it("surfaces a place-order conflict (e.g. oversell) without navigating", async () => {

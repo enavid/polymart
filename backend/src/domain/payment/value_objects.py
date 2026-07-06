@@ -141,14 +141,18 @@ class PaymentMethod(StrEnum):
       courier on hand-over (the capture-on-delivery step belongs to the operations phase).
     * ``CARD_TO_CARD`` -- a manual bank card transfer, verified by staff.
     * ``ONLINE`` -- an Iranian payment gateway (redirect/callback), added in a later slice.
+    * ``WALLET`` -- the shopper's internal store credit: settled synchronously and internally
+      at checkout (no gateway), debiting the wallet balance for the order total.
 
-    Only methods with a registered gateway adapter can actually be initiated; the others
-    are recognised values that raise ``UnsupportedPaymentMethodError`` until their slice.
+    Only methods with a registered gateway adapter (or, for ``WALLET``, a dedicated use case)
+    can actually be initiated; the others are recognised values that raise
+    ``UnsupportedPaymentMethodError`` until their slice.
     """
 
     COD = "cod"
     CARD_TO_CARD = "card_to_card"
     ONLINE = "online"
+    WALLET = "wallet"
 
 
 class PaymentStatus(StrEnum):

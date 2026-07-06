@@ -24,6 +24,7 @@ export const WALLET_KEY = ["wallet"] as const;
 const REASON_KEYS: Record<string, string> = {
   refund: "reasonRefund",
   adjustment: "reasonAdjustment",
+  order_payment: "reasonOrderPayment",
 };
 
 /**

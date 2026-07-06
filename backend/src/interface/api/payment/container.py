@@ -22,6 +22,7 @@ from src.application.payment.use_cases import (
     GetPaymentByGatewayReference,
     GetPaymentForOrder,
     InitiatePayment,
+    PayWithWallet,
     RefundPayment,
 )
 from src.infrastructure.payment.clock import SystemClock
@@ -39,8 +40,9 @@ from src.infrastructure.payment.repositories import (
     DjangoUnitOfWork,
 )
 from src.infrastructure.payment.wallet_credit import WalletCreditAdapter
+from src.infrastructure.payment.wallet_debit import WalletDebitAdapter
 from src.interface.api.audit.container import build_audit_recorder
-from src.interface.api.wallet.container import build_credit_wallet
+from src.interface.api.wallet.container import build_credit_wallet, build_debit_wallet
 
 # Zarinpal endpoints, keyed by whether the sandbox is in use (production config).
 _ZARINPAL_HOSTS = {
@@ -75,6 +77,19 @@ def build_initiate_payment() -> InitiatePayment:
         orders=DjangoOrderReader(),
         payments=DjangoPaymentRepository(),
         gateways=build_gateway_registry(),
+        references=SecurePaymentReferenceGenerator(),
+        clock=SystemClock(),
+        audit=build_audit_recorder(),
+    )
+
+
+def build_pay_with_wallet() -> PayWithWallet:
+    return PayWithWallet(
+        unit_of_work=DjangoUnitOfWork(),
+        orders=DjangoOrderReader(),
+        payments=DjangoPaymentRepository(),
+        wallet_debit=WalletDebitAdapter(build_debit_wallet()),
+        paid_orders=DjangoPaidOrders(),
         references=SecurePaymentReferenceGenerator(),
         clock=SystemClock(),
         audit=build_audit_recorder(),

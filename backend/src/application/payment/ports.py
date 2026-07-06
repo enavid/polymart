@@ -273,6 +273,37 @@ class WalletCredit(ABC):
         """Credit ``amount`` (``Decimal``, never a float) to the owner's wallet."""
 
 
+class WalletDebit(ABC):
+    """Narrow boundary onto the wallet context: spend a shopper's store-credit balance.
+
+    The payment context does not own wallets; pay-with-wallet only signals that the order
+    total should be taken from internal credit. The adapter delegates to the wallet's own
+    debit use case, running inside the payment's transaction (so the wallet debit and the
+    payment's capture commit together) and idempotently by ``source_reference`` (a defensive
+    second guard on top of the order's single-active-payment rule).
+
+    A balance that cannot cover the amount is refused by raising the payment context's own
+    ``InsufficientWalletBalanceError`` -- the adapter translates the wallet's insufficient-funds
+    error, so no wallet-domain exception crosses this seam.
+    """
+
+    @abstractmethod
+    def debit(
+        self,
+        *,
+        owner: str,
+        amount: Decimal,
+        currency: str,
+        source_reference: str,
+        reason: str,
+        actor: str,
+    ) -> None:
+        """Debit ``amount`` (``Decimal``, never a float) from the owner's wallet.
+
+        Raises ``InsufficientWalletBalanceError`` if the balance cannot cover it.
+        """
+
+
 class PaymentReferenceGenerator(ABC):
     """Source of a fresh, unguessable payment reference, injected for deterministic tests."""
 

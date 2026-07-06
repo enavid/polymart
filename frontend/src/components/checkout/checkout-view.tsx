@@ -33,6 +33,7 @@ import {
   type PaymentInitiation,
   type PaymentMethod,
 } from "@/lib/api/payments";
+import { getWallet, type Wallet } from "@/lib/api/wallet";
 import { formatMoneyString } from "@/lib/format";
 import { useCurrentUser } from "@/lib/hooks/use-auth";
 import { paymentMethodKey } from "@/lib/payments/labels";
@@ -40,14 +41,16 @@ import { STOREFRONT_CHANNEL } from "@/lib/storefront/channel";
 
 const CART_KEY = (channel: string) => ["cart", channel] as const;
 const ADDRESSES_KEY = ["addresses"] as const;
+const WALLET_KEY = ["wallet"] as const;
 
 type Step = "address" | "review";
 
 /**
- * The payment methods offered at checkout. Only COD is wired end to end in this slice;
- * the online gateway and card-to-card are shown so the choice is visible but disabled
- * ("coming soon") until their slices land. The backend is the source of truth -- it
- * rejects an unsupported method -- so a disabled option can never be submitted.
+ * The always-available payment methods offered at checkout. COD and the online gateway are
+ * wired end to end; card-to-card is shown but disabled ("coming soon") until its slice lands.
+ * Pay-with-wallet is offered separately (only to a signed-in shopper with enough balance).
+ * The backend is the source of truth -- it rejects an unsupported method -- so a disabled
+ * option can never be submitted.
  */
 const PAYMENT_METHODS: ReadonlyArray<{ value: PaymentMethod; enabled: boolean }> = [
   { value: "cod", enabled: true },
@@ -187,6 +190,11 @@ function UserCheckout({ cart, channel }: FlowProps) {
   const addressesQuery = useQuery({ queryKey: ADDRESSES_KEY, queryFn: listMyAddresses });
   const addresses = addressesQuery.data;
 
+  // The signed-in shopper's wallet funds the pay-with-wallet option. A failed/absent read
+  // simply hides the option (the shopper can still pay another way); the backend re-checks
+  // the balance and refuses an uncovered wallet payment, so this is only an affordance.
+  const walletQuery = useQuery({ queryKey: WALLET_KEY, queryFn: getWallet });
+
   // Preselect the shopper's default address (or the first) once the book loads, so a
   // returning shopper can go straight to review without re-picking every time.
   useEffect(() => {
@@ -259,6 +267,7 @@ function UserCheckout({ cart, channel }: FlowProps) {
         <ReviewStep
           address={selected}
           cart={cart}
+          wallet={walletQuery.data ?? null}
           onBack={() => setStep("address")}
           onPlace={(method) => place.mutate({ shipping: { addressId: selected.id }, method })}
           placing={place.isPending}
@@ -314,6 +323,8 @@ function GuestCheckout({ cart, channel }: FlowProps) {
         <ReviewStep
           address={inlineToDisplay(shipping)}
           cart={cart}
+          // A guest has no account and therefore no wallet -- pay-with-wallet is never offered.
+          wallet={null}
           onBack={() => setStep("address")}
           onPlace={(method) =>
             place.mutate({ shipping: { shippingAddress: shipping }, method })
@@ -459,6 +470,8 @@ function AddressStep({
 interface ReviewStepProps {
   address: ShippingDisplay;
   cart: Cart;
+  /** The signed-in shopper's wallet (for the pay-with-wallet option), or null for a guest. */
+  wallet: Wallet | null;
   onBack: () => void;
   onPlace: (method: PaymentMethod) => void;
   placing: boolean;
@@ -466,7 +479,16 @@ interface ReviewStepProps {
   blocked: boolean;
 }
 
-function ReviewStep({ address, cart, onBack, onPlace, placing, placeError, blocked }: ReviewStepProps) {
+function ReviewStep({
+  address,
+  cart,
+  wallet,
+  onBack,
+  onPlace,
+  placing,
+  placeError,
+  blocked,
+}: ReviewStepProps) {
   const t = useTranslations("checkout");
   const tCart = useTranslations("cart");
   const [method, setMethod] = useState<PaymentMethod>(DEFAULT_METHOD);
@@ -493,7 +515,7 @@ function ReviewStep({ address, cart, onBack, onPlace, placing, placeError, block
         </Card>
       </section>
 
-      <PaymentMethodStep method={method} onSelect={setMethod} />
+      <PaymentMethodStep method={method} onSelect={setMethod} wallet={wallet} total={cart.total} />
 
       <section className="flex flex-col gap-2">
         <h3 className="text-sm font-medium text-muted-foreground">{t("orderSummary")}</h3>
@@ -543,15 +565,29 @@ function ReviewStep({ address, cart, onBack, onPlace, placing, placeError, block
  * The payment-method chooser shown in the review step. Only enabled methods are
  * selectable; the others render disabled with a "coming soon" note so the roadmap is
  * visible without offering a path that the backend would reject.
+ *
+ * The wallet option appears only for a signed-in shopper who has a wallet, and is
+ * selectable only when the balance covers the order total. This gating is a UI affordance:
+ * the backend re-checks the balance and refuses (409) an uncovered wallet payment, so the
+ * order total shown is always the server's, never recomputed here.
  */
 function PaymentMethodStep({
   method,
   onSelect,
+  wallet,
+  total,
 }: {
   method: PaymentMethod;
   onSelect: (method: PaymentMethod) => void;
+  wallet: Wallet | null;
+  total: string;
 }) {
   const t = useTranslations("payment");
+  // Only offer the wallet at all once it holds some credit (an empty wallet is not shown).
+  // Compare the exact decimal strings numerically only to enable/disable the option; the
+  // authoritative check (and the money on screen) stays the server's.
+  const walletHasBalance = wallet !== null && Number(wallet.balance) > 0;
+  const walletCovers = wallet !== null && Number(wallet.balance) >= Number(total);
 
   return (
     <section className="flex flex-col gap-2">
@@ -588,6 +624,33 @@ function PaymentMethodStep({
             </span>
           </label>
         ))}
+
+        {walletHasBalance && wallet ? (
+          <label
+            className={`flex cursor-pointer items-start gap-3 rounded-xl border border-border p-4 ${
+              walletCovers ? "" : "cursor-not-allowed opacity-60"
+            }`}
+          >
+            <input
+              type="radio"
+              name="payment_method"
+              className="mt-1"
+              value="wallet"
+              checked={method === "wallet"}
+              disabled={!walletCovers}
+              onChange={() => onSelect("wallet")}
+            />
+            <span className="flex flex-col gap-1 text-sm">
+              <span className="font-medium">{t("methodWallet")}</span>
+              <span className="text-muted-foreground">
+                {t("walletBalanceHint")}: {formatMoneyString(wallet.balance, wallet.currency)}
+              </span>
+              {walletCovers ? null : (
+                <span className="text-destructive">{t("walletInsufficient")}</span>
+              )}
+            </span>
+          </label>
+        ) : null}
       </fieldset>
     </section>
   );

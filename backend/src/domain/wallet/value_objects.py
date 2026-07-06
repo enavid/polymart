@@ -76,6 +76,23 @@ class Money:
             raise WalletCurrencyMismatchError(self.currency, other.currency)
         return Money(amount=self.amount + other.amount, currency=self.currency)
 
+    def subtract(self, other: Money) -> Money:
+        """Return the difference with ``other`` (same currency).
+
+        Raises on a currency mismatch, and -- because ``Money`` is non-negative -- on a
+        result below zero. A caller spending a balance must check ``covers`` first, so the
+        subtraction can never underflow into an invalid amount.
+        """
+        if self.currency != other.currency:
+            raise WalletCurrencyMismatchError(self.currency, other.currency)
+        return Money(amount=self.amount - other.amount, currency=self.currency)
+
+    def covers(self, other: Money) -> bool:
+        """Whether this amount is at least ``other`` (same currency), i.e. can pay it."""
+        if self.currency != other.currency:
+            raise WalletCurrencyMismatchError(self.currency, other.currency)
+        return self.amount >= other.amount
+
     def is_positive(self) -> bool:
         """Whether the amount is strictly greater than zero."""
         return self.amount > 0

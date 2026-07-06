@@ -129,6 +129,32 @@ class WalletOwnerRequiredError(PaymentError):
         self.reference = reference
 
 
+class WalletPaymentRequiresUserError(PaymentError):
+    """Raised when a guest tries to pay with a wallet.
+
+    A wallet always belongs to a registered user; a guest (owner ``g:<token>``) has no
+    account to hold or spend store credit, so pay-with-wallet is refused for them. The
+    transport maps this to 409 (the request cannot be honoured for a guest).
+    """
+
+    def __init__(self) -> None:
+        super().__init__("paying with a wallet requires a signed-in account")
+
+
+class InsufficientWalletBalanceError(PaymentError):
+    """Raised when a pay-with-wallet cannot be covered by the shopper's balance.
+
+    The wallet balance is less than the order total (or the wallet does not exist yet), so
+    the payment cannot be settled from store credit. The payment context's own error type,
+    translated by the wallet-debit adapter so no wallet-domain exception crosses the seam.
+    The transport maps this to 409 (a conflict with the wallet's current balance).
+    """
+
+    def __init__(self, reference: str) -> None:
+        super().__init__(f"wallet balance does not cover payment {reference}")
+        self.reference = reference
+
+
 class GatewayCannotCaptureError(PaymentError):
     """Raised when a payment awaiting capture is bound to a non-verifiable gateway.
 

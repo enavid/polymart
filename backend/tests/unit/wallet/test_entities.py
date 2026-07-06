@@ -9,6 +9,7 @@ import pytest
 
 from src.domain.wallet.entities import Wallet
 from src.domain.wallet.exceptions import (
+    InsufficientWalletFundsError,
     InvalidWalletAmountError,
     WalletCurrencyMismatchError,
 )
@@ -69,3 +70,57 @@ class TestCredit:
         wallet = Wallet.empty(owner="u:7", currency="IRR")
         movement = wallet.credit(_money("10"), reason="adjustment", source_reference=None, at=_AT)
         assert movement.transaction.source_reference is None
+
+
+def _funded(balance: str) -> Wallet:
+    return Wallet(owner="u:7", balance=_money(balance), id=1)
+
+
+class TestDebit:
+    def test_reduces_the_balance_and_records_a_debit_entry(self) -> None:
+        wallet = _funded("150000")
+
+        movement = wallet.debit(
+            _money("150000"), reason="order_payment", source_reference="PAY-XYZ", at=_AT
+        )
+
+        assert movement.wallet.balance == _money("0")
+        # The original aggregate is unchanged (immutability).
+        assert wallet.balance == _money("150000")
+        txn = movement.transaction
+        assert txn.type == TransactionType.DEBIT
+        assert txn.amount == _money("150000")
+        assert txn.reason == "order_payment"
+        assert txn.source_reference == "PAY-XYZ"
+        assert txn.balance_after == _money("0")
+        assert txn.created_at == _AT
+
+    def test_leaves_a_remaining_balance_on_a_partial_spend(self) -> None:
+        wallet = _funded("150000")
+        movement = wallet.debit(
+            _money("60000"), reason="order_payment", source_reference="PAY-1", at=_AT
+        )
+        assert movement.wallet.balance == _money("90000")
+        assert movement.transaction.balance_after == _money("90000")
+
+    def test_rejects_a_zero_debit(self) -> None:
+        with pytest.raises(InvalidWalletAmountError):
+            _funded("100").debit(_money("0"), reason="order_payment", source_reference=None, at=_AT)
+
+    def test_rejects_a_debit_that_exceeds_the_balance(self) -> None:
+        with pytest.raises(InsufficientWalletFundsError):
+            _funded("100").debit(
+                _money("101"), reason="order_payment", source_reference="PAY-2", at=_AT
+            )
+
+    def test_rejects_a_debit_from_an_empty_wallet(self) -> None:
+        with pytest.raises(InsufficientWalletFundsError):
+            Wallet.empty(owner="u:7", currency="IRR").debit(
+                _money("1"), reason="order_payment", source_reference="PAY-3", at=_AT
+            )
+
+    def test_rejects_a_currency_mismatch(self) -> None:
+        with pytest.raises(WalletCurrencyMismatchError):
+            _funded("100").debit(
+                _money("1", "USD"), reason="order_payment", source_reference=None, at=_AT
+            )

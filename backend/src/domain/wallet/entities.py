@@ -18,7 +18,10 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime
 from decimal import Decimal
 
-from src.domain.wallet.exceptions import InvalidWalletAmountError
+from src.domain.wallet.exceptions import (
+    InsufficientWalletFundsError,
+    InvalidWalletAmountError,
+)
 from src.domain.wallet.value_objects import Money, TransactionType
 
 
@@ -97,3 +100,36 @@ class Wallet:
             source_reference=source_reference,
         )
         return WalletMovement(wallet=credited, transaction=transaction)
+
+    def debit(
+        self,
+        amount: Money,
+        *,
+        reason: str,
+        source_reference: str | None,
+        at: datetime,
+    ) -> WalletMovement:
+        """Remove ``amount`` from the balance and record the debit.
+
+        The amount must be strictly positive and in the wallet's currency, and the balance
+        must cover it -- a wallet never goes into overdraft, so an uncovered debit raises
+        ``InsufficientWalletFundsError`` before any movement is produced. Returns the debited
+        wallet together with the ledger entry that recorded the movement.
+        """
+        if not amount.is_positive():
+            raise InvalidWalletAmountError(f"debit amount must be positive: {amount.amount!r}")
+        if not self.balance.covers(amount):
+            raise InsufficientWalletFundsError(
+                balance=str(self.balance.amount), amount=str(amount.amount)
+            )
+        new_balance = self.balance.subtract(amount)
+        debited = replace(self, balance=new_balance)
+        transaction = WalletTransaction(
+            type=TransactionType.DEBIT,
+            amount=amount,
+            reason=reason,
+            balance_after=new_balance,
+            created_at=at,
+            source_reference=source_reference,
+        )
+        return WalletMovement(wallet=debited, transaction=transaction)

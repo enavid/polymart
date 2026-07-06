@@ -29,10 +29,12 @@ from rest_framework.views import APIView
 from src.application.payment.use_cases import (
     InitiatePaymentCommand,
     PaymentResult,
+    PayWithWalletCommand,
     RefundPaymentCommand,
 )
 from src.domain.payment.entities import Payment
 from src.domain.payment.exceptions import (
+    InsufficientWalletBalanceError,
     InvalidPaymentMethodError,
     OrderNotPayableError,
     PaymentAlreadyExistsError,
@@ -42,7 +44,9 @@ from src.domain.payment.exceptions import (
     PaymentOrderNotFoundError,
     UnsupportedPaymentMethodError,
     WalletOwnerRequiredError,
+    WalletPaymentRequiresUserError,
 )
+from src.domain.payment.value_objects import PaymentMethod
 from src.infrastructure.payment.tasks import capture_online_payment
 from src.interface.api.access.permissions import OrderManagePermission
 from src.interface.api.common import ErrorSerializer
@@ -52,6 +56,7 @@ from src.interface.api.payment.container import (
     build_get_payment_by_gateway_reference,
     build_get_payment_for_order,
     build_initiate_payment,
+    build_pay_with_wallet,
     build_refund_payment,
 )
 from src.interface.api.payment.serializers import (
@@ -114,13 +119,9 @@ class PaymentCollectionView(APIView):
         serializer = InitiatePaymentSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
-        command = InitiatePaymentCommand(
-            owner=_owner(request),
-            order_number=data["order_number"],
-            method=data["method"],
-        )
+        owner = _owner(request)
         try:
-            result = build_initiate_payment().execute(command)
+            result = self._settle(owner, data["order_number"], data["method"])
         except PaymentOrderNotFoundError as exc:
             # Unknown, or another shopper's -- indistinguishable, so payment never reveals
             # whether another shopper's order exists.
@@ -128,13 +129,35 @@ class PaymentCollectionView(APIView):
         except (InvalidPaymentMethodError, UnsupportedPaymentMethodError) as exc:
             # A method that is not recognised, or recognised but has no gateway yet.
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
-        except (OrderNotPayableError, PaymentAlreadyExistsError) as exc:
-            # A conflict with the order's current state (already paid/cancelled) or an
-            # existing active payment -- the request was well-formed but cannot be honoured.
+        except (
+            OrderNotPayableError,
+            PaymentAlreadyExistsError,
+            WalletPaymentRequiresUserError,
+            InsufficientWalletBalanceError,
+        ) as exc:
+            # A conflict with the order's current state (already paid/cancelled), an existing
+            # active payment, or a wallet that cannot pay (a guest, or an uncovered balance)
+            # -- the request was well-formed but cannot be honoured.
             return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
         except PaymentError as exc:  # pragma: no cover - defensive catch-all
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         return Response(_initiation_payload(result), status=status.HTTP_201_CREATED)
+
+    @staticmethod
+    def _settle(owner: str, order_number: str, method: str) -> PaymentResult:
+        """Route to the wallet settlement or the gateway-backed initiation by method.
+
+        Wallet payment settles synchronously and internally (its own use case); every other
+        method is started through the gateway registry. Both return a ``PaymentResult`` so the
+        response shape is identical.
+        """
+        if method == PaymentMethod.WALLET.value:
+            return build_pay_with_wallet().execute(
+                PayWithWalletCommand(owner=owner, order_number=order_number)
+            )
+        return build_initiate_payment().execute(
+            InitiatePaymentCommand(owner=owner, order_number=order_number, method=method)
+        )
 
 
 class PaymentForOrderView(APIView):

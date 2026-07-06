@@ -11,8 +11,8 @@
 
 import { apiGet, apiPost } from "@/lib/api/client";
 
-/** How a shopper pays. COD is live; online/card-to-card arrive in later slices. */
-export type PaymentMethod = "cod" | "card_to_card" | "online";
+/** How a shopper pays. COD, online, and wallet are live; card-to-card arrives later. */
+export type PaymentMethod = "cod" | "card_to_card" | "online" | "wallet";
 
 /** The payment lifecycle states, matching the backend state machine. */
 export type PaymentStatus =

@@ -40,16 +40,32 @@ async function addFromPdp(page: Page, productCode: string, sku: string): Promise
   await expect(page.getByText(store.added)).toBeVisible();
 }
 
-async function payOnline(page: Page): Promise<string> {
+async function checkoutToReview(page: Page): Promise<void> {
   await page.goto("/cart");
   await page.getByRole("link", { name: cart.checkout }).click();
   await expect(page).toHaveURL(/\/checkout/);
   await page.locator("label").filter({ hasText: SEED }).getByRole("radio").check();
   await page.getByRole("button", { name: checkout.continue }).click();
+}
+
+async function payOnline(page: Page): Promise<string> {
+  await checkoutToReview(page);
   await page.locator('input[type="radio"][value="online"]').check();
   await page.getByRole("button", { name: checkout.placeOrder }).click();
   await expect(page).toHaveURL(/\/payments\/mock-gateway\//);
   await page.locator("#mock_pay").click();
+  await expect(page).toHaveURL(/\/orders\/ORD-/);
+  await expect(page.getByText(orders.statusPaid).first()).toBeVisible();
+  return new URL(page.url()).pathname.split("/").pop() as string;
+}
+
+async function payWithWallet(page: Page): Promise<string> {
+  await checkoutToReview(page);
+  const walletRadio = page.locator('input[type="radio"][value="wallet"]');
+  await expect(walletRadio).toBeEnabled(); // the balance covers the order
+  await walletRadio.check();
+  await page.getByRole("button", { name: checkout.placeOrder }).click();
+  // Wallet payment settles internally (no gateway): straight to the paid order.
   await expect(page).toHaveURL(/\/orders\/ORD-/);
   await expect(page.getByText(orders.statusPaid).first()).toBeVisible();
   return new URL(page.url()).pathname.split("/").pop() as string;
@@ -91,7 +107,41 @@ test.describe.serial("wallet & refund-to-wallet", () => {
     // 5) The wallet page shows the credited balance (150,000 IRR -> Toman) and the entry.
     await page.goto("/account/wallet");
     await expect(page.getByTestId("wallet-balance")).toHaveText(money(150000));
-    await expect(page.getByText(wallet.reasonRefund)).toBeVisible();
+    // Scope to the statement cell so the reason word cannot collide with page chrome.
+    await expect(page.getByRole("cell", { name: wallet.reasonRefund })).toBeVisible();
+  });
+
+  test("the shopper pays a new order from the wallet and sees the debit", async ({ page }) => {
+    // The wallet holds 150,000 from the refund in the previous test; spend it on a new order.
+    await addFromPdp(page, PRODUCTS.darkRoast.code, dr250.sku);
+    const orderNumber = await payWithWallet(page);
+
+    // The payment is a captured wallet payment (settled server-side, never client-computed).
+    const paymentRes = await page.request.get(
+      `/api/v1/payments/for-order/${orderNumber}/`,
+    );
+    expect(paymentRes.ok()).toBeTruthy();
+    const paid = await paymentRes.json();
+    expect(paid.method).toBe("wallet");
+    expect(paid.status).toBe("captured");
+
+    // The wallet is now empty and shows the debit entry (150,000 spent -> 0 balance).
+    await page.goto("/account/wallet");
+    await expect(page.getByTestId("wallet-balance")).toHaveText(money(0));
+    // Scope to the statement cell -- the reason word must not collide with page chrome.
+    await expect(
+      page.getByRole("cell", { name: wallet.reasonOrderPayment }),
+    ).toBeVisible();
+  });
+
+  test("does not offer pay-with-wallet once the balance is spent", async ({ page }) => {
+    // The wallet is empty after the previous test; the option must not be selectable.
+    await addFromPdp(page, PRODUCTS.darkRoast.code, dr250.sku);
+    await checkoutToReview(page);
+
+    // The method chooser is shown (COD is always available) but wallet is not offered.
+    await expect(page.locator('input[type="radio"][value="cod"]')).toBeVisible();
+    await expect(page.locator('input[type="radio"][value="wallet"]')).toHaveCount(0);
   });
 
   test("the account hub links to the wallet", async ({ page }) => {

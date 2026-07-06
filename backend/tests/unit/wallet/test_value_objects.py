@@ -62,6 +62,47 @@ class TestMoney:
         assert Money(amount=Decimal("1"), currency="IRR").is_positive()
         assert not Money(amount=Decimal("0"), currency="IRR").is_positive()
 
+    def test_subtract_reduces_same_currency(self) -> None:
+        remaining = Money(amount=Decimal("150"), currency="IRR").subtract(
+            Money(amount=Decimal("50"), currency="IRR")
+        )
+        assert remaining == Money(amount=Decimal("100"), currency="IRR")
+
+    def test_subtract_to_exactly_zero(self) -> None:
+        remaining = Money(amount=Decimal("50"), currency="IRR").subtract(
+            Money(amount=Decimal("50"), currency="IRR")
+        )
+        assert remaining == Money(amount=Decimal("0"), currency="IRR")
+
+    def test_subtract_refuses_a_currency_mismatch(self) -> None:
+        with pytest.raises(WalletCurrencyMismatchError):
+            Money(amount=Decimal("100"), currency="IRR").subtract(
+                Money(amount=Decimal("50"), currency="USD")
+            )
+
+    def test_subtract_below_zero_is_rejected_by_money(self) -> None:
+        # A subtraction that would go negative cannot form a valid (non-negative) Money;
+        # callers must guard with covers() first.
+        with pytest.raises(InvalidWalletMoneyError):
+            Money(amount=Decimal("50"), currency="IRR").subtract(
+                Money(amount=Decimal("51"), currency="IRR")
+            )
+
+    def test_covers_is_true_when_at_least_the_other(self) -> None:
+        balance = Money(amount=Decimal("150"), currency="IRR")
+        assert balance.covers(Money(amount=Decimal("150"), currency="IRR"))
+        assert balance.covers(Money(amount=Decimal("100"), currency="IRR"))
+
+    def test_covers_is_false_when_less_than_the_other(self) -> None:
+        balance = Money(amount=Decimal("150"), currency="IRR")
+        assert not balance.covers(Money(amount=Decimal("151"), currency="IRR"))
+
+    def test_covers_refuses_a_currency_mismatch(self) -> None:
+        with pytest.raises(WalletCurrencyMismatchError):
+            Money(amount=Decimal("150"), currency="IRR").covers(
+                Money(amount=Decimal("50"), currency="USD")
+            )
+
     def test_str(self) -> None:
         assert str(Money(amount=Decimal("10"), currency="IRR")) == "10 IRR"
 

@@ -50,6 +50,38 @@ describe("WalletView", () => {
     expect(screen.getByText(messages.wallet.reasonRefund)).toBeInTheDocument();
   });
 
+  it("renders a wallet-payment debit entry with its localized reason", async () => {
+    markSignedIn();
+    server.use(
+      http.get("*/wallet/", () =>
+        HttpResponse.json(
+          walletBody({
+            balance: "90000.0000",
+            transactions: [
+              {
+                type: "debit",
+                amount: "150000.0000",
+                currency: "IRR",
+                reason: "order_payment",
+                balance_after: "90000.0000",
+                source_reference: "PAY-WALLET00001",
+                created_at: "2026-07-06T12:00:00Z",
+              },
+            ],
+          }),
+        ),
+      ),
+    );
+
+    renderWithProviders(<WalletView />);
+
+    // The debit is labelled "خرید" (order payment) and shown with a leading minus.
+    const reason = await screen.findByText(messages.wallet.reasonOrderPayment);
+    expect(reason).toBeInTheDocument();
+    const row = reason.closest("tr");
+    expect(row?.textContent).toContain("−");
+  });
+
   it("shows an empty state when the wallet has no transactions", async () => {
     markSignedIn();
     server.use(

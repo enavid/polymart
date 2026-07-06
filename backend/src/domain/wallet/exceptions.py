@@ -26,6 +26,20 @@ class InvalidWalletAmountError(WalletError):
     """
 
 
+class InsufficientWalletFundsError(WalletError):
+    """Raised when a debit would take the balance below zero.
+
+    A wallet cannot go into overdraft: spending more than the current balance (or spending
+    from a wallet that does not yet exist) is refused before any movement is recorded, so a
+    pay-with-wallet attempt that cannot be covered leaves the balance untouched.
+    """
+
+    def __init__(self, balance: str, amount: str) -> None:
+        super().__init__(f"insufficient funds: balance {balance}, debit {amount}")
+        self.balance = balance
+        self.amount = amount
+
+
 class WalletCurrencyMismatchError(WalletError):
     """Raised when a movement's currency does not match the wallet's established currency.
 

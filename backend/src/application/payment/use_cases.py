@@ -32,6 +32,7 @@ from src.application.payment.ports import (
     PaymentVerification,
     UnitOfWork,
     WalletCredit,
+    WalletDebit,
 )
 from src.application.shared.owner import safe_owner
 from src.domain.audit.entities import FieldChange
@@ -45,6 +46,7 @@ from src.domain.payment.exceptions import (
     PaymentNotRefundableError,
     PaymentOrderNotFoundError,
     WalletOwnerRequiredError,
+    WalletPaymentRequiresUserError,
 )
 from src.domain.payment.value_objects import (
     Money,
@@ -71,6 +73,8 @@ _ACTION_PAYMENT_REFUNDED = "payment.refunded"
 # requires (a wallet always belongs to a registered user, never a guest).
 _REFUND_REASON = "refund"
 _USER_OWNER_PREFIX = "u:"
+# The reason recorded on the wallet debit a pay-with-wallet produces.
+_WALLET_PAYMENT_REASON = "order_payment"
 
 # The statuses from which a callback can still settle a payment; anything else is already
 # resolved and the callback is a no-op (idempotency).
@@ -203,6 +207,136 @@ class InitiatePayment:
             return PaymentMethod(raw)
         except ValueError as exc:
             raise InvalidPaymentMethodError(f"unknown payment method: {raw!r}") from exc
+
+
+@dataclass(frozen=True)
+class PayWithWalletCommand:
+    """Input for settling one of the shopper's own orders from their wallet balance.
+
+    ``owner`` is the resolved order owner id; pay-with-wallet requires a registered user
+    (``u:<pk>``) -- a guest has no wallet. There is no amount here: it is always the order's
+    captured total, taken from the order itself, never a client-supplied figure.
+    """
+
+    owner: str
+    order_number: str
+
+
+class PayWithWallet:
+    """Pay for the owner's order from their wallet balance, atomically and instantly.
+
+    Unlike a gateway method, wallet payment settles synchronously: the order is resolved
+    owner-scoped and must be payable (still pending, no active payment), the amount is
+    captured from the order total, the wallet is debited for the full amount (refused if the
+    balance cannot cover it), the payment is created and immediately captured, and the order
+    is marked paid -- all in one transaction, so an uncovered balance or any failure leaves no
+    payment, no debit, and an unpaid order behind. A guest is refused up front (no wallet).
+    """
+
+    def __init__(
+        self,
+        *,
+        unit_of_work: UnitOfWork,
+        orders: OrderReader,
+        payments: PaymentRepository,
+        wallet_debit: WalletDebit,
+        paid_orders: PaidOrders,
+        references: PaymentReferenceGenerator,
+        clock: Clock,
+        audit: AuditRecorder,
+    ) -> None:
+        self._uow = unit_of_work
+        self._orders = orders
+        self._payments = payments
+        self._wallet_debit = wallet_debit
+        self._paid_orders = paid_orders
+        self._references = references
+        self._clock = clock
+        self._audit = audit
+
+    def execute(self, command: PayWithWalletCommand) -> PaymentResult:
+        # A wallet always belongs to a registered user; refuse a guest before opening the
+        # transaction (a request error, not something to roll a transaction back over).
+        if not command.owner.startswith(_USER_OWNER_PREFIX):
+            raise WalletPaymentRequiresUserError()
+
+        with self._uow.atomic():
+            order = self._orders.get_payable(command.owner, command.order_number)
+            if order is None:
+                raise PaymentOrderNotFoundError(command.order_number)
+            if order.status != _PAYABLE_ORDER_STATUS:
+                raise OrderNotPayableError(order.number, order.status)
+            if self._payments.active_for_order(command.owner, order.number) is not None:
+                raise PaymentAlreadyExistsError(order.number)
+
+            amount = Money(amount=order.total, currency=order.currency)
+            payment = Payment(
+                reference=self._references.next(),
+                order_ref=OrderRef(order.number),
+                owner=command.owner,
+                method=PaymentMethod.WALLET,
+                amount=amount,
+                status=PaymentStatus.PENDING,
+                created_at=self._clock.now(),
+            )
+            saved = self._payments.add(payment)
+            self._audit_initiated(saved, amount=amount, order_number=order.number)
+
+            # Move the money internally: debit the wallet for the full total (refused, and the
+            # whole transaction rolled back, if the balance cannot cover it), then capture the
+            # payment and mark the order paid -- all together.
+            self._wallet_debit.debit(
+                owner=command.owner,
+                amount=amount.amount,
+                currency=amount.currency,
+                source_reference=saved.reference.value,
+                reason=_WALLET_PAYMENT_REASON,
+                actor=safe_owner(command.owner),
+            )
+            captured = self._payments.update_status(saved.capture())
+            self._paid_orders.mark_paid(order.number)
+            self._audit_captured(captured, amount=amount, order_number=order.number)
+
+        logger.info(
+            "payment_paid_with_wallet",
+            owner=safe_owner(command.owner),
+            payment_reference=captured.reference.value,
+            order_number=order.number,
+            currency=amount.currency,
+        )
+        return PaymentResult(payment=captured, next_action=NextActionType.NONE)
+
+    def _audit_initiated(self, payment: Payment, *, amount: Money, order_number: str) -> None:
+        self._audit.record(
+            action=_ACTION_PAYMENT_INITIATED,
+            resource_type=_RESOURCE_PAYMENT,
+            resource_id=payment.reference.value,
+            actor=safe_owner(payment.owner),
+            changes=(
+                FieldChange(field="status", after=PaymentStatus.PENDING.value),
+                FieldChange(field="method", after=PaymentMethod.WALLET.value),
+                FieldChange(field="amount", after=str(amount.amount)),
+                FieldChange(field="order", after=order_number),
+            ),
+        )
+
+    def _audit_captured(self, payment: Payment, *, amount: Money, order_number: str) -> None:
+        self._audit.record(
+            action=_ACTION_PAYMENT_CAPTURED,
+            resource_type=_RESOURCE_PAYMENT,
+            resource_id=payment.reference.value,
+            actor=safe_owner(payment.owner),
+            changes=(
+                FieldChange(
+                    field="status",
+                    before=PaymentStatus.PENDING.value,
+                    after=PaymentStatus.CAPTURED.value,
+                ),
+                FieldChange(field="amount", after=str(amount.amount)),
+                FieldChange(field="order", after=order_number),
+                FieldChange(field="paid_with", after="wallet"),
+            ),
+        )
 
 
 class GetMyPayment:

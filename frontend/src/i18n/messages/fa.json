@@ -509,7 +509,10 @@
     "statusRefunded": "بازپرداخت‌شده",
     "refundToWallet": "بازپرداخت به کیف پول",
     "refunding": "در حال بازپرداخت…",
-    "refundError": "بازپرداخت ناموفق بود."
+    "refundError": "بازپرداخت ناموفق بود.",
+    "methodWallet": "پرداخت با کیف پول",
+    "walletBalanceHint": "موجودی کیف پول",
+    "walletInsufficient": "موجودی کیف پول برای این سفارش کافی نیست."
   },
   "wallet": {
     "title": "کیف پول",
@@ -524,7 +527,8 @@
     "balanceAfter": "موجودی پس از تراکنش",
     "loadError": "بارگذاری کیف پول ناموفق بود.",
     "reasonRefund": "بازپرداخت",
-    "reasonAdjustment": "تعدیل"
+    "reasonAdjustment": "تعدیل",
+    "reasonOrderPayment": "پرداخت سفارش"
   },
   "manualOrder": {
     "title": "ثبت سفارش دستی (پیش‌فاکتور)",
