@@ -338,9 +338,9 @@ class TestPriceRangeFilter:
 
     def test_min_and_max_bound_a_window(self) -> None:
         self._seed_priced_range()
-        assert self._codes(
-            min_price=Decimal("150000.00"), max_price=Decimal("250000.00")
-        ) == {"p-mid"}
+        assert self._codes(min_price=Decimal("150000.00"), max_price=Decimal("250000.00")) == {
+            "p-mid"
+        }
 
     def test_filters_on_the_lowest_variant_price_not_any_variant(self) -> None:
         self._seed_priced_range()

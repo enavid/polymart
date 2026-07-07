@@ -59,11 +59,11 @@ async function checkoutWithSeededAddress(page: Page): Promise<void> {
   await expect(page).toHaveURL(/\/checkout/);
   await page.locator("label").filter({ hasText: SEED }).getByRole("radio").check();
   await page.getByRole("button", { name: checkout.continue }).click();
-  // The review step offers payment methods: COD is the default (selected) and online is
-  // available; card-to-card is not yet (disabled). Located by the radio's value (the
-  // localized labels contain parentheses, unsafe in a name regex).
+  // The review step offers payment methods: COD is the default (selected), and online and
+  // card-to-card are available too. Located by the radio's value (the localized labels
+  // contain parentheses, unsafe in a name regex).
   await expect(page.locator('input[type="radio"][value="cod"]')).toBeChecked();
-  await expect(page.locator('input[type="radio"][value="card_to_card"]')).toBeDisabled();
+  await expect(page.locator('input[type="radio"][value="card_to_card"]')).toBeEnabled();
   await page.getByRole("button", { name: checkout.placeOrder }).click();
 }
 
@@ -139,13 +139,13 @@ test.describe.serial("shopper cart & checkout", () => {
     await expect(page.getByRole("heading", { name: payment.sectionTitle })).toBeVisible();
     await expect(page.getByText(payment.methodCod)).toBeVisible();
 
-    // A not-yet-available method (card-to-card has no gateway) is rejected at the API as
-    // unsupported (400), before any order/double-payment check -- verified with the
-    // shopper's authenticated cookies riding along on page.request.
-    const unsupported = await page.request.post("/api/v1/payments/", {
+    // The order already has an active payment (the COD one from checkout), so a second
+    // initiation is refused by the double-payment guard (409) -- verified with the shopper's
+    // authenticated cookies riding along on page.request.
+    const secondPayment = await page.request.post("/api/v1/payments/", {
       data: { order_number: orderNumber, method: "card_to_card" },
     });
-    expect(unsupported.status()).toBe(400);
+    expect(secondPayment.status()).toBe(409);
 
     // The cart is now empty (consumed by checkout).
     await page.goto("/cart");

@@ -41,6 +41,9 @@ class PayableOrder:
     currency: str
     total: Decimal
     status: str
+    # The channel the order was placed in, so a per-channel setting (e.g. the card-to-card
+    # destination card) can be resolved for it.
+    channel: str
 
 
 class OrderReader(ABC):
@@ -225,15 +228,29 @@ class PaymentRepository(ABC):
     def get_by_reference_for_update(self, reference: str) -> Payment | None:
         """Return the payment with this public reference under a row lock, or ``None``.
 
-        Used by refund, a *staff* action addressed by the payment's public reference (not
-        owner-scoped -- staff act on any shopper's payment, gated by the manage-orders
-        permission at the transport). The row lock serializes concurrent refunds so only one
-        transitions captured -> refunded; the second observes the refunded status and no-ops.
+        Used by refund and the card-to-card staff confirm/reject, all *staff* actions
+        addressed by the payment's public reference (not owner-scoped -- staff act on any
+        shopper's payment, gated by the manage-orders permission at the transport). The row
+        lock serializes concurrent settlements so only one transition wins; the second
+        observes the new status and no-ops.
+        """
+
+    @abstractmethod
+    def get_active_for_order_for_update(self, owner: str, order_number: str) -> Payment | None:
+        """Return the owner's still-open payment for an order under a row lock, or ``None``.
+
+        Used by the buyer submitting a card-to-card transfer reference -- an *owner-scoped*
+        write, so another shopper's payment is never reachable. The lock serializes a
+        concurrent submit against a staff confirm/reject on the same payment.
         """
 
     @abstractmethod
     def update_status(self, payment: Payment) -> Payment:
         """Persist a status change for an already-stored payment and return it."""
+
+    @abstractmethod
+    def update_transfer_reference(self, payment: Payment) -> Payment:
+        """Persist the buyer's submitted card-to-card transfer reference and return it."""
 
 
 class PaidOrders(ABC):
@@ -247,6 +264,27 @@ class PaidOrders(ABC):
     @abstractmethod
     def mark_paid(self, order_number: str) -> None:
         """Transition the order to ``paid``. A no-op if it is already paid (idempotent)."""
+
+
+@dataclass(frozen=True)
+class CardToCardDestination:
+    """The merchant's receiving card a buyer transfers to for a card-to-card payment.
+
+    Per-channel configuration (each channel/store may collect on its own card), resolved by
+    the order's channel. Not a secret -- it is shown to the buyer so they can make the manual
+    transfer -- but only exposed to the order's own owner.
+    """
+
+    card_number: str
+    card_holder: str
+
+
+class CardToCardDirectory(ABC):
+    """Resolves a channel to its card-to-card receiving card (a per-channel setting)."""
+
+    @abstractmethod
+    def card_for(self, channel: str) -> CardToCardDestination | None:
+        """Return the channel's destination card, or ``None`` if none is configured."""
 
 
 class WalletCredit(ABC):

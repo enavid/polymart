@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { screen, waitFor, within } from "@testing-library/react";
+import { screen, waitFor, waitForElementToBeRemoved, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { setupServer } from "msw/node";
 import { http, HttpResponse } from "msw";
@@ -29,6 +29,7 @@ function codPayment(overrides: Record<string, unknown> = {}) {
     currency: "IRR",
     status: "pending",
     created_at: "2026-07-02T12:00:00Z",
+    transfer_reference: null,
     ...overrides,
   };
 }
@@ -286,5 +287,215 @@ describe("OrderDetail", () => {
     );
 
     expect(await screen.findByText("not refundable")).toBeInTheDocument();
+  });
+
+  // --- Card-to-card ------------------------------------------------------
+
+  const CARD = { card_number: "6037-9911-1234-5678", card_holder: "Polymart Store" };
+
+  it("shows the destination card and lets the buyer submit a transfer reference", async () => {
+    authed();
+    let submitted = false;
+    server.use(
+      http.get(`*/orders/${NUMBER}/`, () => HttpResponse.json(order())),
+      http.get(`*/payments/for-order/${NUMBER}/`, () =>
+        HttpResponse.json(
+          codPayment({
+            method: "card_to_card",
+            status: "pending",
+            transfer_reference: submitted ? "TRK-778899" : null,
+          }),
+        ),
+      ),
+      http.get(`*/payments/for-order/${NUMBER}/card-to-card/`, () => HttpResponse.json(CARD)),
+      http.post(`*/payments/for-order/${NUMBER}/transfer-reference/`, () => {
+        submitted = true;
+        return HttpResponse.json(
+          codPayment({ method: "card_to_card", status: "pending", transfer_reference: "TRK-778899" }),
+        );
+      }),
+    );
+
+    renderWithProviders(<OrderDetail number={NUMBER} />);
+
+    // The server-owned destination card is shown (never entered by the buyer).
+    expect(await screen.findByText(CARD.card_number)).toBeInTheDocument();
+    expect(screen.getByText(CARD.card_holder)).toBeInTheDocument();
+
+    // The buyer reports their transfer reference.
+    await userEvent.type(
+      screen.getByLabelText(messages.payment.transferReferencePrompt),
+      "TRK-778899",
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: messages.payment.submitTransfer }),
+    );
+
+    // After it lands, the block shows the submitted reference + awaiting-confirmation note.
+    expect(
+      await screen.findByText(messages.payment.transferAwaitingConfirmation),
+    ).toBeInTheDocument();
+    expect(screen.getByText("TRK-778899")).toBeInTheDocument();
+  });
+
+  it("does not show staff confirm/reject controls to a non-staff buyer", async () => {
+    authed();
+    server.use(
+      http.get(`*/orders/${NUMBER}/`, () => HttpResponse.json(order())),
+      http.get(`*/payments/for-order/${NUMBER}/`, () =>
+        HttpResponse.json(
+          codPayment({ method: "card_to_card", status: "pending", transfer_reference: "TRK-1" }),
+        ),
+      ),
+      http.get(`*/payments/for-order/${NUMBER}/card-to-card/`, () => HttpResponse.json(CARD)),
+    );
+
+    renderWithProviders(<OrderDetail number={NUMBER} />);
+
+    await screen.findByText(messages.payment.transferAwaitingConfirmation);
+    expect(
+      screen.queryByRole("button", { name: messages.payment.confirmTransfer }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: messages.payment.rejectTransfer }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("lets staff confirm a card-to-card transfer once a reference is submitted", async () => {
+    let confirmed = false;
+    staffAuthed(
+      codPayment({ method: "card_to_card", status: "pending", transfer_reference: "TRK-1" }),
+    );
+    server.use(
+      http.get(`*/orders/${NUMBER}/`, () =>
+        HttpResponse.json(order({ status: confirmed ? "paid" : "pending" })),
+      ),
+      http.get(`*/payments/for-order/${NUMBER}/`, () =>
+        HttpResponse.json(
+          codPayment({
+            method: "card_to_card",
+            status: confirmed ? "captured" : "pending",
+            transfer_reference: "TRK-1",
+          }),
+        ),
+      ),
+      http.get(`*/payments/for-order/${NUMBER}/card-to-card/`, () => HttpResponse.json(CARD)),
+      http.post("*/payments/PAY-ABC123XYZ00/confirm/", () => {
+        confirmed = true;
+        return HttpResponse.json(
+          codPayment({ method: "card_to_card", status: "captured", transfer_reference: "TRK-1" }),
+        );
+      }),
+    );
+
+    renderWithProviders(<OrderDetail number={NUMBER} />);
+
+    const confirm = await screen.findByRole("button", {
+      name: messages.payment.confirmTransfer,
+    });
+    expect(confirm).toBeEnabled();
+    await userEvent.click(confirm);
+
+    // The staff controls disappear once the payment is captured. (The captured label and the
+    // order's "paid" label are the same Persian text, so assert via the control's removal.)
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("button", { name: messages.payment.confirmTransfer }),
+      ).not.toBeInTheDocument(),
+    );
+    const section = screen
+      .getByText(messages.payment.sectionTitle)
+      .closest("section") as HTMLElement;
+    expect(within(section).getByText(messages.payment.statusCaptured)).toBeInTheDocument();
+  });
+
+  it("disables confirm until the buyer has submitted a transfer reference", async () => {
+    staffAuthed(
+      codPayment({ method: "card_to_card", status: "pending", transfer_reference: null }),
+    );
+    server.use(
+      http.get(`*/orders/${NUMBER}/`, () => HttpResponse.json(order())),
+      http.get(`*/payments/for-order/${NUMBER}/card-to-card/`, () => HttpResponse.json(CARD)),
+    );
+
+    renderWithProviders(<OrderDetail number={NUMBER} />);
+
+    expect(
+      await screen.findByRole("button", { name: messages.payment.confirmTransfer }),
+    ).toBeDisabled();
+    // Reject is available even before a reference is reported.
+    expect(
+      screen.getByRole("button", { name: messages.payment.rejectTransfer }),
+    ).toBeEnabled();
+  });
+
+  // --- Online awaiting-webhook polling -----------------------------------
+
+  it("shows the awaiting banner for a still-settling online payment", async () => {
+    authed();
+    server.use(
+      http.get(`*/orders/${NUMBER}/`, () => HttpResponse.json(order())),
+      http.get(`*/payments/for-order/${NUMBER}/`, () =>
+        HttpResponse.json(codPayment({ method: "online", status: "pending" })),
+      ),
+    );
+
+    renderWithProviders(<OrderDetail number={NUMBER} />);
+
+    // The redirect landed before the gateway callback settled: the page shows a live
+    // "confirming" banner rather than a stale unpaid state.
+    expect(await screen.findByTestId("online-awaiting")).toBeInTheDocument();
+    expect(screen.getByText(messages.payment.awaitingConfirmation)).toBeInTheDocument();
+  });
+
+  it("stops polling and clears the banner once the online payment settles", async () => {
+    authed();
+    let captured = false;
+    server.use(
+      http.get(`*/orders/${NUMBER}/`, () => HttpResponse.json(order())),
+      // The first read is pending; once the (async) callback settles it, the poll reads captured.
+      http.get(`*/payments/for-order/${NUMBER}/`, () =>
+        HttpResponse.json(
+          codPayment({ method: "online", status: captured ? "captured" : "pending" }),
+        ),
+      ),
+    );
+
+    renderWithProviders(<OrderDetail number={NUMBER} />);
+
+    await screen.findByTestId("online-awaiting");
+    captured = true; // the next poll resolves the payment
+    await waitForElementToBeRemoved(() => screen.queryByTestId("online-awaiting"), {
+      timeout: 6000,
+    });
+    const section = screen
+      .getByText(messages.payment.sectionTitle)
+      .closest("section") as HTMLElement;
+    expect(within(section).getByText(messages.payment.statusCaptured)).toBeInTheDocument();
+  });
+
+  it("does not show the awaiting banner for a captured online payment", async () => {
+    authed();
+    server.use(
+      http.get(`*/orders/${NUMBER}/`, () => HttpResponse.json(order({ status: "paid" }))),
+      http.get(`*/payments/for-order/${NUMBER}/`, () =>
+        HttpResponse.json(codPayment({ method: "online", status: "captured" })),
+      ),
+    );
+
+    renderWithProviders(<OrderDetail number={NUMBER} />);
+
+    await screen.findByText(messages.payment.statusCaptured);
+    expect(screen.queryByTestId("online-awaiting")).not.toBeInTheDocument();
+  });
+
+  it("does not poll or show the awaiting banner for a pending COD payment", async () => {
+    authed();
+    server.use(http.get(`*/orders/${NUMBER}/`, () => HttpResponse.json(order())));
+
+    renderWithProviders(<OrderDetail number={NUMBER} />);
+
+    await screen.findByText(messages.payment.methodCod);
+    expect(screen.queryByTestId("online-awaiting")).not.toBeInTheDocument();
   });
 });

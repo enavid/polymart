@@ -52,6 +52,29 @@ class CashOnDeliveryGateway(PaymentGateway):
         return PaymentStartResult(next_action=NextActionType.NONE)
 
 
+class CardToCardGateway(PaymentGateway):
+    """Card-to-card: a manual bank transfer the buyer makes and staff verify.
+
+    Like COD, starting a card-to-card payment moves no money and issues no redirect -- the
+    buyer transfers to the merchant's per-channel card out of band, reports the transfer
+    reference, and staff confirm it (which captures the payment). So ``start`` simply reports
+    that there is no automatic next action; the payment stays ``pending`` until staff confirm
+    or reject it. The destination card is served separately (owner-scoped), not by the gateway.
+    """
+
+    @property
+    def method(self) -> PaymentMethod:
+        return PaymentMethod.CARD_TO_CARD
+
+    def start(self, intent: PaymentIntent) -> PaymentStartResult:
+        logger.info(
+            "card_to_card_payment_started",
+            payment_reference=intent.reference.value,
+            order_number=intent.order_number,
+        )
+        return PaymentStartResult(next_action=NextActionType.NONE)
+
+
 class GatewayStartError(Exception):
     """Raised when a gateway refuses to start a payment (no redirect can be issued)."""
 

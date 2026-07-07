@@ -20,6 +20,11 @@ CELERY_TASK_ALWAYS_EAGER = True
 CELERY_TASK_EAGER_PROPAGATES = True
 # Tests use the offline mock online gateway (no live PSP), even though DEBUG is False here.
 PAYMENT_ONLINE_MOCK = True
+# A deterministic card-to-card destination for the default channel, so the card-to-card
+# tests and E2E resolve a known card.
+PAYMENT_CARD_TO_CARD = {
+    "ir-main": {"number": "6037-9911-1234-5678", "holder": "Polymart Store"},
+}
 
 # Tests are hermetic: they never touch the dev/prod database from DATABASE_URL.
 # Default to an isolated in-memory SQLite; CI sets TEST_DATABASE_URL to run the

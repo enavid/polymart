@@ -125,6 +125,13 @@ PAYMENT_RESULT_URL = env("PAYMENT_RESULT_URL", default="/orders")
 # Zarinpal (the real online gateway, production).
 ZARINPAL_MERCHANT_ID = env("ZARINPAL_MERCHANT_ID", default="")
 ZARINPAL_SANDBOX = env.bool("ZARINPAL_SANDBOX", default=True)
+# --- Payments (card-to-card) ------------------------------------------------
+# The merchant's receiving card per channel, shown to a buyer who pays by manual bank
+# transfer. Sensitive banking config, so it lives here with the other gateway settings (not a
+# public model/API), keyed by channel slug so each channel collects on its own card:
+#   PAYMENT_CARD_TO_CARD = {"ir-main": {"number": "6037-9911-1234-5678", "holder": "..."}}
+# Empty by default; dev/test/E2E settings provide a deterministic value for ``ir-main``.
+PAYMENT_CARD_TO_CARD = env.json("PAYMENT_CARD_TO_CARD", default={})
 
 # --- Wallet -----------------------------------------------------------------
 # The currency an empty (never-credited) wallet reports. Iran-first, so Rial by default; a

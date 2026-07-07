@@ -501,9 +501,7 @@ class ListProductsWithCategories:
     view where staff group and filter products by category. Memberships are read
     in one batched query to avoid an N+1 over the catalog."""
 
-    def __init__(
-        self, products: ProductRepository, categories: ProductCategoryRepository
-    ) -> None:
+    def __init__(self, products: ProductRepository, categories: ProductCategoryRepository) -> None:
         self._products = products
         self._categories = categories
 

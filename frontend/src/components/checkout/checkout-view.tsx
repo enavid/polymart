@@ -46,8 +46,8 @@ const WALLET_KEY = ["wallet"] as const;
 type Step = "address" | "review";
 
 /**
- * The always-available payment methods offered at checkout. COD and the online gateway are
- * wired end to end; card-to-card is shown but disabled ("coming soon") until its slice lands.
+ * The always-available payment methods offered at checkout. COD, the online gateway, and
+ * card-to-card (a manual bank transfer confirmed by staff) are all wired end to end.
  * Pay-with-wallet is offered separately (only to a signed-in shopper with enough balance).
  * The backend is the source of truth -- it rejects an unsupported method -- so a disabled
  * option can never be submitted.
@@ -55,7 +55,7 @@ type Step = "address" | "review";
 const PAYMENT_METHODS: ReadonlyArray<{ value: PaymentMethod; enabled: boolean }> = [
   { value: "cod", enabled: true },
   { value: "online", enabled: true },
-  { value: "card_to_card", enabled: false },
+  { value: "card_to_card", enabled: true },
 ];
 
 const DEFAULT_METHOD: PaymentMethod = "cod";
@@ -620,6 +620,9 @@ function PaymentMethodStep({
               ) : null}
               {value === "online" ? (
                 <span className="text-muted-foreground">{t("onlineHint")}</span>
+              ) : null}
+              {value === "card_to_card" ? (
+                <span className="text-muted-foreground">{t("cardToCardHint")}</span>
               ) : null}
             </span>
           </label>

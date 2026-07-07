@@ -155,6 +155,72 @@ class InsufficientWalletBalanceError(PaymentError):
         self.reference = reference
 
 
+class NotACardToCardPaymentError(PaymentError):
+    """Raised when a card-to-card action targets a payment paid by another method.
+
+    Submitting a transfer reference, or confirming/rejecting a transfer, only makes sense for
+    a ``card_to_card`` payment. The transport maps this to 409.
+    """
+
+    def __init__(self, reference: str) -> None:
+        super().__init__(f"payment {reference} is not a card-to-card payment")
+        self.reference = reference
+
+
+class TransferReferenceAlreadySubmittedError(PaymentError):
+    """Raised when a buyer submits a second card-to-card transfer reference.
+
+    A transfer reference is submitted once (a repeat is not an idempotent no-op -- it is the
+    buyer trying to change a reported transfer, which staff verification must not allow). The
+    transport maps this to 409.
+    """
+
+    def __init__(self, reference: str) -> None:
+        super().__init__(f"payment {reference} already has a submitted transfer reference")
+        self.reference = reference
+
+
+class PaymentNotAwaitingTransferError(PaymentError):
+    """Raised when a transfer reference is submitted for a payment that is not awaiting one.
+
+    Only a still-pending card-to-card payment accepts a transfer reference; a settled one
+    (captured/failed) does not. The transport maps this to 409.
+    """
+
+    def __init__(self, reference: str, status: str) -> None:
+        super().__init__(f"payment {reference} is not awaiting a transfer in status {status!r}")
+        self.reference = reference
+        self.status = status
+
+
+class PaymentNotConfirmableError(PaymentError):
+    """Raised when staff confirm/reject a card-to-card payment that is not confirmable.
+
+    Confirmation captures a *pending* card-to-card payment that carries a buyer-submitted
+    transfer reference; a payment that is not pending, or that has no reported transfer to
+    verify, cannot be confirmed. The transport maps this to 409. An already-captured payment
+    (confirm) or already-failed payment (reject) is *not* an error -- it is an idempotent
+    no-op.
+    """
+
+    def __init__(self, reference: str, reason: str) -> None:
+        super().__init__(f"payment {reference} cannot be confirmed: {reason}")
+        self.reference = reference
+        self.reason = reason
+
+
+class CardToCardNotConfiguredError(PaymentError):
+    """Raised when a channel has no card-to-card destination card configured.
+
+    Card-to-card cannot be offered for an order whose channel has no receiving card set up
+    (a server-side configuration gap). The transport maps this to 409.
+    """
+
+    def __init__(self, channel: str) -> None:
+        super().__init__(f"no card-to-card destination is configured for channel {channel!r}")
+        self.channel = channel
+
+
 class GatewayCannotCaptureError(PaymentError):
     """Raised when a payment awaiting capture is bound to a non-verifiable gateway.
 

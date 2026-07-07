@@ -15,11 +15,14 @@ redacted owner id, and the amount lives only on the audit entry.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 
 import structlog
 
 from src.application.audit.ports import AuditRecorder
 from src.application.payment.ports import (
+    CardToCardDestination,
+    CardToCardDirectory,
     Clock,
     NextActionType,
     OnlinePaymentGateway,
@@ -34,17 +37,24 @@ from src.application.payment.ports import (
     WalletCredit,
     WalletDebit,
 )
+from src.application.shared.events import EventPublisher
 from src.application.shared.owner import safe_owner
 from src.domain.audit.entities import FieldChange
 from src.domain.payment.entities import Payment
+from src.domain.payment.events import PaymentCaptured
 from src.domain.payment.exceptions import (
+    CardToCardNotConfiguredError,
     GatewayCannotCaptureError,
     InvalidPaymentMethodError,
+    NotACardToCardPaymentError,
     OrderNotPayableError,
     PaymentAlreadyExistsError,
+    PaymentNotAwaitingTransferError,
+    PaymentNotConfirmableError,
     PaymentNotFoundError,
     PaymentNotRefundableError,
     PaymentOrderNotFoundError,
+    TransferReferenceAlreadySubmittedError,
     WalletOwnerRequiredError,
     WalletPaymentRequiresUserError,
 )
@@ -68,6 +78,8 @@ _ACTION_PAYMENT_INITIATED = "payment.initiated"
 _ACTION_PAYMENT_CAPTURED = "payment.captured"
 _ACTION_PAYMENT_FAILED = "payment.failed"
 _ACTION_PAYMENT_REFUNDED = "payment.refunded"
+_ACTION_TRANSFER_SUBMITTED = "payment.transfer_submitted"
+_ACTION_PAYMENT_REJECTED = "payment.rejected"
 
 # The reason recorded on the wallet credit a refund produces, and the owner prefix a wallet
 # requires (a wallet always belongs to a registered user, never a guest).
@@ -79,6 +91,24 @@ _WALLET_PAYMENT_REASON = "order_payment"
 # The statuses from which a callback can still settle a payment; anything else is already
 # resolved and the callback is a no-op (idempotency).
 _SETTLEABLE_STATUSES = frozenset({PaymentStatus.PENDING, PaymentStatus.AUTHORIZED})
+
+
+def _payment_captured_event(payment: Payment, *, occurred_at: datetime) -> PaymentCaptured:
+    """Build the ``PaymentCaptured`` announcement for a just-captured payment.
+
+    Shared by every capture path (the online callback and pay-with-wallet) so the event's
+    shape is defined once. The event carries the amount and owner for subscribers; its own
+    ``to_log`` keeps them out of the structured logs.
+    """
+    return PaymentCaptured(
+        occurred_at=occurred_at,
+        payment_reference=payment.reference.value,
+        order_number=payment.order_ref.value,
+        owner=payment.owner,
+        method=payment.method.value,
+        amount=payment.amount.amount,
+        currency=payment.amount.currency,
+    )
 
 
 @dataclass(frozen=True)
@@ -244,6 +274,7 @@ class PayWithWallet:
         references: PaymentReferenceGenerator,
         clock: Clock,
         audit: AuditRecorder,
+        events: EventPublisher,
     ) -> None:
         self._uow = unit_of_work
         self._orders = orders
@@ -253,6 +284,7 @@ class PayWithWallet:
         self._references = references
         self._clock = clock
         self._audit = audit
+        self._events = events
 
     def execute(self, command: PayWithWalletCommand) -> PaymentResult:
         # A wallet always belongs to a registered user; refuse a guest before opening the
@@ -296,6 +328,9 @@ class PayWithWallet:
             captured = self._payments.update_status(saved.capture())
             self._paid_orders.mark_paid(order.number)
             self._audit_captured(captured, amount=amount, order_number=order.number)
+            # Wallet payment captures immediately: announce it like any other capture
+            # (delivered after commit, so a rolled-back settlement never fires it).
+            self._events.publish(_payment_captured_event(captured, occurred_at=self._clock.now()))
 
         logger.info(
             "payment_paid_with_wallet",
@@ -416,12 +451,16 @@ class CapturePayment:
         gateways: PaymentGatewayRegistry,
         paid_orders: PaidOrders,
         audit: AuditRecorder,
+        events: EventPublisher,
+        clock: Clock,
     ) -> None:
         self._uow = unit_of_work
         self._payments = payments
         self._gateways = gateways
         self._paid_orders = paid_orders
         self._audit = audit
+        self._events = events
+        self._clock = clock
 
     def execute(self, command: CapturePaymentCommand) -> Payment:
         with self._uow.atomic():
@@ -478,6 +517,9 @@ class CapturePayment:
                 FieldChange(field="provider_reference", after=provider_reference),
             ),
         )
+        # Money actually moved: announce it on the event bus (delivered after commit, so a
+        # rolled-back capture never fires it).
+        self._events.publish(_payment_captured_event(captured, occurred_at=self._clock.now()))
         logger.info(
             "payment_captured",
             owner=safe_owner(payment.owner),
@@ -611,3 +653,289 @@ class RefundPayment:
             actor=command.actor,
         )
         return refunded
+
+
+# --- Card-to-card (manual bank transfer, staff-verified) --------------------
+
+_CARD_TO_CARD_CONFIRM_REASON_STATUS = "status"
+_CARD_TO_CARD_CONFIRM_REASON_NO_TRANSFER = "no transfer reference submitted"
+
+
+@dataclass(frozen=True)
+class SubmitCardToCardReferenceCommand:
+    """Input for a buyer reporting the transfer they made for a card-to-card payment.
+
+    ``owner`` is the resolved order owner (``u:<pk>`` / ``g:<token>``); ``transfer_reference``
+    is the bank tracking/receipt number of their manual transfer. There is no amount or
+    payment id here -- the payment is resolved owner-scoped from the order.
+    """
+
+    owner: str
+    order_number: str
+    transfer_reference: str
+
+
+class SubmitCardToCardReference:
+    """Attach the buyer's card-to-card transfer reference to their pending payment, atomically.
+
+    Resolves the owner's still-open payment for the order (owner-scoped and row-locked, so
+    another shopper's payment is unreachable and a concurrent staff confirm/reject serializes),
+    refuses anything but a still-pending card-to-card payment with no reference yet, records the
+    reference, and audits ``payment.transfer_submitted`` -- all in one transaction. The
+    reference is the buyer's *claim*; staff verify it before the payment is confirmed.
+    """
+
+    def __init__(
+        self,
+        *,
+        unit_of_work: UnitOfWork,
+        payments: PaymentRepository,
+        audit: AuditRecorder,
+    ) -> None:
+        self._uow = unit_of_work
+        self._payments = payments
+        self._audit = audit
+
+    def execute(self, command: SubmitCardToCardReferenceCommand) -> Payment:
+        # Validate the order-number shape up front; a malformed one can never match (surfaced
+        # as "not found" at the transport, never a distinct error that probes the shape).
+        order_number = OrderRef(command.order_number).value
+        transfer_reference = command.transfer_reference.strip()
+        with self._uow.atomic():
+            payment = self._payments.get_active_for_order_for_update(command.owner, order_number)
+            if payment is None:
+                # No open payment for this owner's order (or not theirs) -- indistinguishable.
+                raise PaymentNotFoundError(order_number)
+            if payment.method is not PaymentMethod.CARD_TO_CARD:
+                raise NotACardToCardPaymentError(payment.reference.value)
+            if payment.status is not PaymentStatus.PENDING:
+                raise PaymentNotAwaitingTransferError(payment.reference.value, payment.status.value)
+            if payment.transfer_reference is not None:
+                raise TransferReferenceAlreadySubmittedError(payment.reference.value)
+
+            updated = self._payments.update_transfer_reference(
+                payment.with_transfer_reference(transfer_reference)
+            )
+            self._audit.record(
+                action=_ACTION_TRANSFER_SUBMITTED,
+                resource_type=_RESOURCE_PAYMENT,
+                resource_id=updated.reference.value,
+                actor=safe_owner(command.owner),
+                changes=(
+                    FieldChange(field="transfer_reference", after=transfer_reference),
+                    FieldChange(field="order", after=updated.order_ref.value),
+                ),
+            )
+
+        # No amount and no card number in the logs; the tracking reference lives on the audit
+        # trail (staff need it to verify), not the structured logs.
+        logger.info(
+            "card_to_card_transfer_submitted",
+            owner=safe_owner(command.owner),
+            payment_reference=updated.reference.value,
+            order_number=updated.order_ref.value,
+        )
+        return updated
+
+
+@dataclass(frozen=True)
+class ConfirmCardToCardPaymentCommand:
+    """Input for staff confirming a card-to-card transfer (capturing the payment).
+
+    ``reference`` is the payment's public handle (from the staff URL); ``actor`` is the
+    confirming staff's id (``u:<pk>``), recorded on the audit trail.
+    """
+
+    reference: str
+    actor: str
+
+
+class ConfirmCardToCardPayment:
+    """Capture a card-to-card payment after staff verify the buyer's transfer, atomically.
+
+    A staff action addressed by the payment's public reference (gated by the manage-orders
+    permission at the transport). Locks the payment, refuses anything but a still-pending
+    card-to-card payment that carries a submitted transfer reference, then captures it, marks
+    the order paid, announces ``PaymentCaptured``, and audits ``payment.captured`` -- all in
+    one transaction. Idempotent: an already-captured payment is returned unchanged (a repeat
+    never double-captures or double-pays the order).
+    """
+
+    def __init__(
+        self,
+        *,
+        unit_of_work: UnitOfWork,
+        payments: PaymentRepository,
+        paid_orders: PaidOrders,
+        audit: AuditRecorder,
+        events: EventPublisher,
+        clock: Clock,
+    ) -> None:
+        self._uow = unit_of_work
+        self._payments = payments
+        self._paid_orders = paid_orders
+        self._audit = audit
+        self._events = events
+        self._clock = clock
+
+    def execute(self, command: ConfirmCardToCardPaymentCommand) -> Payment:
+        canonical = PaymentReference(command.reference).value
+        with self._uow.atomic():
+            payment = self._payments.get_by_reference_for_update(canonical)
+            if payment is None:
+                raise PaymentNotFoundError(canonical)
+            if payment.method is not PaymentMethod.CARD_TO_CARD:
+                raise NotACardToCardPaymentError(payment.reference.value)
+
+            # Idempotency: an already-captured payment is returned as-is; a repeat must never
+            # re-capture or re-pay the order.
+            if payment.status is PaymentStatus.CAPTURED:
+                logger.info(
+                    "card_to_card_confirm_ignored",
+                    payment_reference=payment.reference.value,
+                    status=payment.status.value,
+                )
+                return payment
+            if payment.status is not PaymentStatus.PENDING:
+                raise PaymentNotConfirmableError(
+                    payment.reference.value,
+                    f"{_CARD_TO_CARD_CONFIRM_REASON_STATUS} {payment.status.value!r}",
+                )
+            if payment.transfer_reference is None:
+                raise PaymentNotConfirmableError(
+                    payment.reference.value, _CARD_TO_CARD_CONFIRM_REASON_NO_TRANSFER
+                )
+
+            captured = self._payments.update_status(payment.capture())
+            # Money confirmed collected: mark the order paid in the same transaction.
+            self._paid_orders.mark_paid(payment.order_ref.value)
+            self._events.publish(_payment_captured_event(captured, occurred_at=self._clock.now()))
+            self._audit.record(
+                action=_ACTION_PAYMENT_CAPTURED,
+                resource_type=_RESOURCE_PAYMENT,
+                resource_id=payment.reference.value,
+                actor=command.actor,
+                changes=(
+                    FieldChange(
+                        field="status",
+                        before=PaymentStatus.PENDING.value,
+                        after=PaymentStatus.CAPTURED.value,
+                    ),
+                    FieldChange(field="amount", after=str(payment.amount.amount)),
+                    FieldChange(field="order", after=payment.order_ref.value),
+                    FieldChange(field="method", after=PaymentMethod.CARD_TO_CARD.value),
+                    FieldChange(field="transfer_reference", after=payment.transfer_reference),
+                ),
+            )
+
+        logger.info(
+            "card_to_card_payment_confirmed",
+            payment_reference=captured.reference.value,
+            order_number=captured.order_ref.value,
+            currency=captured.amount.currency,
+            actor=command.actor,
+        )
+        return captured
+
+
+@dataclass(frozen=True)
+class RejectCardToCardPaymentCommand:
+    """Input for staff rejecting a card-to-card transfer (failing the payment)."""
+
+    reference: str
+    actor: str
+
+
+class RejectCardToCardPayment:
+    """Fail a card-to-card payment when staff cannot verify the buyer's transfer, atomically.
+
+    A staff action addressed by the payment's public reference (gated by manage-orders). Locks
+    the payment, refuses anything but a still-pending card-to-card payment, then fails it and
+    audits ``payment.rejected`` -- so the order is freed for a fresh attempt. Idempotent: an
+    already-failed payment is returned unchanged.
+    """
+
+    def __init__(
+        self,
+        *,
+        unit_of_work: UnitOfWork,
+        payments: PaymentRepository,
+        audit: AuditRecorder,
+    ) -> None:
+        self._uow = unit_of_work
+        self._payments = payments
+        self._audit = audit
+
+    def execute(self, command: RejectCardToCardPaymentCommand) -> Payment:
+        canonical = PaymentReference(command.reference).value
+        with self._uow.atomic():
+            payment = self._payments.get_by_reference_for_update(canonical)
+            if payment is None:
+                raise PaymentNotFoundError(canonical)
+            if payment.method is not PaymentMethod.CARD_TO_CARD:
+                raise NotACardToCardPaymentError(payment.reference.value)
+
+            # Idempotency: an already-failed payment is returned as-is.
+            if payment.status is PaymentStatus.FAILED:
+                logger.info(
+                    "card_to_card_reject_ignored",
+                    payment_reference=payment.reference.value,
+                    status=payment.status.value,
+                )
+                return payment
+            if payment.status is not PaymentStatus.PENDING:
+                # A captured payment is refunded, not rejected.
+                raise PaymentNotConfirmableError(
+                    payment.reference.value,
+                    f"{_CARD_TO_CARD_CONFIRM_REASON_STATUS} {payment.status.value!r}",
+                )
+
+            failed = self._payments.update_status(payment.fail())
+            self._audit.record(
+                action=_ACTION_PAYMENT_REJECTED,
+                resource_type=_RESOURCE_PAYMENT,
+                resource_id=payment.reference.value,
+                actor=command.actor,
+                changes=(
+                    FieldChange(
+                        field="status",
+                        before=PaymentStatus.PENDING.value,
+                        after=PaymentStatus.FAILED.value,
+                    ),
+                    FieldChange(field="order", after=payment.order_ref.value),
+                    FieldChange(field="reason", after="card_to_card_rejected"),
+                ),
+            )
+
+        logger.info(
+            "card_to_card_payment_rejected",
+            payment_reference=failed.reference.value,
+            order_number=failed.order_ref.value,
+            actor=command.actor,
+        )
+        return failed
+
+
+class GetCardToCardInstructions:
+    """Resolve the destination card a buyer must transfer to for their card-to-card order.
+
+    Owner-scoped: the order is resolved from the caller (another shopper's order is
+    indistinguishable from a nonexistent one), then its channel's receiving card is looked up.
+    The card is not a secret, but exposing it only to the order's owner keeps it consistent
+    with every other order-scoped read.
+    """
+
+    def __init__(self, *, orders: OrderReader, directory: CardToCardDirectory) -> None:
+        self._orders = orders
+        self._directory = directory
+
+    def execute(self, *, owner: str, order_number: str) -> CardToCardDestination:
+        # Validate the order-number shape up front (surfaced as "not found" if malformed).
+        canonical = OrderRef(order_number).value
+        order = self._orders.get_payable(owner, canonical)
+        if order is None:
+            raise PaymentOrderNotFoundError(canonical)
+        destination = self._directory.card_for(order.channel)
+        if destination is None:
+            raise CardToCardNotConfiguredError(order.channel)
+        return destination

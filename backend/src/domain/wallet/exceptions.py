@@ -48,8 +48,6 @@ class WalletCurrencyMismatchError(WalletError):
     """
 
     def __init__(self, wallet_currency: str, movement_currency: str) -> None:
-        super().__init__(
-            f"wallet holds {wallet_currency!r}, cannot move {movement_currency!r}"
-        )
+        super().__init__(f"wallet holds {wallet_currency!r}, cannot move {movement_currency!r}")
         self.wallet_currency = wallet_currency
         self.movement_currency = movement_currency

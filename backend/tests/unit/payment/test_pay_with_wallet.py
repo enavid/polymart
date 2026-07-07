@@ -20,6 +20,7 @@ from src.application.payment.ports import WalletDebit
 from src.application.payment.use_cases import PayWithWallet, PayWithWalletCommand
 from src.application.shared.owner import safe_owner
 from src.domain.payment.entities import Payment
+from src.domain.payment.events import PaymentCaptured
 from src.domain.payment.exceptions import (
     InsufficientWalletBalanceError,
     OrderNotPayableError,
@@ -42,6 +43,7 @@ from tests.unit.payment.test_use_cases import (
     FixedClock,
     FixedReferences,
     RecordingAudit,
+    RecordingEventPublisher,
     _payable,
 )
 
@@ -88,6 +90,7 @@ def _build(
     uow: FakeUnitOfWork | None = None,
     paid: FakePaidOrders | None = None,
     audit: RecordingAudit | None = None,
+    events: RecordingEventPublisher | None = None,
 ) -> tuple[
     PayWithWallet,
     FakeUnitOfWork,
@@ -95,11 +98,13 @@ def _build(
     FakePaidOrders,
     RecordingAudit,
     FakeWalletDebit,
+    RecordingEventPublisher,
 ]:
     uow = uow or FakeUnitOfWork()
     payments = payments if payments is not None else FakePayments()
     paid = paid or FakePaidOrders()
     audit = audit or RecordingAudit()
+    events = events or RecordingEventPublisher()
     wallet_debit = wallet_debit or FakeWalletDebit()
     use_case = PayWithWallet(
         unit_of_work=uow,
@@ -110,18 +115,17 @@ def _build(
         references=FixedReferences(),
         clock=FixedClock(),
         audit=audit,
+        events=events,
     )
-    return use_case, uow, payments, paid, audit, wallet_debit
+    return use_case, uow, payments, paid, audit, wallet_debit, events
 
 
 class TestPayWithWalletSuccess:
     def test_debits_the_wallet_captures_the_payment_and_marks_the_order_paid(self) -> None:
         orders = FakeOrders({(_OWNER, _ORDER_NUMBER): _payable(total="150.00")})
-        use_case, uow, _payments, paid, _, wallet = _build(orders=orders)
+        use_case, uow, _payments, paid, _, wallet, events = _build(orders=orders)
 
-        result = use_case.execute(
-            PayWithWalletCommand(owner=_OWNER, order_number=_ORDER_NUMBER)
-        )
+        result = use_case.execute(PayWithWalletCommand(owner=_OWNER, order_number=_ORDER_NUMBER))
 
         assert uow.committed is True
         assert result.payment.status is PaymentStatus.CAPTURED
@@ -130,6 +134,12 @@ class TestPayWithWalletSuccess:
         assert result.redirect_url is None
         # The order was paid in the same transaction.
         assert paid.paid == [_ORDER_NUMBER]
+        # The instant capture announces PaymentCaptured on the event bus, like any capture.
+        [event] = events.events
+        assert isinstance(event, PaymentCaptured)
+        assert event.method == "wallet"
+        assert event.amount == Decimal("150.00")
+        assert event.order_number == _ORDER_NUMBER
         # The full order total was debited from the payer's own wallet, keyed on the payment.
         assert wallet.debits == [
             {
@@ -144,18 +154,16 @@ class TestPayWithWalletSuccess:
 
     def test_captures_the_amount_from_the_order_total_not_the_client(self) -> None:
         orders = FakeOrders({(_OWNER, _ORDER_NUMBER): _payable(total="42.00")})
-        use_case, *_rest, wallet = _build(orders=orders)
+        use_case, *_rest, wallet, _events = _build(orders=orders)
 
-        result = use_case.execute(
-            PayWithWalletCommand(owner=_OWNER, order_number=_ORDER_NUMBER)
-        )
+        result = use_case.execute(PayWithWalletCommand(owner=_OWNER, order_number=_ORDER_NUMBER))
 
         assert result.payment.amount == Money(amount=Decimal("42.00"), currency="IRR")
         assert wallet.debits[0]["amount"] == Decimal("42.00")
 
     def test_audits_the_initiation_and_the_capture(self) -> None:
         orders = FakeOrders({(_OWNER, _ORDER_NUMBER): _payable(total="99.00")})
-        use_case, _, _, _, audit, _ = _build(orders=orders)
+        use_case, _, _, _, audit, _, _events = _build(orders=orders)
 
         use_case.execute(PayWithWalletCommand(owner=_OWNER, order_number=_ORDER_NUMBER))
 
@@ -181,12 +189,10 @@ class TestPayWithWalletSuccess:
 class TestPayWithWalletFailures:
     def test_refuses_a_guest_before_opening_the_transaction(self) -> None:
         orders = FakeOrders({("g:tok", _ORDER_NUMBER): _payable()})
-        use_case, uow, payments, paid, _, wallet = _build(orders=orders)
+        use_case, uow, payments, paid, _, wallet, _events = _build(orders=orders)
 
         with pytest.raises(WalletPaymentRequiresUserError):
-            use_case.execute(
-                PayWithWalletCommand(owner="g:tok", order_number=_ORDER_NUMBER)
-            )
+            use_case.execute(PayWithWalletCommand(owner="g:tok", order_number=_ORDER_NUMBER))
 
         assert payments.saved == []
         assert wallet.debits == []
@@ -195,62 +201,53 @@ class TestPayWithWalletFailures:
 
     def test_refuses_when_the_balance_cannot_cover_the_order(self) -> None:
         orders = FakeOrders({(_OWNER, _ORDER_NUMBER): _payable(total="150.00")})
-        use_case, uow, _payments, paid, audit, _ = _build(
+        use_case, uow, _payments, paid, audit, _, events = _build(
             orders=orders, wallet_debit=FakeWalletDebit(sufficient=False)
         )
 
         with pytest.raises(InsufficientWalletBalanceError):
-            use_case.execute(
-                PayWithWalletCommand(owner=_OWNER, order_number=_ORDER_NUMBER)
-            )
+            use_case.execute(PayWithWalletCommand(owner=_OWNER, order_number=_ORDER_NUMBER))
 
-        # Nothing settled: the order is not paid and the transaction rolled back.
+        # Nothing settled: the order is not paid, no capture announced, the txn rolled back.
         assert paid.paid == []
         assert not any(r["action"] == "payment.captured" for r in audit.records)
+        assert events.events == []
         assert uow.rolled_back is True
 
     def test_rejects_an_unknown_order(self) -> None:
         orders = FakeOrders({})
-        use_case, uow, _payments, _, _, wallet = _build(orders=orders)
+        use_case, uow, _payments, _, _, wallet, _events = _build(orders=orders)
 
         with pytest.raises(PaymentOrderNotFoundError):
-            use_case.execute(
-                PayWithWalletCommand(owner=_OWNER, order_number=_ORDER_NUMBER)
-            )
+            use_case.execute(PayWithWalletCommand(owner=_OWNER, order_number=_ORDER_NUMBER))
         assert wallet.debits == []
         assert uow.rolled_back is True
 
     def test_another_shoppers_order_is_indistinguishable_from_unknown(self) -> None:
         orders = FakeOrders({("u:99", _ORDER_NUMBER): _payable()})
-        use_case, *_rest, wallet = _build(orders=orders)
+        use_case, *_rest, wallet, _events = _build(orders=orders)
 
         with pytest.raises(PaymentOrderNotFoundError):
-            use_case.execute(
-                PayWithWalletCommand(owner=_OWNER, order_number=_ORDER_NUMBER)
-            )
+            use_case.execute(PayWithWalletCommand(owner=_OWNER, order_number=_ORDER_NUMBER))
         assert wallet.debits == []
 
     @pytest.mark.parametrize("status", ["paid", "cancelled", "fulfilled"])
     def test_rejects_a_non_pending_order(self, status: str) -> None:
         orders = FakeOrders({(_OWNER, _ORDER_NUMBER): _payable(status=status)})
-        use_case, uow, _, _, _, wallet = _build(orders=orders)
+        use_case, uow, _, _, _, wallet, _events = _build(orders=orders)
 
         with pytest.raises(OrderNotPayableError):
-            use_case.execute(
-                PayWithWalletCommand(owner=_OWNER, order_number=_ORDER_NUMBER)
-            )
+            use_case.execute(PayWithWalletCommand(owner=_OWNER, order_number=_ORDER_NUMBER))
         assert wallet.debits == []
         assert uow.rolled_back is True
 
     def test_rejects_a_second_active_payment(self) -> None:
         orders = FakeOrders({(_OWNER, _ORDER_NUMBER): _payable()})
         payments = FakePayments().with_active(_OWNER, _ORDER_NUMBER, _existing_payment())
-        use_case, uow, _, _, _, wallet = _build(orders=orders, payments=payments)
+        use_case, uow, _, _, _, wallet, _events = _build(orders=orders, payments=payments)
 
         with pytest.raises(PaymentAlreadyExistsError):
-            use_case.execute(
-                PayWithWalletCommand(owner=_OWNER, order_number=_ORDER_NUMBER)
-            )
+            use_case.execute(PayWithWalletCommand(owner=_OWNER, order_number=_ORDER_NUMBER))
         assert wallet.debits == []
         assert uow.rolled_back is True
 

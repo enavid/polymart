@@ -125,3 +125,22 @@ class TestGatewayReference:
         captured = _payment().with_gateway_reference("A1").capture()
         assert captured.gateway_reference == "A1"
         assert captured.status is PaymentStatus.CAPTURED
+
+
+class TestTransferReference:
+    def test_defaults_to_none(self) -> None:
+        assert _payment().transfer_reference is None
+
+    def test_sets_the_transfer_reference_once(self) -> None:
+        payment = _payment().with_transfer_reference("TRK-123456")
+        assert payment.transfer_reference == "TRK-123456"
+
+    def test_refuses_to_overwrite(self) -> None:
+        payment = _payment().with_transfer_reference("TRK-1")
+        with pytest.raises(ValueError):
+            payment.with_transfer_reference("TRK-2")
+
+    def test_transition_carries_the_transfer_reference(self) -> None:
+        captured = _payment().with_transfer_reference("TRK-1").capture()
+        assert captured.transfer_reference == "TRK-1"
+        assert captured.status is PaymentStatus.CAPTURED

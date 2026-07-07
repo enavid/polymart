@@ -18,15 +18,21 @@ from django.conf import settings
 from src.application.payment.ports import PaymentGateway, PaymentGatewayRegistry
 from src.application.payment.use_cases import (
     CapturePayment,
+    ConfirmCardToCardPayment,
+    GetCardToCardInstructions,
     GetMyPayment,
     GetPaymentByGatewayReference,
     GetPaymentForOrder,
     InitiatePayment,
     PayWithWallet,
     RefundPayment,
+    RejectCardToCardPayment,
+    SubmitCardToCardReference,
 )
+from src.infrastructure.payment.card_to_card import SettingsCardToCardDirectory
 from src.infrastructure.payment.clock import SystemClock
 from src.infrastructure.payment.gateways import (
+    CardToCardGateway,
     CashOnDeliveryGateway,
     MockOnlineGateway,
     ZarinpalGateway,
@@ -42,6 +48,7 @@ from src.infrastructure.payment.repositories import (
 from src.infrastructure.payment.wallet_credit import WalletCreditAdapter
 from src.infrastructure.payment.wallet_debit import WalletDebitAdapter
 from src.interface.api.audit.container import build_audit_recorder
+from src.interface.api.events.container import build_event_publisher
 from src.interface.api.wallet.container import build_credit_wallet, build_debit_wallet
 
 # Zarinpal endpoints, keyed by whether the sandbox is in use (production config).
@@ -67,8 +74,10 @@ def _build_online_gateway() -> PaymentGateway:
 
 
 def build_gateway_registry() -> PaymentGatewayRegistry:
-    """The registered payment gateways (COD + the online method's adapter)."""
-    return PaymentGatewayRegistry((CashOnDeliveryGateway(), _build_online_gateway()))
+    """The registered payment gateways (COD + card-to-card + the online method's adapter)."""
+    return PaymentGatewayRegistry(
+        (CashOnDeliveryGateway(), CardToCardGateway(), _build_online_gateway())
+    )
 
 
 def build_initiate_payment() -> InitiatePayment:
@@ -93,6 +102,7 @@ def build_pay_with_wallet() -> PayWithWallet:
         references=SecurePaymentReferenceGenerator(),
         clock=SystemClock(),
         audit=build_audit_recorder(),
+        events=build_event_publisher(),
     )
 
 
@@ -103,6 +113,8 @@ def build_capture_payment() -> CapturePayment:
         gateways=build_gateway_registry(),
         paid_orders=DjangoPaidOrders(),
         audit=build_audit_recorder(),
+        events=build_event_publisher(),
+        clock=SystemClock(),
     )
 
 
@@ -125,3 +137,37 @@ def build_get_my_payment() -> GetMyPayment:
 
 def build_get_payment_for_order() -> GetPaymentForOrder:
     return GetPaymentForOrder(DjangoPaymentRepository())
+
+
+def build_submit_card_to_card_reference() -> SubmitCardToCardReference:
+    return SubmitCardToCardReference(
+        unit_of_work=DjangoUnitOfWork(),
+        payments=DjangoPaymentRepository(),
+        audit=build_audit_recorder(),
+    )
+
+
+def build_confirm_card_to_card_payment() -> ConfirmCardToCardPayment:
+    return ConfirmCardToCardPayment(
+        unit_of_work=DjangoUnitOfWork(),
+        payments=DjangoPaymentRepository(),
+        paid_orders=DjangoPaidOrders(),
+        audit=build_audit_recorder(),
+        events=build_event_publisher(),
+        clock=SystemClock(),
+    )
+
+
+def build_reject_card_to_card_payment() -> RejectCardToCardPayment:
+    return RejectCardToCardPayment(
+        unit_of_work=DjangoUnitOfWork(),
+        payments=DjangoPaymentRepository(),
+        audit=build_audit_recorder(),
+    )
+
+
+def build_get_card_to_card_instructions() -> GetCardToCardInstructions:
+    return GetCardToCardInstructions(
+        orders=DjangoOrderReader(),
+        directory=SettingsCardToCardDirectory(),
+    )

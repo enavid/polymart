@@ -57,6 +57,7 @@ from src.infrastructure.order.repositories import (
     DjangoUnitOfWork,
 )
 from src.interface.api.audit.container import build_audit_recorder
+from src.interface.api.events.container import build_event_publisher
 from tests.integration.order.factories import seed_address
 
 pytestmark = [pytest.mark.django_db, pytest.mark.integration]
@@ -131,6 +132,7 @@ def _place_order(numbers: OrderNumberGenerator | None = None) -> PlaceOrder:
         numbers=numbers or _FixedNumbers(),
         clock=SystemClock(),
         audit=build_audit_recorder(),
+        events=build_event_publisher(),
     )
 
 

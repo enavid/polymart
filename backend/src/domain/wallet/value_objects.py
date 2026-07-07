@@ -53,9 +53,7 @@ class Money:
         # bool is an int subclass; Decimal is not -- reject anything that is not a genuine
         # Decimal so a float (or int) never silently becomes money.
         if not isinstance(amount, Decimal):
-            raise InvalidWalletMoneyError(
-                f"amount must be a Decimal, got {type(amount).__name__}"
-            )
+            raise InvalidWalletMoneyError(f"amount must be a Decimal, got {type(amount).__name__}")
         if not amount.is_finite():
             raise InvalidWalletMoneyError(f"amount not finite: {amount!r}")
         if amount < 0:

@@ -13,6 +13,12 @@ ALLOWED_HOSTS = ["*"]
 CELERY_TASK_ALWAYS_EAGER = True
 CELERY_TASK_EAGER_PROPAGATES = True
 
+# A deterministic card-to-card destination for the default channel, so the card-to-card flow
+# (and the E2E harness) shows a known receiving card in local dev.
+PAYMENT_CARD_TO_CARD = {
+    "ir-main": {"number": "6037-9911-1234-5678", "holder": "Polymart Store"},
+}
+
 # The Next.js storefront runs on :3000. Allow both hostnames a developer might
 # use so the cookie-JWT flow works regardless of how the dev server is opened.
 # (Browsers treat localhost and 127.0.0.1 as distinct origins.)

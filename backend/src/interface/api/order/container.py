@@ -26,6 +26,7 @@ from src.infrastructure.order.repositories import (
     DjangoUnitOfWork,
 )
 from src.interface.api.audit.container import build_audit_recorder
+from src.interface.api.events.container import build_event_publisher
 
 
 def build_place_order() -> PlaceOrder:
@@ -40,6 +41,7 @@ def build_place_order() -> PlaceOrder:
         numbers=SecureOrderNumberGenerator(),
         clock=SystemClock(),
         audit=build_audit_recorder(),
+        events=build_event_publisher(),
     )
 
 
@@ -70,6 +72,7 @@ def build_create_manual_order() -> CreateManualOrder:
         numbers=SecureOrderNumberGenerator(),
         clock=SystemClock(),
         audit=build_audit_recorder(),
+        events=build_event_publisher(),
     )
 
 

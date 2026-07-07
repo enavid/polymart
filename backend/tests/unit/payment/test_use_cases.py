@@ -41,9 +41,11 @@ from src.application.payment.use_cases import (
     InitiatePayment,
     InitiatePaymentCommand,
 )
+from src.application.shared.events import EventPublisher
 from src.application.shared.owner import safe_owner
 from src.domain.audit.entities import FieldChange
 from src.domain.payment.entities import Payment
+from src.domain.payment.events import PaymentCaptured
 from src.domain.payment.exceptions import (
     GatewayCannotCaptureError,
     InvalidPaymentMethodError,
@@ -54,12 +56,14 @@ from src.domain.payment.exceptions import (
     UnsupportedPaymentMethodError,
 )
 from src.domain.payment.value_objects import (
+    ACTIVE_PAYMENT_STATUSES,
     Money,
     OrderRef,
     PaymentMethod,
     PaymentReference,
     PaymentStatus,
 )
+from src.domain.shared.events import DomainEvent
 
 # --- Fakes ---------------------------------------------------------------
 
@@ -106,6 +110,7 @@ class FakePayments(PaymentRepository):
             status=payment.status,
             created_at=payment.created_at,
             gateway_reference=payment.gateway_reference,
+            transfer_reference=payment.transfer_reference,
             id=len(self.saved) + 1,
         )
         self.saved.append(stored)
@@ -141,12 +146,25 @@ class FakePayments(PaymentRepository):
                 return payment
         return None
 
+    def get_active_for_order_for_update(self, owner: str, order_number: str) -> Payment | None:
+        for payment in reversed(self.saved):
+            if (
+                payment.owner == owner
+                and payment.order_ref.value == order_number
+                and payment.status in ACTIVE_PAYMENT_STATUSES
+            ):
+                return payment
+        return None
+
     def update_status(self, payment: Payment) -> Payment:
         for i, stored in enumerate(self.saved):
             if stored.reference.value == payment.reference.value:
                 self.saved[i] = payment
                 return payment
         raise PaymentNotFoundError(payment.reference.value)
+
+    def update_transfer_reference(self, payment: Payment) -> Payment:
+        return self.update_status(payment)
 
 
 class RecordingGateway(PaymentGateway):
@@ -207,14 +225,32 @@ class RecordingAudit(AuditRecorder):
         )
 
 
+class RecordingEventPublisher(EventPublisher):
+    """Records the domain events a use case publishes (immediate, no commit notion)."""
+
+    def __init__(self) -> None:
+        self.events: list[DomainEvent] = []
+
+    def publish(self, event: DomainEvent) -> None:
+        self.events.append(event)
+
+
 # --- Helpers -------------------------------------------------------------
 
 _OWNER = "u:7"
 _ORDER_NUMBER = "ORD-XYZ789"
 
 
-def _payable(status: str = "pending", total: str = "150.00") -> PayableOrder:
-    return PayableOrder(number=_ORDER_NUMBER, currency="IRR", total=Decimal(total), status=status)
+def _payable(
+    status: str = "pending", total: str = "150.00", channel: str = "ir-main"
+) -> PayableOrder:
+    return PayableOrder(
+        number=_ORDER_NUMBER,
+        currency="IRR",
+        total=Decimal(total),
+        status=status,
+        channel=channel,
+    )
 
 
 def _build_initiate(
@@ -527,23 +563,33 @@ def _build_capture(
     uow: FakeUnitOfWork | None = None,
     paid: FakePaidOrders | None = None,
     audit: RecordingAudit | None = None,
-) -> tuple[CapturePayment, FakePaidOrders, RecordingAudit, FakeUnitOfWork]:
+    events: RecordingEventPublisher | None = None,
+) -> tuple[CapturePayment, FakePaidOrders, RecordingAudit, FakeUnitOfWork, RecordingEventPublisher]:
     uow = uow or FakeUnitOfWork()
     payments = FakePayments()
     payments.add(payment)
     paid = paid or FakePaidOrders()
     audit = audit or RecordingAudit()
+    events = events or RecordingEventPublisher()
     registry = PaymentGatewayRegistry((gateway or FakeOnlineGateway(),))
     use_case = CapturePayment(
-        unit_of_work=uow, payments=payments, gateways=registry, paid_orders=paid, audit=audit
+        unit_of_work=uow,
+        payments=payments,
+        gateways=registry,
+        paid_orders=paid,
+        audit=audit,
+        events=events,
+        clock=FixedClock(),
     )
-    return use_case, paid, audit, uow
+    return use_case, paid, audit, uow, events
 
 
 class TestCapturePayment:
     def test_success_captures_and_marks_the_order_paid(self) -> None:
         gateway = FakeOnlineGateway(captured=True, provider_reference="RID-9")
-        use_case, paid, audit, uow = _build_capture(payment=_online_payment(), gateway=gateway)
+        use_case, paid, audit, uow, events = _build_capture(
+            payment=_online_payment(), gateway=gateway
+        )
 
         result = use_case.execute(
             CapturePaymentCommand(gateway_reference=_AUTHORITY, succeeded=True)
@@ -558,10 +604,27 @@ class TestCapturePayment:
         assert fields["status"] == "captured"
         assert fields["amount"] == "150.00"
         assert fields["provider_reference"] == "RID-9"
+        # Money moved -> a PaymentCaptured is announced on the event bus with the captured amount.
+        [event] = events.events
+        assert isinstance(event, PaymentCaptured)
+        assert event.order_number == _ORDER_NUMBER
+        assert event.amount == Decimal("150.00")
+        assert event.method == "online"
+
+    def test_a_failed_verification_publishes_no_capture_event(self) -> None:
+        gateway = FakeOnlineGateway(captured=False)
+        use_case, paid, _audit, _uow, events = _build_capture(
+            payment=_online_payment(), gateway=gateway
+        )
+
+        use_case.execute(CapturePaymentCommand(gateway_reference=_AUTHORITY, succeeded=True))
+
+        assert paid.paid == []  # order not paid
+        assert events.events == []  # nothing captured -> nothing announced
 
     def test_is_idempotent_on_a_repeated_callback(self) -> None:
         gateway = FakeOnlineGateway(captured=True)
-        use_case, paid, audit, _ = _build_capture(payment=_online_payment(), gateway=gateway)
+        use_case, paid, audit, _, _ = _build_capture(payment=_online_payment(), gateway=gateway)
         first = use_case.execute(
             CapturePaymentCommand(gateway_reference=_AUTHORITY, succeeded=True)
         )
@@ -578,7 +641,7 @@ class TestCapturePayment:
 
     def test_a_cancelled_callback_fails_without_verifying(self) -> None:
         gateway = FakeOnlineGateway(captured=True)
-        use_case, paid, audit, _ = _build_capture(payment=_online_payment(), gateway=gateway)
+        use_case, paid, audit, _, _ = _build_capture(payment=_online_payment(), gateway=gateway)
 
         result = use_case.execute(
             CapturePaymentCommand(gateway_reference=_AUTHORITY, succeeded=False)
@@ -591,7 +654,7 @@ class TestCapturePayment:
 
     def test_a_failed_verification_fails_the_payment(self) -> None:
         gateway = FakeOnlineGateway(captured=False)
-        use_case, paid, _, _ = _build_capture(payment=_online_payment(), gateway=gateway)
+        use_case, paid, _, _, _ = _build_capture(payment=_online_payment(), gateway=gateway)
 
         result = use_case.execute(
             CapturePaymentCommand(gateway_reference=_AUTHORITY, succeeded=True)
@@ -603,7 +666,7 @@ class TestCapturePayment:
 
     def test_an_already_failed_payment_is_left_untouched(self) -> None:
         gateway = FakeOnlineGateway(captured=True)
-        use_case, paid, _, _ = _build_capture(
+        use_case, paid, _, _, _ = _build_capture(
             payment=_online_payment(status=PaymentStatus.FAILED), gateway=gateway
         )
 
@@ -642,6 +705,8 @@ class TestCapturePayment:
             gateways=registry,
             paid_orders=FakePaidOrders(),
             audit=RecordingAudit(),
+            events=RecordingEventPublisher(),
+            clock=FixedClock(),
         )
         with pytest.raises(GatewayCannotCaptureError):
             use_case.execute(CapturePaymentCommand(gateway_reference=_AUTHORITY, succeeded=True))

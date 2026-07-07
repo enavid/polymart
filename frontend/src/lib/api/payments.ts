@@ -37,6 +37,17 @@ export interface Payment {
   currency: string;
   status: PaymentStatus;
   created_at: string;
+  /**
+   * The buyer's submitted card-to-card transfer reference, or null for every other method
+   * and until a card-to-card buyer submits it.
+   */
+  transfer_reference: string | null;
+}
+
+/** The merchant's receiving card a buyer transfers to for a card-to-card payment. */
+export interface CardToCardInstructions {
+  card_number: string;
+  card_holder: string;
 }
 
 /**
@@ -68,4 +79,35 @@ export function getPaymentForOrder(orderNumber: string): Promise<Payment> {
 /** Read one of the shopper's payments by reference. */
 export function getPayment(reference: string): Promise<Payment> {
   return apiGet<Payment>(`/payments/${reference}/`);
+}
+
+/**
+ * Read the destination card a buyer must transfer to for their own card-to-card order
+ * (owner-scoped; another shopper's order is a 404). The channel's receiving card is
+ * server-owned config -- never entered by the buyer.
+ */
+export function getCardToCardInstructions(
+  orderNumber: string,
+): Promise<CardToCardInstructions> {
+  return apiGet<CardToCardInstructions>(`/payments/for-order/${orderNumber}/card-to-card/`);
+}
+
+/** Submit the buyer's card-to-card transfer reference for their own pending order. */
+export function submitTransferReference(
+  orderNumber: string,
+  transferReference: string,
+): Promise<Payment> {
+  return apiPost<Payment>(`/payments/for-order/${orderNumber}/transfer-reference/`, {
+    transfer_reference: transferReference,
+  });
+}
+
+/** Staff: confirm a card-to-card transfer, capturing the payment (manage_orders). */
+export function confirmCardToCardPayment(reference: string): Promise<Payment> {
+  return apiPost<Payment>(`/payments/${reference}/confirm/`, {});
+}
+
+/** Staff: reject a card-to-card transfer, failing the payment (manage_orders). */
+export function rejectCardToCardPayment(reference: string): Promise<Payment> {
+  return apiPost<Payment>(`/payments/${reference}/reject/`, {});
 }

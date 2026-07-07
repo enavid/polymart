@@ -67,6 +67,10 @@ class Payment:
     # captured when the payment is started and used to verify/capture it on the callback.
     # ``None`` for an offline method (COD) that has no external reference.
     gateway_reference: str | None = field(default=None)
+    # The buyer's own tracking reference for a card-to-card transfer (the number they made
+    # the manual bank transfer under), submitted after they pay and verified by staff before
+    # the payment is confirmed. ``None`` for every other method, and until the buyer submits.
+    transfer_reference: str | None = field(default=None)
     id: int | None = field(default=None)
 
     def transition_to(self, target: PaymentStatus) -> Payment:
@@ -90,6 +94,17 @@ class Payment:
         if self.gateway_reference is not None:
             raise ValueError("gateway_reference is already set")
         return replace(self, gateway_reference=gateway_reference)
+
+    def with_transfer_reference(self, transfer_reference: str) -> Payment:
+        """Return a copy carrying the buyer's card-to-card transfer tracking reference.
+
+        Set once, when the buyer reports the manual transfer they made. Refuses to overwrite
+        an existing reference so a submitted transfer's identity stays stable; the use case
+        enforces that this only happens for a still-pending card-to-card payment.
+        """
+        if self.transfer_reference is not None:
+            raise ValueError("transfer_reference is already set")
+        return replace(self, transfer_reference=transfer_reference)
 
     def capture(self) -> Payment:
         """Return a captured copy of the payment (funds collected). Legal only from a

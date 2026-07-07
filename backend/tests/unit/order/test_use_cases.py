@@ -44,9 +44,11 @@ from src.application.order.use_cases import (
     PlaceOrder,
     PlaceOrderCommand,
 )
+from src.application.shared.events import EventPublisher
 from src.application.shared.owner import safe_owner
 from src.domain.audit.entities import FieldChange
 from src.domain.order.entities import Order
+from src.domain.order.events import OrderPlaced
 from src.domain.order.exceptions import (
     DuplicateOrderLineError,
     EmptyCartError,
@@ -59,6 +61,7 @@ from src.domain.order.exceptions import (
     VariantNotPurchasableError,
 )
 from src.domain.order.value_objects import Money, OrderNumber, OrderStatus
+from src.domain.shared.events import DomainEvent
 
 # --- Fakes ---------------------------------------------------------------
 
@@ -237,6 +240,21 @@ class RecordingAudit(AuditRecorder):
         )
 
 
+class RecordingEventPublisher(EventPublisher):
+    """Records the domain events a use case publishes, in order.
+
+    Publishes immediately (the use case calls ``publish`` inside its transaction, and this
+    fake has no notion of commit) -- enough to assert *what* was published. The real
+    after-commit / discard-on-rollback timing is covered by the integration test.
+    """
+
+    def __init__(self) -> None:
+        self.events: list[DomainEvent] = []
+
+    def publish(self, event: DomainEvent) -> None:
+        self.events.append(event)
+
+
 def _with_id(order: Order, new_id: int) -> Order:
     from dataclasses import replace
 
@@ -264,6 +282,7 @@ def _build_place_order(
     orders: FakeOrders | None = None,
     addresses: FakeAddresses | None = None,
     audit: RecordingAudit | None = None,
+    events: RecordingEventPublisher | None = None,
 ) -> PlaceOrder:
     return PlaceOrder(
         unit_of_work=uow or FakeUnitOfWork(),
@@ -276,6 +295,7 @@ def _build_place_order(
         numbers=FakeNumbers(),
         clock=FixedClock(),
         audit=audit or RecordingAudit(),
+        events=events or RecordingEventPublisher(),
     )
 
 
@@ -368,6 +388,7 @@ class TestPlaceOrder:
             numbers=FakeNumbers(),
             clock=FixedClock(),
             audit=RecordingAudit(),
+            events=RecordingEventPublisher(),
         )
 
         place.execute(PlaceOrderCommand(owner="7", channel="ir-main", address_id="ADDR-TEST01"))
@@ -390,6 +411,41 @@ class TestPlaceOrder:
         assert record["resource_type"] == "order"
         assert record["resource_id"] == "ORD-TEST01"
         assert record["actor"] == "7"
+
+    def test_publishes_order_placed_with_the_captured_total(self) -> None:
+        events = RecordingEventPublisher()
+        place = _build_place_order(
+            cart_items=(CheckoutLine("HB-250", 2),),
+            prices={"HB-250": _money("120000.00")},
+            stock={"HB-250": 5},
+            events=events,
+        )
+
+        place.execute(PlaceOrderCommand(owner="7", channel="ir-main", address_id="ADDR-TEST01"))
+
+        [event] = events.events
+        assert isinstance(event, OrderPlaced)
+        assert event.order_number == "ORD-TEST01"
+        assert event.owner == "7"
+        assert event.channel == "ir-main"
+        assert event.currency == "IRR"
+        assert event.total == Decimal("240000.00")
+        assert event.line_count == 1
+
+    def test_publishes_no_event_when_the_placement_rolls_back(self) -> None:
+        # An oversell fails before the publish line, so no OrderPlaced is announced -- the
+        # unit-level counterpart of the adapter discarding an after-commit delivery.
+        events = RecordingEventPublisher()
+        place = _build_place_order(
+            cart_items=(CheckoutLine("HB-250", 5),),
+            prices={"HB-250": _money("120000.00")},
+            stock={"HB-250": 1},
+            events=events,
+        )
+
+        with pytest.raises(OutOfStockError):
+            place.execute(PlaceOrderCommand(owner="7", channel="ir-main", address_id="ADDR-TEST01"))
+        assert events.events == []
 
     def test_never_logs_the_amount(self) -> None:
         place = _build_place_order(
@@ -508,6 +564,7 @@ class TestPlaceOrderInlineShipping:
             numbers=FakeNumbers(),
             clock=FixedClock(),
             audit=RecordingAudit(),
+            events=RecordingEventPublisher(),
         )
 
         order = place.execute(
@@ -585,6 +642,7 @@ class TestListMyOrders:
                 numbers=FakeNumbers(f"ORD-N{i:04d}"),
                 clock=FixedClock(),
                 audit=RecordingAudit(),
+                events=RecordingEventPublisher(),
             ).execute(PlaceOrderCommand(owner=owner, channel="ir-main", address_id="ADDR-TEST01"))
 
     def test_lists_only_the_owners_orders(self) -> None:
@@ -663,6 +721,7 @@ class TestCancelMyOrder:
             numbers=FakeNumbers(),
             clock=FixedClock(),
             audit=RecordingAudit(),
+            events=RecordingEventPublisher(),
         )
         return place.execute(
             PlaceOrderCommand(owner="7", channel="ir-main", address_id="ADDR-TEST01")
@@ -745,6 +804,7 @@ def _build_create_manual_order(
     inventory: FakeInventory | None = None,
     orders: FakeOrders | None = None,
     audit: RecordingAudit | None = None,
+    events: RecordingEventPublisher | None = None,
 ) -> CreateManualOrder:
     return CreateManualOrder(
         unit_of_work=uow or FakeUnitOfWork(),
@@ -755,6 +815,7 @@ def _build_create_manual_order(
         numbers=FakeNumbers(),
         clock=FixedClock(),
         audit=audit or RecordingAudit(),
+        events=events or RecordingEventPublisher(),
     )
 
 
@@ -818,6 +879,28 @@ class TestCreateManualOrder:
         assert entry["actor"] == "u:9"
         origins = [c.after for c in entry["changes"] if c.field == "origin"]  # type: ignore[attr-defined]
         assert origins == ["manual"]
+
+    def test_publishes_order_placed_for_the_manual_order(self) -> None:
+        # A manual order is a real placed order, so it announces the same OrderPlaced.
+        events = RecordingEventPublisher()
+        create = _build_create_manual_order(
+            prices={"HB-250": _money("120000.00")}, stock={"HB-250": 5}, events=events
+        )
+
+        create.execute(
+            CreateManualOrderCommand(
+                actor="u:9",
+                channel="ir-main",
+                items=(ManualOrderItem("HB-250", 2),),
+                shipping_address=_INLINE_ADDRESS,
+            )
+        )
+
+        [event] = events.events
+        assert isinstance(event, OrderPlaced)
+        assert event.owner == "u:9"
+        assert event.total == _money("240000.00").amount
+        assert event.line_count == 1
 
     def test_an_oversell_rolls_the_whole_order_back(self) -> None:
         uow = FakeUnitOfWork()

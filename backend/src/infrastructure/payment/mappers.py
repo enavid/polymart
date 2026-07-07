@@ -36,5 +36,6 @@ def payment_to_domain(model: PaymentModel) -> Payment:
         status=PaymentStatus(model.status),
         created_at=model.created_at,
         gateway_reference=model.gateway_reference,
+        transfer_reference=model.transfer_reference,
         id=model.pk,
     )

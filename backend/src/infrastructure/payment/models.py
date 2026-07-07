@@ -27,6 +27,9 @@ _METHOD_MAX_LENGTH = 16
 _STATUS_MAX_LENGTH = 16
 # A gateway authority/token (e.g. Zarinpal's 36-char authority); 128 leaves ample headroom.
 _GATEWAY_REFERENCE_MAX_LENGTH = 128
+# A buyer-reported card-to-card transfer tracking reference (a bank tracking/receipt number);
+# 64 is ample for the digits Iranian banks issue.
+_TRANSFER_REFERENCE_MAX_LENGTH = 64
 # Money precision mirrors the order/catalog stored precision, so a captured amount is
 # persisted losslessly (18 total digits, 4 decimal places).
 _AMOUNT_MAX_DIGITS = 18
@@ -68,6 +71,13 @@ class PaymentModel(models.Model):
     # resolves exactly one payment.
     gateway_reference = models.CharField(
         max_length=_GATEWAY_REFERENCE_MAX_LENGTH, null=True, blank=True, unique=True
+    )
+    # The buyer's card-to-card transfer tracking reference, submitted after they make the
+    # manual bank transfer and checked by staff before the payment is confirmed. NULL for
+    # every other method and until the buyer submits it (not unique -- it is buyer-reported,
+    # not a system handle).
+    transfer_reference = models.CharField(  # noqa: DJ001 - NULL is the "not submitted" sentinel
+        max_length=_TRANSFER_REFERENCE_MAX_LENGTH, null=True, blank=True
     )
     amount = models.DecimalField(
         max_digits=_AMOUNT_MAX_DIGITS, decimal_places=_AMOUNT_DECIMAL_PLACES

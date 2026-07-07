@@ -95,9 +95,10 @@ make docker-migrate
   priced for a channel; draft → 404, price is an exact string or `null`):
   `GET /api/v1/catalog/storefront/products/<code>/variants/?channel=<slug>`
 - Persistent cart (per-channel; add/update/remove, priced dynamically at read time;
-  always the authenticated user's own cart — no cart id in the URL, so no IDOR;
-  money is an exact string, an unavailable line is excluded from the total):
-  `GET /api/v1/cart/?channel=<slug>`, `POST /api/v1/cart/items/`,
+  owned by the signed-in user **or** an anonymous guest identified by an HttpOnly
+  session cookie the backend mints on the first write — no cart id in the URL, so no
+  IDOR for either; money is an exact string, an unavailable line is excluded from the
+  total): `GET /api/v1/cart/?channel=<slug>`, `POST /api/v1/cart/items/`,
   `PUT/DELETE /api/v1/cart/items/<sku>/`
 - API docs (Swagger): <http://localhost:8000/api/docs/>
 - Frontend: <http://localhost:3000>
@@ -117,6 +118,18 @@ make docker-migrate
     price and an add-to-cart control, and `/cart` shows the shopper's cart
     (update/remove lines, server-computed totals, unavailable lines flagged) for
     the active channel.
+  - Guest checkout: the cart, checkout, and order pages are open to guests as
+    well as signed-in users. A guest builds a cart (kept by the HttpOnly session
+    cookie), enters a one-off shipping address inline at `/checkout` (a signed-in
+    shopper still picks from their address book), and reaches the same order
+    confirmation/history — all IDOR-safe, no login required. On sign-in, a cart
+    built as a guest is merged into the user's cart (quantities combine per
+    variant) and the guest cookie is retired.
+  - Manual orders + pre-invoice (staff, `manage_orders`): `/admin/orders/new`
+    creates an order for a customer from explicit lines + an inline shipping
+    address (a real pending order — captures prices, deducts stock atomically),
+    and `/admin/orders/<number>/pre-invoice` is a printable proforma (with a tax
+    placeholder computed in a later phase).
 
 > Native infra uses host ports 5432/6379. If they are taken, free them or set
 > `POSTGRES_PORT` / `REDIS_PORT` in `backend/.env`; the native DB/cache settings
@@ -140,8 +153,10 @@ Postgres + the Next.js storefront): it brings up infra, seeds a known dataset
 public storefront (home/PLP/PDP/cart), the auth/account screens, and the
 access + catalog admin area — as real shopper and staff sessions, including
 rigorous scenarios (logged-out/IDOR access control, an unavailable-in-channel
-variant, empty search, a discriminating collection filter, pagination bounds, and
-a cart flow asserting accumulation and exact multi-line totals). `make check`
+variant, empty search, a discriminating collection filter, pagination bounds, a
+cart flow asserting accumulation and exact multi-line totals, and a full guest
+checkout journey — build a cart, check out with an inline shipping address, reach
+the order, and confirm a different guest cannot see it). `make check`
 runs it after the backend gate, so it needs Docker and a **stopped** native stack
 (run `make down` first if `make up` is running). It stays out of `make ci`, which
 is kept fast and hermetic. See
@@ -165,9 +180,15 @@ catalog admin area (attributes, product types, products, variants, prices, stock
 categories, collections, rules, CSV import/export).
 Phase 3 (cart → checkout → order) is well underway: the persistent, per-channel cart
 with dynamic pricing, the storefront variant/price read, checkout (Unit of Work +
-order aggregate + state machine), and an address book are all complete on the backend
-and in the UI (PDP add-to-cart, `/cart`, order confirmation/detail/history + cancel,
-`/addresses`). Guest checkout, manual/pre-invoice orders, and wiring the address book
-into a multi-step checkout remain. A full-stack Playwright E2E harness
+order aggregate + state machine), an address book, and multi-step checkout with a
+captured shipping address are all complete on the backend and in the UI (PDP
+add-to-cart, `/cart`, `/checkout` address selection + review, order
+confirmation/detail/history + cancel, `/addresses`). Guest checkout is now
+complete too — a visitor buys with no account, identified only by an HttpOnly
+session cookie, entering a one-off shipping address inline at checkout, and a
+guest cart is merged into the user's cart on sign-in. Staff can also create manual
+orders and print a pre-invoice (proforma). With that, **Phase 3 is complete** (only
+event-bus publication is deferred to the payments phase). A full-stack Playwright
+E2E harness
 (`make e2e-full`) now drives every UI route against the real backend on a seeded
 dataset. Next: see [`docs/03-roadmap.md`](docs/03-roadmap.md).

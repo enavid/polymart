@@ -131,9 +131,7 @@ class CreditWallet:
     def _find_existing(self, command: CreditWalletCommand) -> WalletTransaction | None:
         if command.source_reference is None:
             return None
-        return self._wallets.find_transaction_by_source(
-            command.owner, command.source_reference
-        )
+        return self._wallets.find_transaction_by_source(command.owner, command.source_reference)
 
 
 @dataclass(frozen=True)
@@ -233,9 +231,7 @@ class DebitWallet:
     def _find_existing(self, command: DebitWalletCommand) -> WalletTransaction | None:
         if command.source_reference is None:
             return None
-        return self._wallets.find_transaction_by_source(
-            command.owner, command.source_reference
-        )
+        return self._wallets.find_transaction_by_source(command.owner, command.source_reference)
 
 
 @dataclass(frozen=True)

@@ -274,12 +274,12 @@ describe("CheckoutView", () => {
     await screen.findByText("Sara Ahmadi");
     await userEvent.click(screen.getByRole("button", { name: checkout.continue }));
 
-    // The review step offers COD (default) and online (both selectable); card-to-card is
-    // not yet available (disabled). Labels wrap hint/badge text, so match as a substring.
+    // The review step offers COD (default), online, and card-to-card -- all selectable now.
+    // Labels wrap hint/badge text, so match as a substring.
     const cod = await screen.findByLabelText(payment.methodCod, { exact: false });
     expect(cod).toBeChecked();
     expect(screen.getByLabelText(payment.methodOnline, { exact: false })).toBeEnabled();
-    expect(screen.getByLabelText(payment.methodCardToCard, { exact: false })).toBeDisabled();
+    expect(screen.getByLabelText(payment.methodCardToCard, { exact: false })).toBeEnabled();
 
     await userEvent.click(screen.getByRole("button", { name: checkout.placeOrder }));
 

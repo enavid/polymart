@@ -61,6 +61,7 @@ class DjangoPaymentRepository(PaymentRepository):
                 **_owner_filter(payment.owner),
                 method=payment.method.value,
                 gateway_reference=payment.gateway_reference,
+                transfer_reference=payment.transfer_reference,
                 amount=payment.amount.amount,
                 currency_code=payment.amount.currency,
                 status=payment.status.value,
@@ -125,8 +126,23 @@ class DjangoPaymentRepository(PaymentRepository):
         # Not owner-scoped: refund is a staff action addressed by the payment's public
         # reference (gated by the manage-orders permission at the transport). The row lock
         # serializes concurrent refunds so only one transitions captured -> refunded.
+        model = PaymentModel.objects.select_for_update().filter(reference=reference).first()
+        if model is None:
+            return None
+        return payment_to_domain(model)
+
+    def get_active_for_order_for_update(self, owner: str, order_number: str) -> Payment | None:
+        # Owner-scoped and row-locked: the buyer submitting a card-to-card transfer reference
+        # can only reach their own order's open payment, and the lock serializes the submit
+        # against a concurrent staff confirm/reject on the same payment.
         model = (
-            PaymentModel.objects.select_for_update().filter(reference=reference).first()
+            PaymentModel.objects.select_for_update()
+            .filter(
+                order_number=order_number,
+                status__in=_ACTIVE_STATUS_VALUES,
+                **_owner_filter(owner),
+            )
+            .first()
         )
         if model is None:
             return None
@@ -135,6 +151,13 @@ class DjangoPaymentRepository(PaymentRepository):
     def update_status(self, payment: Payment) -> Payment:
         PaymentModel.objects.filter(reference=payment.reference.value).update(
             status=payment.status.value
+        )
+        model = PaymentModel.objects.get(reference=payment.reference.value)
+        return payment_to_domain(model)
+
+    def update_transfer_reference(self, payment: Payment) -> Payment:
+        PaymentModel.objects.filter(reference=payment.reference.value).update(
+            transfer_reference=payment.transfer_reference
         )
         model = PaymentModel.objects.get(reference=payment.reference.value)
         return payment_to_domain(model)
@@ -151,7 +174,7 @@ class DjangoOrderReader(OrderReader):
     def get_payable(self, owner: str, number: str) -> PayableOrder | None:
         row = (
             OrderModel.objects.filter(number=number, **_owner_filter(owner))
-            .values("number", "currency_code", "total", "status")
+            .values("number", "currency_code", "total", "status", "channel_slug")
             .first()
         )
         if row is None:
@@ -161,6 +184,7 @@ class DjangoOrderReader(OrderReader):
             currency=row["currency_code"],
             total=row["total"],
             status=row["status"],
+            channel=row["channel_slug"],
         )
 
 

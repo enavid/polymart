@@ -39,9 +39,7 @@ class DjangoWalletRepository(WalletRepository):
         return None if model is None else wallet_to_domain(model)
 
     def get_for_update(self, owner: str) -> Wallet | None:
-        model = (
-            WalletModel.objects.select_for_update().filter(owner_id=_owner_pk(owner)).first()
-        )
+        model = WalletModel.objects.select_for_update().filter(owner_id=_owner_pk(owner)).first()
         return None if model is None else wallet_to_domain(model)
 
     def create(self, wallet: Wallet) -> Wallet:
@@ -56,9 +54,7 @@ class DjangoWalletRepository(WalletRepository):
         wallet_id = movement.wallet.id
         if wallet_id is None:  # pragma: no cover - a persisted wallet always carries an id
             raise ValueError("cannot persist a movement for an unsaved wallet")
-        WalletModel.objects.filter(pk=wallet_id).update(
-            balance=movement.wallet.balance.amount
-        )
+        WalletModel.objects.filter(pk=wallet_id).update(balance=movement.wallet.balance.amount)
         transaction_model = WalletTransactionModel.objects.create(
             wallet_id=wallet_id,
             type=movement.transaction.type.value,
@@ -80,9 +76,9 @@ class DjangoWalletRepository(WalletRepository):
         return None if model is None else transaction_to_domain(model)
 
     def list_transactions(self, owner: str, *, limit: int) -> Sequence[WalletTransaction]:
-        models = WalletTransactionModel.objects.filter(
-            wallet__owner_id=_owner_pk(owner)
-        ).order_by("-id")[:limit]
+        models = WalletTransactionModel.objects.filter(wallet__owner_id=_owner_pk(owner)).order_by(
+            "-id"
+        )[:limit]
         return tuple(transaction_to_domain(model) for model in models)
 
 

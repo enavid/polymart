@@ -35,6 +35,22 @@ class PaymentSerializer(serializers.Serializer):
     currency = serializers.CharField()
     status = serializers.CharField()
     created_at = serializers.DateTimeField()
+    # The buyer's submitted card-to-card transfer reference, or null for every other method
+    # and until a card-to-card buyer submits it.
+    transfer_reference = serializers.CharField(allow_null=True)
+
+
+class SubmitTransferReferenceSerializer(serializers.Serializer):
+    """Request body for a buyer reporting their card-to-card transfer reference."""
+
+    transfer_reference = serializers.CharField(max_length=64, trim_whitespace=True)
+
+
+class CardToCardInstructionsSerializer(serializers.Serializer):
+    """Response projection of a channel's card-to-card destination card."""
+
+    card_number = serializers.CharField()
+    card_holder = serializers.CharField()
 
 
 class PaymentInitiationSerializer(PaymentSerializer):

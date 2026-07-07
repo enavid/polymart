@@ -153,15 +153,20 @@ class TestUserCodPayment:
         second = _initiate(client, number)
         assert second.status_code == 409
 
-    def test_an_unsupported_method_is_rejected(self) -> None:
+    def test_card_to_card_initiates_a_pending_payment(self) -> None:
         _seed_catalog()
         user = _user("09120000001")
         client, number = _place_user_order(user)
 
-        # 'card_to_card' is a recognised method with no gateway registered yet (online now
-        # has one). It is rejected as unsupported.
+        # card_to_card is a supported method: it starts a pending payment with no automatic
+        # next action (the buyer transfers out of band and staff confirm it later).
         response = _initiate(client, number, method="card_to_card")
-        assert response.status_code == 400
+        assert response.status_code == 201
+        body = response.json()
+        assert body["method"] == "card_to_card"
+        assert body["status"] == "pending"
+        assert body["next_action"] == "none"
+        assert body["transfer_reference"] is None
 
     def test_an_unknown_method_is_rejected_by_the_serializer(self) -> None:
         _seed_catalog()
@@ -286,9 +291,7 @@ class TestOnlinePayment:
         return f"MOCK-{response.data['reference']}"
 
     def _callback(self, client: APIClient, authority: str, status_value: str):
-        return client.get(
-            f"{_PAYMENTS_URL}callback/?Authority={authority}&Status={status_value}"
-        )
+        return client.get(f"{_PAYMENTS_URL}callback/?Authority={authority}&Status={status_value}")
 
     def test_successful_callback_captures_and_pays_the_order(self) -> None:
         _seed_catalog()

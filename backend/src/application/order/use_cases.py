@@ -32,9 +32,11 @@ from src.application.order.ports import (
     PricingReader,
     UnitOfWork,
 )
+from src.application.shared.events import EventPublisher
 from src.application.shared.owner import safe_owner
 from src.domain.audit.entities import FieldChange
 from src.domain.order.entities import Order
+from src.domain.order.events import OrderPlaced
 from src.domain.order.exceptions import (
     EmptyCartError,
     OrderNotCancellableError,
@@ -165,6 +167,7 @@ class PlaceOrder:
         numbers: OrderNumberGenerator,
         clock: Clock,
         audit: AuditRecorder,
+        events: EventPublisher,
     ) -> None:
         self._uow = unit_of_work
         self._carts = carts
@@ -176,6 +179,7 @@ class PlaceOrder:
         self._numbers = numbers
         self._clock = clock
         self._audit = audit
+        self._events = events
 
     def execute(self, command: PlaceOrderCommand) -> Order:
         channel = ChannelRef(command.channel)
@@ -219,6 +223,20 @@ class PlaceOrder:
                     FieldChange(field="total", after=str(total.amount)),
                     FieldChange(field="line_count", after=len(lines)),
                 ),
+            )
+            # Announce the placement on the event bus. Published inside the transaction so
+            # the adapter's after-commit delivery is discarded if the order rolls back; a
+            # subscriber (a confirmation, fulfilment) therefore never fires for a lost order.
+            self._events.publish(
+                OrderPlaced(
+                    occurred_at=order.placed_at,
+                    order_number=saved.number.value,
+                    owner=command.owner,
+                    channel=channel.value,
+                    currency=currency,
+                    total=total.amount,
+                    line_count=len(lines),
+                )
             )
 
         # Logged outside the money detail: number and shape, never the amount. The owner
@@ -291,6 +309,7 @@ class CreateManualOrder:
         numbers: OrderNumberGenerator,
         clock: Clock,
         audit: AuditRecorder,
+        events: EventPublisher,
     ) -> None:
         self._uow = unit_of_work
         self._pricing = pricing
@@ -300,6 +319,7 @@ class CreateManualOrder:
         self._numbers = numbers
         self._clock = clock
         self._audit = audit
+        self._events = events
 
     def execute(self, command: CreateManualOrderCommand) -> Order:
         channel = ChannelRef(command.channel)
@@ -341,6 +361,19 @@ class CreateManualOrder:
                     FieldChange(field="line_count", after=len(lines)),
                     FieldChange(field="origin", after="manual"),
                 ),
+            )
+            # A manual order is a real placed order, so it announces the same OrderPlaced as
+            # checkout (published in-transaction; discarded on rollback).
+            self._events.publish(
+                OrderPlaced(
+                    occurred_at=order.placed_at,
+                    order_number=saved.number.value,
+                    owner=command.actor,
+                    channel=channel.value,
+                    currency=currency,
+                    total=total.amount,
+                    line_count=len(lines),
+                )
             )
 
         logger.info(

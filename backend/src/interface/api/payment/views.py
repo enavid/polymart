@@ -27,21 +27,29 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from src.application.payment.use_cases import (
+    ConfirmCardToCardPaymentCommand,
     InitiatePaymentCommand,
     PaymentResult,
     PayWithWalletCommand,
     RefundPaymentCommand,
+    RejectCardToCardPaymentCommand,
+    SubmitCardToCardReferenceCommand,
 )
 from src.domain.payment.entities import Payment
 from src.domain.payment.exceptions import (
+    CardToCardNotConfiguredError,
     InsufficientWalletBalanceError,
     InvalidPaymentMethodError,
+    NotACardToCardPaymentError,
     OrderNotPayableError,
     PaymentAlreadyExistsError,
     PaymentError,
+    PaymentNotAwaitingTransferError,
+    PaymentNotConfirmableError,
     PaymentNotFoundError,
     PaymentNotRefundableError,
     PaymentOrderNotFoundError,
+    TransferReferenceAlreadySubmittedError,
     UnsupportedPaymentMethodError,
     WalletOwnerRequiredError,
     WalletPaymentRequiresUserError,
@@ -52,17 +60,23 @@ from src.interface.api.access.permissions import OrderManagePermission
 from src.interface.api.common import ErrorSerializer
 from src.interface.api.guest import resolve_owner, user_owner
 from src.interface.api.payment.container import (
+    build_confirm_card_to_card_payment,
+    build_get_card_to_card_instructions,
     build_get_my_payment,
     build_get_payment_by_gateway_reference,
     build_get_payment_for_order,
     build_initiate_payment,
     build_pay_with_wallet,
     build_refund_payment,
+    build_reject_card_to_card_payment,
+    build_submit_card_to_card_reference,
 )
 from src.interface.api.payment.serializers import (
+    CardToCardInstructionsSerializer,
     InitiatePaymentSerializer,
     PaymentInitiationSerializer,
     PaymentSerializer,
+    SubmitTransferReferenceSerializer,
 )
 
 logger = structlog.get_logger(__name__)
@@ -88,6 +102,7 @@ def _payment_payload(payment: Payment) -> dict[str, object]:
         "currency": payment.amount.currency,
         "status": payment.status.value,
         "created_at": payment.created_at,
+        "transfer_reference": payment.transfer_reference,
     }
 
 
@@ -126,8 +141,12 @@ class PaymentCollectionView(APIView):
             # Unknown, or another shopper's -- indistinguishable, so payment never reveals
             # whether another shopper's order exists.
             return Response({"detail": str(exc)}, status=status.HTTP_404_NOT_FOUND)
-        except (InvalidPaymentMethodError, UnsupportedPaymentMethodError) as exc:
-            # A method that is not recognised, or recognised but has no gateway yet.
+        except (
+            InvalidPaymentMethodError,
+            UnsupportedPaymentMethodError,
+        ) as exc:  # pragma: no cover - safety net: every current method has an adapter and the
+            # serializer rejects unknown ones, so this fires only if a future method is added to
+            # the enum without registering a gateway.
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         except (
             OrderNotPayableError,
@@ -239,6 +258,148 @@ class PaymentRefundView(APIView):
             # A malformed reference can never match -- surface as 404, not a 400, so the
             # shape of a valid reference is not probed.
             logger.debug("payment_refund_rejected")
+            return Response({"detail": "payment not found"}, status=status.HTTP_404_NOT_FOUND)
+        return Response(_payment_payload(payment))
+
+
+class CardToCardInstructionsView(APIView):
+    """Read the destination card a buyer must transfer to for their card-to-card order.
+
+    Owner-scoped (user or guest): resolves the caller's own order and returns its channel's
+    receiving card, so another shopper's order is indistinguishable from a nonexistent one.
+    """
+
+    permission_classes: ClassVar = [AllowAny]
+
+    @extend_schema(
+        operation_id="payments_card_to_card_instructions",
+        responses={
+            200: CardToCardInstructionsSerializer,
+            404: ErrorSerializer,
+            409: ErrorSerializer,
+        },
+    )
+    def get(self, request: Request, number: str) -> Response:
+        try:
+            destination = build_get_card_to_card_instructions().execute(
+                owner=_owner(request), order_number=number
+            )
+        except PaymentOrderNotFoundError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_404_NOT_FOUND)
+        except CardToCardNotConfiguredError as exc:
+            # The channel has no receiving card set up -- a server-side configuration gap.
+            return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
+        except PaymentError:
+            return Response({"detail": "order not found"}, status=status.HTTP_404_NOT_FOUND)
+        return Response(
+            {"card_number": destination.card_number, "card_holder": destination.card_holder}
+        )
+
+
+class TransferReferenceView(APIView):
+    """Submit the buyer's card-to-card transfer reference for their own pending order."""
+
+    permission_classes: ClassVar = [AllowAny]
+
+    @extend_schema(
+        operation_id="payments_submit_transfer_reference",
+        request=SubmitTransferReferenceSerializer,
+        responses={
+            200: PaymentSerializer,
+            400: ErrorSerializer,
+            404: ErrorSerializer,
+            409: ErrorSerializer,
+        },
+    )
+    def post(self, request: Request, number: str) -> Response:
+        serializer = SubmitTransferReferenceSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        command = SubmitCardToCardReferenceCommand(
+            owner=_owner(request),
+            order_number=number,
+            transfer_reference=serializer.validated_data["transfer_reference"],
+        )
+        try:
+            payment = build_submit_card_to_card_reference().execute(command)
+        except PaymentNotFoundError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_404_NOT_FOUND)
+        except (
+            NotACardToCardPaymentError,
+            PaymentNotAwaitingTransferError,
+            TransferReferenceAlreadySubmittedError,
+        ) as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
+        except PaymentError:
+            return Response({"detail": "payment not found"}, status=status.HTTP_404_NOT_FOUND)
+        return Response(_payment_payload(payment))
+
+
+class CardToCardConfirmView(APIView):
+    """Confirm a buyer's card-to-card transfer, capturing the payment -- staff only.
+
+    A privileged, platform-global staff action (gated by ``manage_orders``): staff verify the
+    transfer the buyer reported, then confirm it, which captures the payment and marks the
+    order paid. Idempotent: confirming an already-captured payment returns it unchanged.
+    """
+
+    permission_classes: ClassVar = [OrderManagePermission]
+
+    @extend_schema(
+        operation_id="payments_confirm_card_to_card",
+        request=None,
+        responses={
+            200: PaymentSerializer,
+            403: ErrorSerializer,
+            404: ErrorSerializer,
+            409: ErrorSerializer,
+        },
+    )
+    def post(self, request: Request, reference: str) -> Response:
+        command = ConfirmCardToCardPaymentCommand(
+            reference=reference, actor=user_owner(request.user.pk)
+        )
+        try:
+            payment = build_confirm_card_to_card_payment().execute(command)
+        except PaymentNotFoundError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_404_NOT_FOUND)
+        except (NotACardToCardPaymentError, PaymentNotConfirmableError) as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
+        except PaymentError:
+            return Response({"detail": "payment not found"}, status=status.HTTP_404_NOT_FOUND)
+        return Response(_payment_payload(payment))
+
+
+class CardToCardRejectView(APIView):
+    """Reject a buyer's card-to-card transfer, failing the payment -- staff only.
+
+    A privileged, platform-global staff action (gated by ``manage_orders``): when staff cannot
+    verify the reported transfer, they reject it, which fails the payment and frees the order
+    for a fresh attempt. Idempotent: rejecting an already-failed payment returns it unchanged.
+    """
+
+    permission_classes: ClassVar = [OrderManagePermission]
+
+    @extend_schema(
+        operation_id="payments_reject_card_to_card",
+        request=None,
+        responses={
+            200: PaymentSerializer,
+            403: ErrorSerializer,
+            404: ErrorSerializer,
+            409: ErrorSerializer,
+        },
+    )
+    def post(self, request: Request, reference: str) -> Response:
+        command = RejectCardToCardPaymentCommand(
+            reference=reference, actor=user_owner(request.user.pk)
+        )
+        try:
+            payment = build_reject_card_to_card_payment().execute(command)
+        except PaymentNotFoundError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_404_NOT_FOUND)
+        except (NotACardToCardPaymentError, PaymentNotConfirmableError) as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
+        except PaymentError:
             return Response({"detail": "payment not found"}, status=status.HTTP_404_NOT_FOUND)
         return Response(_payment_payload(payment))
 
