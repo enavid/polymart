@@ -79,7 +79,9 @@ export const SHOPPER_ADDRESS = {
 export const UNAVAILABLE_VARIANT = { sku: "HB-1000", productCode: "house-blend" };
 
 export const PRODUCT_TYPE_CODE = "coffee";
-export const CATEGORY = { root: "hot-drinks", child: "coffee-beans" };
+// `child`/`root` are the slugs shown in the categories table; `childName` is the
+// display name the products manager uses as its category-group accordion header.
+export const CATEGORY = { root: "hot-drinks", child: "coffee-beans", childName: "Coffee Beans" };
 export const COLLECTION = "featured";
 
 /** Where the saved auth storage states live (relative to the frontend dir). */

@@ -49,6 +49,7 @@ from src.domain.payment.exceptions import (
     PaymentNotFoundError,
     PaymentNotRefundableError,
     PaymentOrderNotFoundError,
+    RefundCurrencyMismatchError,
     TransferReferenceAlreadySubmittedError,
     UnsupportedPaymentMethodError,
     WalletOwnerRequiredError,
@@ -250,9 +251,14 @@ class PaymentRefundView(APIView):
             payment = build_refund_payment().execute(command)
         except PaymentNotFoundError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_404_NOT_FOUND)
-        except (PaymentNotRefundableError, WalletOwnerRequiredError) as exc:
-            # A conflict with the payment's current state (not captured) or an owner that
-            # cannot hold a wallet (a guest) -- well-formed but not honourable.
+        except (
+            PaymentNotRefundableError,
+            WalletOwnerRequiredError,
+            RefundCurrencyMismatchError,
+        ) as exc:
+            # A conflict with the payment's current state (not captured), an owner that cannot
+            # hold a wallet (a guest), or a wallet whose currency differs from the refund --
+            # well-formed but not honourable.
             return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
         except PaymentError:
             # A malformed reference can never match -- surface as 404, not a 400, so the

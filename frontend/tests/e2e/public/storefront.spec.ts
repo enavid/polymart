@@ -35,7 +35,8 @@ test("home page shows the hero, a shop CTA, and featured products", async ({ pag
 test("PLP lists the seeded published products with a result count", async ({ page }) => {
   await page.goto("/products");
 
-  await expect(page.getByRole("heading", { name: store.title })).toBeVisible();
+  // Scope to the page's own h1 -- the footer's shop column also has a «فروشگاه» heading.
+  await expect(page.getByRole("heading", { name: store.title, level: 1 })).toBeVisible();
   await expect(
     page.getByText(store.resultCount.replace("{count}", String(PUBLISHED_PRODUCT_COUNT))),
   ).toBeVisible();
@@ -51,9 +52,9 @@ test("PLP lists the seeded published products with a result count", async ({ pag
 });
 
 test("PLP search narrows the results to the matching product", async ({ page }) => {
-  await page.goto("/products");
-  await page.locator("#storefront_search").fill(PRODUCTS.darkRoast.name);
-  await page.getByRole("button", { name: store.search }).click();
+  // Search now lives in the header and drives the PLP through the `?q=` query param;
+  // navigating there directly exercises the same code path the header box triggers.
+  await page.goto(`/products?q=${encodeURIComponent(PRODUCTS.darkRoast.name)}`);
 
   await expect(page.getByText(store.resultCount.replace("{count}", "1"))).toBeVisible();
   await expect(page.getByText(PRODUCTS.darkRoast.name, { exact: true })).toBeVisible();
@@ -74,10 +75,12 @@ test("PDP shows a product's variants with their per-channel prices", async ({ pa
   await expect(page.getByText(product.description)).toBeVisible();
 });
 
-test("PDP 'view product' link from the PLP reaches the detail page", async ({ page }) => {
+test("a product card on the PLP links to its detail page", async ({ page }) => {
   await page.goto("/products");
-  await page.getByRole("link", { name: store.viewProduct }).first().click();
+  // Each product card is itself the link to the PDP (its accessible name is the
+  // product name); there is no separate «مشاهده» link any more.
+  await page.getByRole("link", { name: PRODUCTS.houseBlend.name }).first().click();
 
-  await expect(page).toHaveURL(/\/products\/[a-z-]+$/);
+  await expect(page).toHaveURL(new RegExp(`/products/${PRODUCTS.houseBlend.code}$`));
   await expect(page.getByRole("heading", { name: store.variants })).toBeVisible();
 });

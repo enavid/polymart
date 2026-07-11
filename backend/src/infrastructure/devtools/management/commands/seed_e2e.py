@@ -270,6 +270,21 @@ class Command(BaseCommand):
         self._seed_categories()
         self._seed_products()
         self._seed_collection()
+        self._hide_foreign_products()
+
+    @staticmethod
+    def _hide_foreign_products() -> None:
+        # The E2E run shares the local dev database, which may already hold products from
+        # ``seed_demo`` (an unrelated apparel niche). Those pollute the deterministic
+        # storefront dataset -- the public PLP result count and search/collection specs
+        # assume only the fixture catalog is visible. Unpublish everything that is not a
+        # fixture product so the public storefront shows exactly the seeded set. This is
+        # non-destructive: demo products are only hidden from the storefront, never deleted,
+        # so re-running ``seed_demo`` restores them. On a clean CI database this is a no-op.
+        fixture_codes = tuple(product.code for product in PRODUCTS)
+        ProductModel.objects.filter(is_published=True).exclude(code__in=fixture_codes).update(
+            is_published=False
+        )
 
     @staticmethod
     def _seed_product_type() -> None:

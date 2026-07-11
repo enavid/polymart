@@ -98,6 +98,23 @@ class TestSeedCatalog:
         hb_250 = VariantPriceModel.objects.get(variant__sku="HB-250")
         assert hb_250.amount == Decimal("120000.00")
 
+    def test_hides_foreign_published_products_from_the_storefront(self) -> None:
+        # A leftover product from an unrelated seed (e.g. seed_demo apparel) that is already
+        # published must not pollute the deterministic storefront dataset: seed_e2e unpublishes
+        # it (non-destructively -- the row survives) so exactly the fixture set is visible.
+        _seed()  # establishes the "coffee" product type the foreign row can reuse
+        product_type = ProductModel.objects.get(code="house-blend").product_type
+        foreign = ProductModel.objects.create(
+            code="demo-shirt", name="Demo Shirt", product_type=product_type, is_published=True
+        )
+
+        _seed()  # a second run must hide the foreign product
+
+        foreign.refresh_from_db()
+        assert foreign.is_published is False  # hidden, not deleted
+        assert ProductModel.objects.filter(code="demo-shirt").exists()  # still present
+        assert ProductModel.objects.filter(is_published=True).count() == len(PRODUCTS)
+
     def test_seeds_a_product_description_for_the_storefront_pdp(self) -> None:
         _seed()
 

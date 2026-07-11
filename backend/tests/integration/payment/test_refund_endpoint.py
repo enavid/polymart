@@ -97,6 +97,24 @@ class TestRefundToWallet:
         assert wallet.data["balance"] == _ORDER_TOTAL  # credited once
         assert len(wallet.data["transactions"]) == 1
 
+    def test_a_currency_mismatch_with_the_wallet_is_a_conflict_not_a_500(self) -> None:
+        # The shopper already holds a wallet in a different currency (e.g. from an order in
+        # another channel). Refunding the IRR payment cannot combine with that balance, so the
+        # wallet's currency-mismatch error surfaces as a clean 409, not a transient 500.
+        from src.domain.wallet.entities import Wallet
+        from src.infrastructure.wallet.repositories import DjangoWalletRepository
+
+        _seed_catalog()
+        shopper = _user("09120000001")
+        shopper_client, number = _place_user_order(shopper, quantity=2)
+        reference = _pay_online(shopper_client, number)
+        # Establish the shopper's wallet in USD before the IRR refund runs.
+        DjangoWalletRepository().create(Wallet.empty(owner=f"u:{shopper.pk}", currency="USD"))
+
+        response = _refund(_client(_staff()), reference)
+
+        assert response.status_code == 409
+
     def test_a_pending_payment_cannot_be_refunded(self) -> None:
         _seed_catalog()
         shopper = _user("09120000001")

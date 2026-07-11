@@ -16,6 +16,13 @@ import { SHOPPER_STATE, STAFF_STATE } from "./tests/e2e/fixtures/seed";
 export default defineConfig({
   testDir: "./tests/e2e",
   fullyParallel: true,
+  // A single worker across the whole suite. The money-mutating shopper specs
+  // (cart, wallet, card-to-card, guest-cart-merge) all authenticate as the *one*
+  // seeded shopper and mutate that shopper's shared cart/wallet; run on separate
+  // workers in parallel they contend on the same account and fail
+  // non-deterministically. `fullyParallel` still orders tests within a file, but
+  // only a single worker prevents cross-file collisions on the shared fixture.
+  workers: 1,
   forbidOnly: !!process.env.CI,
   // One retry even locally: the dev server JIT-compiles each route on its first
   // hit, so a cold navigation can momentarily exceed the timeout. A retry lands

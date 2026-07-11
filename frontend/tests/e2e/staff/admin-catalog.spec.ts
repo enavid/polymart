@@ -20,6 +20,9 @@ test("/manage/catalog redirects to the products manager", async ({ page }) => {
 
 test("products manager lists the seeded products", async ({ page }) => {
   await page.goto("/manage/catalog/products");
+  // Products are grouped into category accordions that are collapsed by default;
+  // the seeded coffees all live under "Coffee Beans", so open that group first.
+  await page.getByRole("button", { name: CATEGORY.childName }).click();
   for (const product of [PRODUCTS.houseBlend, PRODUCTS.darkRoast, PRODUCTS.lightRoast]) {
     await expect(page.getByText(product.code, { exact: true })).toBeVisible();
     await expect(page.getByText(product.name, { exact: true })).toBeVisible();
@@ -51,8 +54,11 @@ test("collections manager lists the seeded collection", async ({ page }) => {
   await expect(page.getByText(COLLECTION, { exact: true })).toBeVisible();
 });
 
-test("import/export page renders", async ({ page }) => {
-  await page.goto("/manage/catalog/import-export");
+test("import/export panel opens from the products manager", async ({ page }) => {
+  // CSV import/export is no longer a standalone route -- it is a panel toggled
+  // open from the products manager's toolbar.
+  await page.goto("/manage/catalog/products");
+  await page.getByRole("button", { name: catalog.navImportExport }).click();
   await expect(page.getByRole("heading", { name: catalog.importExport.title })).toBeVisible();
 });
 

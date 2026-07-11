@@ -155,6 +155,22 @@ class InsufficientWalletBalanceError(PaymentError):
         self.reference = reference
 
 
+class RefundCurrencyMismatchError(PaymentError):
+    """Raised when a refund's currency does not match the shopper's existing wallet currency.
+
+    A wallet holds a single currency (fixed on its first credit); refunding an amount in a
+    different currency cannot be combined with the balance. The payment context's own error
+    type, translated by the wallet-credit adapter so no wallet-domain exception crosses the
+    seam. The transport maps this to 409 (a conflict with the wallet's established currency).
+    Only reachable once a shopper receives refunds across channels with different currencies
+    -- out of scope for the single-currency wallet shipped today, but handled cleanly.
+    """
+
+    def __init__(self, reference: str) -> None:
+        super().__init__(f"refund currency does not match the wallet for payment {reference}")
+        self.reference = reference
+
+
 class NotACardToCardPaymentError(PaymentError):
     """Raised when a card-to-card action targets a payment paid by another method.
 

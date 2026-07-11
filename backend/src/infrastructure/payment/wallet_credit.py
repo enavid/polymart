@@ -6,6 +6,10 @@ call into the wallet's own ``CreditWallet`` use case. It runs inside the refund'
 transaction (the use case's ``atomic()`` nests as a savepoint), so the payment refund and
 the wallet credit commit together, and it inherits the wallet's idempotency by source
 reference.
+
+It also translates the wallet's ``WalletCurrencyMismatchError`` into the payment context's own
+``RefundCurrencyMismatchError``, so no wallet-domain exception crosses this seam -- the payment
+transport maps only its own error types.
 """
 
 from __future__ import annotations
@@ -14,6 +18,8 @@ from decimal import Decimal
 
 from src.application.payment.ports import WalletCredit
 from src.application.wallet.use_cases import CreditWallet, CreditWalletCommand
+from src.domain.payment.exceptions import RefundCurrencyMismatchError
+from src.domain.wallet.exceptions import WalletCurrencyMismatchError
 
 
 class WalletCreditAdapter(WalletCredit):
@@ -32,13 +38,18 @@ class WalletCreditAdapter(WalletCredit):
         reason: str,
         actor: str,
     ) -> None:
-        self._credit_wallet.execute(
-            CreditWalletCommand(
-                owner=owner,
-                amount=amount,
-                currency=currency,
-                reason=reason,
-                actor=actor,
-                source_reference=source_reference,
+        try:
+            self._credit_wallet.execute(
+                CreditWalletCommand(
+                    owner=owner,
+                    amount=amount,
+                    currency=currency,
+                    reason=reason,
+                    actor=actor,
+                    source_reference=source_reference,
+                )
             )
-        )
+        except WalletCurrencyMismatchError as exc:
+            # Translate the wallet-domain error into the payment context's own type, so the
+            # payment transport never has to know about wallet exceptions.
+            raise RefundCurrencyMismatchError(source_reference) from exc

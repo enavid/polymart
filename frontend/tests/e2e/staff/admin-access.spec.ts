@@ -9,10 +9,11 @@ import { expect, test } from "@playwright/test";
 import messages from "../../../src/i18n/messages/fa.json";
 import { CHANNEL, CURRENCY } from "../fixtures/seed";
 
-test("/manage redirects to the access panel", async ({ page }) => {
+test("/manage renders the admin dashboard", async ({ page }) => {
   await page.goto("/manage");
-  await expect(page).toHaveURL(/\/manage\/access$/);
-  await expect(page.getByRole("heading", { name: messages.admin.accessTitle })).toBeVisible();
+  // `/manage` is now the dashboard hub (KPIs + quick links), not a redirect.
+  await expect(page).toHaveURL(/\/manage$/);
+  await expect(page.getByRole("heading", { name: messages.admin.dashboard })).toBeVisible();
 });
 
 test("access panel renders the role-assignment and channel-grant forms", async ({ page }) => {

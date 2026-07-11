@@ -110,6 +110,18 @@ class TestWalletRepository:
     def test_get_for_owner_is_none_when_no_wallet_exists(self) -> None:
         assert DjangoWalletRepository().get_for_owner(_owner()) is None
 
+    def test_create_is_race_safe_and_returns_the_existing_wallet(self) -> None:
+        # Two concurrent first credits for a brand-new-wallet user both find no row to lock
+        # and both call create; the second must not raise the OneToOne unique IntegrityError
+        # (a transient 500) -- it re-reads and returns the wallet that now exists.
+        repo = DjangoWalletRepository()
+        owner = _owner()
+        first = repo.create(Wallet.empty(owner=owner, currency="IRR"))
+
+        second = repo.create(Wallet.empty(owner=owner, currency="IRR"))
+
+        assert second.id == first.id  # the loser gets the winner's wallet, not an error
+
     def test_models_have_readable_string_forms(self) -> None:
         from src.infrastructure.wallet.models import WalletModel
 

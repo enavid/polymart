@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from contextlib import AbstractContextManager
 
-from django.db import transaction
+from django.db import IntegrityError, transaction
 
 from src.application.wallet.ports import UnitOfWork, WalletRepository
 from src.domain.wallet.entities import Wallet, WalletMovement, WalletTransaction
@@ -43,11 +43,27 @@ class DjangoWalletRepository(WalletRepository):
         return None if model is None else wallet_to_domain(model)
 
     def create(self, wallet: Wallet) -> Wallet:
-        model = WalletModel.objects.create(
-            owner_id=_owner_pk(wallet.owner),
-            balance=wallet.balance.amount,
-            currency_code=wallet.balance.currency,
-        )
+        owner_pk = _owner_pk(wallet.owner)
+        try:
+            # A nested savepoint so a lost create race rolls back just this INSERT, not the
+            # caller's whole transaction, leaving the outer atomic() able to continue.
+            with transaction.atomic():
+                model = WalletModel.objects.create(
+                    owner_id=owner_pk,
+                    balance=wallet.balance.amount,
+                    currency_code=wallet.balance.currency,
+                )
+        except IntegrityError:
+            # Two concurrent first credits for the same brand-new-wallet user both found no
+            # row to lock and both reached here; the OneToOne owner constraint let only one
+            # win. The loser re-reads the wallet that now exists rather than surfacing a
+            # transient 500 -- its credit then proceeds against the shared wallet.
+            existing = (
+                WalletModel.objects.select_for_update().filter(owner_id=owner_pk).first()
+            )
+            if existing is None:  # pragma: no cover - the constraint guarantees a row exists
+                raise
+            return wallet_to_domain(existing)
         return wallet_to_domain(model)
 
     def save_movement(self, movement: WalletMovement) -> WalletTransaction:

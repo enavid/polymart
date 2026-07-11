@@ -12,20 +12,19 @@ import { COLLECTION, PRODUCTS, UNAVAILABLE_VARIANT } from "../fixtures/seed";
 const store = messages.storefront;
 
 test("search with no matches shows the empty state", async ({ page }) => {
-  await page.goto("/products");
-  await page.locator("#storefront_search").fill("no-such-product-xyz");
-  await page.getByRole("button", { name: store.search }).click();
+  // Search drives the PLP through `?q=`; the result count is hidden when there are
+  // no matches, so the empty state is the assertion.
+  await page.goto("/products?q=no-such-product-xyz");
 
-  await expect(page.getByText(store.resultCount.replace("{count}", "0"))).toBeVisible();
   await expect(page.getByText(store.empty)).toBeVisible();
 });
 
 test("collection filter narrows to the collection's members only", async ({ page }) => {
   await page.goto("/products");
   // The "featured" collection has house-blend + dark-roast, but not light-roast.
-  // The filter is a dropdown populated from the public taxonomy endpoint.
+  // The filter is a sidebar dropdown; the choice takes effect via «اعمال فیلترها».
   await page.locator("#storefront_collection").selectOption(COLLECTION);
-  await page.getByRole("button", { name: store.search }).click();
+  await page.getByRole("button", { name: store.applyFilters }).click();
 
   await expect(page.getByText(store.resultCount.replace("{count}", "2"))).toBeVisible();
   await expect(page.getByText(PRODUCTS.houseBlend.name, { exact: true })).toBeVisible();
