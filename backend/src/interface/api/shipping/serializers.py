@@ -11,9 +11,15 @@ from rest_framework import serializers
 
 
 class ShippingMethodsQuerySerializer(serializers.Serializer):
-    """Query parameters for listing a channel's shipping methods."""
+    """Query parameters for listing a channel's shipping methods.
+
+    ``province``/``city`` are optional: when a province is given, each method's price is
+    resolved for the zone it falls into; without one, the default rates are returned.
+    """
 
     channel = serializers.CharField()
+    province = serializers.CharField(required=False, allow_blank=True)
+    city = serializers.CharField(required=False, allow_blank=True)
 
 
 class ShippingMethodSerializer(serializers.Serializer):

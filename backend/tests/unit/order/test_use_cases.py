@@ -129,8 +129,14 @@ class FakeShipping(ShippingRateReader):
 
     def __init__(self, costs: dict[str, Money] | None = None) -> None:
         self._costs = costs if costs is not None else {"standard": Money(Decimal("0"), "IRR")}
+        self.seen_province: str | None = None
+        self.seen_city: str | None = None
 
-    def quote(self, *, channel: str, method_code: str, currency: str) -> ShippingQuote | None:
+    def quote(
+        self, *, channel: str, method_code: str, currency: str, province: str, city: str
+    ) -> ShippingQuote | None:
+        self.seen_province = province
+        self.seen_city = city
         cost = self._costs.get(method_code)
         if cost is None or cost.currency != currency:
             return None
@@ -666,6 +672,26 @@ class TestPlaceOrderShipping:
         changes = {c.field: c.after for c in audit.records[-1]["changes"]}  # type: ignore[attr-defined]
         assert changes["shipping_method"] == "express"
         assert changes["shipping_cost"] == "30000.00"
+
+    def test_quotes_the_method_against_the_captured_destination(self) -> None:
+        # The rate must be resolved from the order's shipping address (province/city), so a
+        # zoned rate re-resolves server-side rather than trusting whatever the client saw.
+        shipping = FakeShipping({"standard": _money("50000.00")})
+        place = _build_place_order(
+            cart_items=(CheckoutLine("HB-250", 1),),
+            prices={"HB-250": _money("120000.00")},
+            stock={"HB-250": 5},
+            shipping=shipping,
+        )
+
+        place.execute(
+            PlaceOrderCommand(
+                owner="7", channel="ir-main", shipping_method="standard", address_id="ADDR-TEST01"
+            )
+        )
+
+        assert shipping.seen_province == "Tehran"
+        assert shipping.seen_city == "Tehran"
 
     def test_an_unknown_shipping_method_is_rejected_before_the_transaction(self) -> None:
         uow = FakeUnitOfWork()

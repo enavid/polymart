@@ -44,7 +44,7 @@ class TestConfiguredShippingRateReader:
 
     def test_quotes_a_known_method_in_the_order_currency(self) -> None:
         quote = ConfiguredShippingRateReader().quote(
-            channel="ir-main", method_code="standard", currency="IRR"
+            channel="ir-main", method_code="standard", currency="IRR", province="اصفهان", city=""
         )
         assert quote is not None
         assert quote.method_code == "standard"
@@ -55,7 +55,7 @@ class TestConfiguredShippingRateReader:
     def test_an_unknown_method_quotes_none(self) -> None:
         assert (
             ConfiguredShippingRateReader().quote(
-                channel="ir-main", method_code="drone", currency="IRR"
+                channel="ir-main", method_code="drone", currency="IRR", province="اصفهان", city=""
             )
             is None
         )
@@ -65,7 +65,41 @@ class TestConfiguredShippingRateReader:
         # so it is refused rather than capturing a mismatched rate.
         assert (
             ConfiguredShippingRateReader().quote(
-                channel="ir-main", method_code="dollar", currency="IRR"
+                channel="ir-main", method_code="dollar", currency="IRR", province="اصفهان", city=""
             )
             is None
         )
+
+    def test_the_destination_selects_the_zoned_rate(self, settings: SettingsWrapper) -> None:
+        # A Tehran destination gets the zone override; the captured cost is the zoned rate,
+        # re-resolved server-side from the order's address.
+        settings.SHIPPING_METHODS = {
+            "ir-main": [
+                {
+                    "code": "standard",
+                    "name": "Standard",
+                    "price": "50000",
+                    "currency": "IRR",
+                    "min_days": 3,
+                    "max_days": 5,
+                    "zone_rates": {"tehran": "30000"},
+                },
+            ],
+        }
+        settings.SHIPPING_ZONES = {
+            "ir-main": [{"code": "tehran", "name": "Tehran", "provinces": ["تهران"]}]
+        }
+
+        tehran = ConfiguredShippingRateReader().quote(
+            channel="ir-main",
+            method_code="standard",
+            currency="IRR",
+            province="تهران",
+            city="تهران",
+        )
+        isfahan = ConfiguredShippingRateReader().quote(
+            channel="ir-main", method_code="standard", currency="IRR", province="اصفهان", city=""
+        )
+
+        assert tehran is not None and tehran.cost.amount == Decimal("30000")
+        assert isfahan is not None and isfahan.cost.amount == Decimal("50000")

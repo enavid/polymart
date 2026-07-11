@@ -25,10 +25,27 @@ interface ShippingMethodsResponse {
   methods: ShippingMethod[];
 }
 
-/** List the shipping methods a channel offers (public; empty if none configured). */
-export async function listShippingMethods(channel: string): Promise<ShippingMethod[]> {
-  const response = await apiGet<ShippingMethodsResponse>(
-    `/shipping/methods/${toQuery({ channel })}`,
-  );
+/** A shipping destination; its province selects the zoned rate for each method. */
+export interface ShippingDestination {
+  province?: string;
+  city?: string;
+}
+
+/**
+ * List the shipping methods a channel offers (public; empty if none configured).
+ *
+ * When a `destination` province is given, each method's price is resolved for the zone it
+ * falls into (falling back to the default rate); without one, the default rates are listed.
+ * The price stays the server's exact string either way -- the checkout captures whatever the
+ * backend re-resolves from the order's address, so this is only what to display.
+ */
+export async function listShippingMethods(
+  channel: string,
+  destination?: ShippingDestination,
+): Promise<ShippingMethod[]> {
+  const query: Record<string, string> = { channel };
+  if (destination?.province) query.province = destination.province;
+  if (destination?.city) query.city = destination.city;
+  const response = await apiGet<ShippingMethodsResponse>(`/shipping/methods/${toQuery(query)}`);
   return response.methods;
 }

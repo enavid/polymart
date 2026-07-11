@@ -37,7 +37,8 @@ from src.domain.order.exceptions import (
     VariantNotFoundError,
 )
 from src.domain.order.value_objects import Money, OrderStatus
-from src.domain.shipping.exceptions import ShippingMethodNotFoundError
+from src.domain.shipping.exceptions import ShippingError, ShippingMethodNotFoundError
+from src.domain.shipping.value_objects import Destination
 from src.infrastructure.address.models import AddressModel
 from src.infrastructure.cart.models import CartLineModel, CartModel
 from src.infrastructure.catalog.models import VariantPriceModel
@@ -242,9 +243,19 @@ class ConfiguredShippingRateReader(ShippingRateReader):
     def __init__(self) -> None:
         self._methods = GetShippingMethod(SettingsShippingMethodReader())
 
-    def quote(self, *, channel: str, method_code: str, currency: str) -> ShippingQuote | None:
+    def quote(
+        self, *, channel: str, method_code: str, currency: str, province: str, city: str
+    ) -> ShippingQuote | None:
         try:
-            method = self._methods.execute(channel=channel, code=method_code)
+            destination = Destination(province=province, city=city)
+        except ShippingError:
+            # The destination comes from an already-validated ShippingAddress, so this is a
+            # defensive guard; an unresolvable destination cannot be zoned, so refuse it.
+            return None
+        try:
+            method = self._methods.execute(
+                channel=channel, code=method_code, destination=destination
+            )
         except ShippingMethodNotFoundError:
             return None
         if method.price.currency != currency:

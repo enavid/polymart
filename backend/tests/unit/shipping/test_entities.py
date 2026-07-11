@@ -53,3 +53,51 @@ class TestShippingMethod:
     def test_rejects_a_boolean_day_count(self) -> None:
         with pytest.raises(InvalidShippingMethodError):
             _method(min_days=True)
+
+
+from src.domain.shipping.entities import ShippingZone  # noqa: E402
+from src.domain.shipping.exceptions import InvalidShippingZoneError  # noqa: E402
+from src.domain.shipping.value_objects import ShippingZoneCode  # noqa: E402
+
+
+def _zone(**overrides: object) -> ShippingZone:
+    kwargs: dict[str, object] = {
+        "code": ShippingZoneCode("tehran"),
+        "name": "Tehran",
+        "provinces": frozenset({"تهران"}),
+    }
+    kwargs.update(overrides)
+    return ShippingZone(**kwargs)  # type: ignore[arg-type]
+
+
+class TestShippingZone:
+    def test_builds_a_valid_zone(self) -> None:
+        zone = _zone()
+        assert zone.code.value == "tehran"
+        assert zone.name == "Tehran"
+
+    def test_covers_a_configured_province(self) -> None:
+        assert _zone().covers("تهران") is True
+
+    def test_covers_is_case_and_whitespace_insensitive(self) -> None:
+        zone = _zone(provinces=frozenset({"Tehran"}))
+        assert zone.covers("  tehran ") is True
+
+    def test_does_not_cover_an_unlisted_province(self) -> None:
+        assert _zone().covers("اصفهان") is False
+
+    def test_trims_the_name(self) -> None:
+        assert _zone(name="  Tehran  ").name == "Tehran"
+
+    def test_rejects_a_blank_name(self) -> None:
+        with pytest.raises(InvalidShippingZoneError):
+            _zone(name="   ")
+
+    def test_rejects_an_empty_province_set(self) -> None:
+        # A zone that covers nothing is a misconfiguration.
+        with pytest.raises(InvalidShippingZoneError):
+            _zone(provinces=frozenset())
+
+    def test_rejects_a_blank_province_entry(self) -> None:
+        with pytest.raises(InvalidShippingZoneError):
+            _zone(provinces=frozenset({"تهران", "   "}))

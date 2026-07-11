@@ -519,6 +519,35 @@ describe("CheckoutView", () => {
     await waitFor(() => expect(total).toHaveTextContent("۳۶٬۰۰۰"));
   });
 
+  it("requests methods for the address province and shows the zoned price", async () => {
+    authed();
+    // The handler resolves a zoned rate: a Tehran destination gets 30000, else the default.
+    server.use(
+      http.get("*/cart/", () => HttpResponse.json(cartWithLine)),
+      http.get("*/addresses/", () => HttpResponse.json([savedAddress])),
+      http.get("*/shipping/methods/", ({ request }) => {
+        const province = new URL(request.url).searchParams.get("province");
+        const price = province === "Tehran" ? "30000.0000" : "50000.0000";
+        return HttpResponse.json({
+          channel: "ir-main",
+          methods: [
+            { code: "standard", name: "پست پیشتاز", price, currency: "IRR", min_days: 3, max_days: 5 },
+          ],
+        });
+      }),
+    );
+
+    renderWithProviders(<CheckoutView />);
+    await screen.findByText("Sara Ahmadi");
+    await userEvent.click(screen.getByRole("button", { name: checkout.continue }));
+
+    // The saved address is in Tehran, so the chooser shows the zoned 30000 (3000 Toman) rate
+    // and the total is 240000 + 30000 = 270000 (27000 Toman).
+    const shippingCost = await screen.findByTestId("checkout-shipping-cost");
+    await waitFor(() => expect(shippingCost).toHaveTextContent("۳٬۰۰۰"));
+    expect(screen.getByTestId("checkout-total")).toHaveTextContent("۲۷٬۰۰۰");
+  });
+
   it("blocks checkout when a cart line is unavailable", async () => {
     authed();
     server.use(

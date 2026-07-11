@@ -14,7 +14,7 @@ from src.application.shipping.use_cases import (
 )
 from src.domain.shipping.entities import ShippingMethod
 from src.domain.shipping.exceptions import ShippingMethodNotFoundError
-from src.domain.shipping.value_objects import Money, ShippingMethodCode
+from src.domain.shipping.value_objects import Destination, Money, ShippingMethodCode
 
 
 def _method(code: str, amount: str) -> ShippingMethod:
@@ -28,13 +28,22 @@ def _method(code: str, amount: str) -> ShippingMethod:
 
 
 class FakeReader(ShippingMethodReader):
+    """Records the destination it was asked for so the use case's passing-through is testable."""
+
     def __init__(self, methods: dict[str, tuple[ShippingMethod, ...]]) -> None:
         self._methods = methods
+        self.seen_destination: Destination | None = None
 
-    def available_for(self, channel: str) -> tuple[ShippingMethod, ...]:
+    def available_for(
+        self, channel: str, destination: Destination | None = None
+    ) -> tuple[ShippingMethod, ...]:
+        self.seen_destination = destination
         return self._methods.get(channel, ())
 
-    def get(self, channel: str, code: str) -> ShippingMethod | None:
+    def get(
+        self, channel: str, code: str, destination: Destination | None = None
+    ) -> ShippingMethod | None:
+        self.seen_destination = destination
         for method in self._methods.get(channel, ()):
             if method.code.value == code:
                 return method
@@ -59,6 +68,14 @@ class TestListShippingMethods:
         )
         assert result == ()
 
+    def test_passes_the_destination_through_to_the_reader(self) -> None:
+        reader = FakeReader(_METHODS)
+        destination = Destination(province="تهران")
+        ListShippingMethods(reader).execute(
+            ListShippingMethodsQuery(channel="ir-main", destination=destination)
+        )
+        assert reader.seen_destination is destination
+
 
 class TestGetShippingMethod:
     def test_resolves_a_known_method(self) -> None:
@@ -72,3 +89,11 @@ class TestGetShippingMethod:
     def test_a_method_in_another_channel_is_not_found(self) -> None:
         with pytest.raises(ShippingMethodNotFoundError):
             GetShippingMethod(FakeReader(_METHODS)).execute(channel="ghost", code="standard")
+
+    def test_passes_the_destination_through_to_the_reader(self) -> None:
+        reader = FakeReader(_METHODS)
+        destination = Destination(province="تهران")
+        GetShippingMethod(reader).execute(
+            channel="ir-main", code="standard", destination=destination
+        )
+        assert reader.seen_destination is destination

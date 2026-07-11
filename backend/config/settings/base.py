@@ -146,9 +146,19 @@ WALLET_DEFAULT_CURRENCY = env("WALLET_DEFAULT_CURRENCY", default="IRR")
 #       {"code": "standard", "name": "Standard post", "price": "50000",
 #        "currency": "IRR", "min_days": 3, "max_days": 5}, ...]}
 # The price is a string so the exact Decimal survives; currency is per-method (it must match
-# the channel currency to be quotable at checkout). Empty by default; dev/test/E2E provide a
-# deterministic set for ``ir-main``.
+# the channel currency to be quotable at checkout). A method may carry an optional
+# ``zone_rates`` map (zone code -> price) overriding the default price for that zone. Empty by
+# default; dev/test/E2E provide a deterministic set for ``ir-main``.
 SHIPPING_METHODS = env.json("SHIPPING_METHODS", default={})
+
+# The shipping zones each channel defines, keyed by channel slug. A zone groups provinces
+# that share a rate; a method's ``zone_rates`` override is keyed by a zone's ``code``. A
+# destination's province is matched to a zone case/whitespace-insensitively; a province in no
+# zone falls back to each method's default price.
+#   SHIPPING_ZONES = {"ir-main": [
+#       {"code": "tehran", "name": "تهران", "provinces": ["تهران"]}, ...]}
+# Empty by default (no zones -> every destination pays the default rate).
+SHIPPING_ZONES = env.json("SHIPPING_ZONES", default={})
 
 # --- Auth -------------------------------------------------------------------
 AUTHENTICATION_BACKENDS = [

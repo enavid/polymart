@@ -43,7 +43,8 @@ import { STOREFRONT_CHANNEL } from "@/lib/storefront/channel";
 const CART_KEY = (channel: string) => ["cart", channel] as const;
 const ADDRESSES_KEY = ["addresses"] as const;
 const WALLET_KEY = ["wallet"] as const;
-const SHIPPING_METHODS_KEY = (channel: string) => ["shipping-methods", channel] as const;
+const SHIPPING_METHODS_KEY = (channel: string, province: string, city: string) =>
+  ["shipping-methods", channel, province, city] as const;
 
 type Step = "address" | "review";
 
@@ -508,9 +509,13 @@ function ReviewStep({
   const [method, setMethod] = useState<PaymentMethod>(DEFAULT_METHOD);
   const [shippingCode, setShippingCode] = useState<string | null>(null);
 
+  // Fetch the methods priced for this address's province (its zone). Keyed by the destination
+  // so changing address refetches; the price shown is the server's, and the placed order's cost
+  // is re-resolved server-side from the captured address (never trusted from here).
   const shippingQuery = useQuery({
-    queryKey: SHIPPING_METHODS_KEY(channel),
-    queryFn: () => listShippingMethods(channel),
+    queryKey: SHIPPING_METHODS_KEY(channel, address.province, address.city),
+    queryFn: () =>
+      listShippingMethods(channel, { province: address.province, city: address.city }),
   });
   // Memoised so the preselect effect below depends on a stable reference (it must not re-run
   // every render just because `?? []` mints a fresh empty array).

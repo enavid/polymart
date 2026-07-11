@@ -196,7 +196,9 @@ class PlaceOrder:
         channel = ChannelRef(command.channel)
         currency = _resolve_currency(self._channels, channel.value)
         shipping_address = self._resolve_shipping(command)
-        quote = self._resolve_shipping_quote(channel.value, command.shipping_method, currency)
+        quote = self._resolve_shipping_quote(
+            channel.value, command.shipping_method, currency, shipping_address
+        )
         captured_shipping = CapturedShipping(
             method_code=quote.method_code, method_name=quote.method_name, cost=quote.cost
         )
@@ -283,14 +285,22 @@ class PlaceOrder:
         raise UnknownShippingAddressError("")
 
     def _resolve_shipping_quote(
-        self, channel: str, method_code: str, currency: str
+        self, channel: str, method_code: str, currency: str, address: ShippingAddress
     ) -> ShippingQuote:
         """Quote the chosen shipping method, or refuse a method the channel does not offer.
 
-        Resolved before the transaction (a pure config read, like the address); an unknown
-        or currency-mismatched method never enters the unit of work.
+        Resolved before the transaction (a pure config read, like the address) and priced for
+        the captured destination, so the rate re-resolves server-side from the address rather
+        than trusting whatever the client was shown. An unknown or currency-mismatched method
+        never enters the unit of work.
         """
-        quote = self._shipping.quote(channel=channel, method_code=method_code, currency=currency)
+        quote = self._shipping.quote(
+            channel=channel,
+            method_code=method_code,
+            currency=currency,
+            province=address.province,
+            city=address.city,
+        )
         if quote is None:
             raise UnknownShippingMethodError(channel, method_code)
         return quote

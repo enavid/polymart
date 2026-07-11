@@ -39,4 +39,36 @@ describe("shipping api", () => {
 
     expect(await listShippingMethods("ghost")).toEqual([]);
   });
+
+  it("passes the destination province/city so the server can resolve the zoned rate", async () => {
+    let seenUrl = "";
+    server.use(
+      http.get("*/shipping/methods/", ({ request }) => {
+        seenUrl = request.url;
+        return HttpResponse.json({ channel: "ir-main", methods });
+      }),
+    );
+
+    await listShippingMethods("ir-main", { province: "تهران", city: "تهران" });
+
+    const params = new URL(seenUrl).searchParams;
+    expect(params.get("province")).toBe("تهران");
+    expect(params.get("city")).toBe("تهران");
+  });
+
+  it("omits the destination params when no province is given", async () => {
+    let seenUrl = "";
+    server.use(
+      http.get("*/shipping/methods/", ({ request }) => {
+        seenUrl = request.url;
+        return HttpResponse.json({ channel: "ir-main", methods });
+      }),
+    );
+
+    await listShippingMethods("ir-main");
+
+    const params = new URL(seenUrl).searchParams;
+    expect(params.has("province")).toBe(false);
+    expect(params.has("city")).toBe(false);
+  });
 });

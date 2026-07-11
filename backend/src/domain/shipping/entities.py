@@ -12,8 +12,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from src.domain.shipping.exceptions import InvalidShippingMethodError
-from src.domain.shipping.value_objects import Money, ShippingMethodCode
+from src.domain.shipping.exceptions import (
+    InvalidShippingMethodError,
+    InvalidShippingZoneError,
+)
+from src.domain.shipping.value_objects import Money, ShippingMethodCode, ShippingZoneCode
 
 _NAME_MAX_LENGTH = 120
 # A sane upper bound so a mis-configured window (e.g. 99999 days) fails at the domain edge.
@@ -53,3 +56,33 @@ class ShippingMethod:
             raise InvalidShippingMethodError(
                 f"max_days {self.max_days} is before min_days {self.min_days}"
             )
+
+
+@dataclass(frozen=True)
+class ShippingZone:
+    """A named set of provinces that share a shipping rate.
+
+    A method's per-zone override is keyed by this zone's ``code``; ``covers`` matches a
+    destination's province case- and whitespace-insensitively (so "  Tehran " and "tehran"
+    are the same place). A zone must cover at least one non-blank province -- a zone that
+    matches nothing is a misconfiguration.
+    """
+
+    code: ShippingZoneCode
+    name: str
+    provinces: frozenset[str]
+
+    def __post_init__(self) -> None:
+        name = self.name.strip()
+        if not name or len(name) > _NAME_MAX_LENGTH:
+            raise InvalidShippingZoneError(f"name: {self.name!r}")
+        object.__setattr__(self, "name", name)
+
+        trimmed = frozenset(province.strip() for province in self.provinces)
+        if not trimmed or "" in trimmed:
+            raise InvalidShippingZoneError(f"provinces: {self.provinces!r}")
+        object.__setattr__(self, "provinces", trimmed)
+
+    def covers(self, province: str) -> bool:
+        key = province.strip().casefold()
+        return any(configured.casefold() == key for configured in self.provinces)

@@ -30,6 +30,7 @@ SHIPPING_METHODS = {
             "currency": "IRR",
             "min_days": 3,
             "max_days": 5,
+            "zone_rates": {"tehran": "30000"},
         },
         {
             "code": "express",
@@ -38,6 +39,7 @@ SHIPPING_METHODS = {
             "currency": "IRR",
             "min_days": 1,
             "max_days": 2,
+            "zone_rates": {"tehran": "90000"},
         },
         {
             "code": "free",
@@ -48,6 +50,12 @@ SHIPPING_METHODS = {
             "max_days": 7,
         },
     ],
+}
+
+# Tehran is a discounted shipping zone (cheaper standard/express); every other province pays
+# the default rate. Keyed by channel slug, matched on the address province.
+SHIPPING_ZONES = {
+    "ir-main": [{"code": "tehran", "name": "تهران", "provinces": ["تهران"]}],
 }
 
 # The Next.js storefront runs on :3000. Allow both hostnames a developer might

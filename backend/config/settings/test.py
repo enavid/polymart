@@ -36,6 +36,7 @@ SHIPPING_METHODS = {
             "currency": "IRR",
             "min_days": 3,
             "max_days": 5,
+            "zone_rates": {"tehran": "30000"},
         },
         {
             "code": "express",
@@ -44,6 +45,7 @@ SHIPPING_METHODS = {
             "currency": "IRR",
             "min_days": 1,
             "max_days": 2,
+            "zone_rates": {"tehran": "90000"},
         },
         {
             "code": "free",
@@ -54,6 +56,12 @@ SHIPPING_METHODS = {
             "max_days": 7,
         },
     ],
+}
+# Tehran is a discounted zone; the E2E harness relies on this deterministic set. The seeded
+# shopper's address is in تهران (zoned rate), while the guest checkout uses "Tehran" (latin),
+# which is a different string and so falls back to the default rate.
+SHIPPING_ZONES = {
+    "ir-main": [{"code": "tehran", "name": "تهران", "provinces": ["تهران"]}],
 }
 
 # Tests are hermetic: they never touch the dev/prod database from DATABASE_URL.

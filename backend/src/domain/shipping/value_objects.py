@@ -11,18 +11,25 @@ bounded to the stored precision.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from decimal import Decimal
 
 from src.domain.shipping.exceptions import (
+    InvalidDestinationError,
     InvalidMoneyError,
     InvalidShippingMethodCodeError,
+    InvalidShippingZoneCodeError,
+    InvalidZonedRateError,
 )
 
-# A method code is lower-case kebab-case ("standard", "express", "in-person") -- the stable
+# A method/zone code is lower-case kebab-case ("standard", "express", "tehran") -- the stable
 # key a channel's config and the checkout selection both reference.
 _CODE_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 _CODE_MAX_LENGTH = 32
+# A province name is free text captured from the address; bound it to the same length the
+# order's ShippingAddress allows so a valid captured province is always a valid destination.
+_PROVINCE_MAX_LENGTH = 100
 # Money precision mirrors the order/catalog stored precision (18 total digits, 4 decimal
 # places) so a quoted price is always captured onto an order losslessly.
 _MONEY_MAX_DIGITS = 18
@@ -44,6 +51,51 @@ class ShippingMethodCode:
 
     def __str__(self) -> str:
         return self.value
+
+
+@dataclass(frozen=True)
+class ShippingZoneCode:
+    """The stable, lower-case identifier of a shipping zone within a channel."""
+
+    value: str
+
+    def __post_init__(self) -> None:
+        normalized = self.value.strip().lower()
+        if len(normalized) > _CODE_MAX_LENGTH or not _CODE_RE.match(normalized):
+            raise InvalidShippingZoneCodeError(self.value)
+        object.__setattr__(self, "value", normalized)
+
+    def __str__(self) -> str:
+        return self.value
+
+
+@dataclass(frozen=True)
+class Destination:
+    """Where an order ships, used to resolve a zoned rate.
+
+    Only ``province`` participates in zone matching in this slice; ``city`` is captured for a
+    later, finer slice. Province is required (every checkout address has one) and normalised;
+    ``match_key`` folds case and whitespace so a zone lookup is tolerant of casing.
+    """
+
+    province: str
+    city: str = ""
+
+    def __post_init__(self) -> None:
+        province = self.province.strip()
+        if not province or len(province) > _PROVINCE_MAX_LENGTH:
+            raise InvalidDestinationError(f"province: {self.province!r}")
+        object.__setattr__(self, "province", province)
+
+        city = self.city.strip()
+        if len(city) > _PROVINCE_MAX_LENGTH:
+            raise InvalidDestinationError(f"city: {self.city!r}")
+        object.__setattr__(self, "city", city)
+
+    @property
+    def match_key(self) -> str:
+        """The province folded for case/whitespace-insensitive zone matching."""
+        return self.province.casefold()
 
 
 @dataclass(frozen=True)
@@ -82,3 +134,32 @@ class Money:
             )
         if len(digits) > _MONEY_MAX_DIGITS:
             raise InvalidMoneyError(f"amount has more than {_MONEY_MAX_DIGITS} digits: {amount!r}")
+
+
+@dataclass(frozen=True)
+class ZonedRate:
+    """A shipping method's rate: a default price plus optional per-zone overrides.
+
+    ``for_zone`` returns the override for a given zone code when one exists, otherwise the
+    default -- the money-selection rule, kept in the domain so it is unit-tested rather than
+    buried in an adapter. Every override must settle in the same currency as the default (a
+    mixed-currency table is a configuration bug and is rejected at construction).
+    """
+
+    default: Money
+    by_zone: Mapping[str, Money] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        for zone_code, price in self.by_zone.items():
+            if price.currency != self.default.currency:
+                raise InvalidZonedRateError(
+                    f"zone {zone_code!r} price currency {price.currency} "
+                    f"!= default {self.default.currency}"
+                )
+
+    def for_zone(self, zone_code: str | None) -> Money:
+        if zone_code is not None:
+            override = self.by_zone.get(zone_code)
+            if override is not None:
+                return override
+        return self.default

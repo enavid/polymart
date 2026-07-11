@@ -137,11 +137,15 @@ class ShippingRateReader(ABC):
     """
 
     @abstractmethod
-    def quote(self, *, channel: str, method_code: str, currency: str) -> ShippingQuote | None:
-        """Quote the method for the channel, or ``None`` if it is not offered there.
+    def quote(
+        self, *, channel: str, method_code: str, currency: str, province: str, city: str
+    ) -> ShippingQuote | None:
+        """Quote the method for the channel and destination, or ``None`` if not offered there.
 
-        The ``currency`` is the resolved order currency; an adapter returns ``None`` (rather
-        than a mismatched quote) if a configured method's currency does not match it.
+        The ``province``/``city`` are the captured shipping destination; the rate is resolved
+        for the zone the province falls into (falling back to the method's default rate). The
+        ``currency`` is the resolved order currency; an adapter returns ``None`` (rather than a
+        mismatched quote) if a configured method's currency does not match it.
         """
 
 

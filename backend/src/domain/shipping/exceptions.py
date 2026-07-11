@@ -23,6 +23,22 @@ class InvalidShippingMethodError(ShippingError):
     """Raised when a shipping method's name or delivery window is invalid."""
 
 
+class InvalidShippingZoneCodeError(ShippingError):
+    """Raised when a shipping-zone code is structurally malformed."""
+
+
+class InvalidDestinationError(ShippingError):
+    """Raised when a destination's province is blank or too long."""
+
+
+class InvalidZonedRateError(ShippingError):
+    """Raised when a rate table mixes currencies (a per-zone override must match the default)."""
+
+
+class InvalidShippingZoneError(ShippingError):
+    """Raised when a shipping zone's name or province set is invalid."""
+
+
 class ShippingMethodNotFoundError(ShippingError):
     """Raised when a requested method is not offered in the channel."""
 
