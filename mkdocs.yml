@@ -43,6 +43,20 @@ nav:
       - "Cart: persistent cart and pricing": adr/0027-cart-persistent-cart-and-pricing.md
       - "Storefront: variant read API": adr/0028-storefront-variant-read-api.md
       - Full-stack E2E harness: adr/0029-full-stack-e2e-harness.md
+      - "Order: checkout, unit of work, state machine": adr/0030-checkout-order-and-unit-of-work.md
+      - "Address book": adr/0031-address-book.md
+      - "Checkout: multi-step + captured shipping address": adr/0032-checkout-shipping-address.md
+      - "Guest cart ownership": adr/0033-guest-cart-ownership.md
+      - "Guest checkout": adr/0034-guest-checkout.md
+      - "Guest cart merge on login": adr/0035-guest-cart-merge-on-login.md
+      - "Manual orders and pre-invoice": adr/0036-manual-orders-and-pre-invoice.md
+      - "Payments foundation and COD": adr/0037-payments-foundation-and-cod.md
+      - "Online payment gateway": adr/0038-online-payment-gateway.md
+      - "Internal wallet and refund-to-wallet": adr/0039-internal-wallet-and-refund.md
+      - "Pay-with-wallet": adr/0040-pay-with-wallet.md
+      - "Domain event bus": adr/0041-domain-event-bus.md
+      - "Card-to-card payment": adr/0042-card-to-card-payment.md
+      - "Online payment awaiting-confirmation polling": adr/0043-online-payment-awaiting-polling.md
 
 markdown_extensions:
   - admonition

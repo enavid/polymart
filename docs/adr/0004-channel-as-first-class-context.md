@@ -31,9 +31,12 @@ The channel slice follows the four-layer layout from ADR 0002:
   `ChannelModel`, a mapper between ORM rows and domain entities, and
   `DjangoChannelRepository`, which translates ORM failures (`IntegrityError`,
   `DoesNotExist`) into domain exceptions so storage never leaks upward.
-- `interface/api/channel/` — thin DRF views over `channels/`, secure-by-default
-  (authentication required), translating domain exceptions to HTTP status codes
-  (404 / 409 / 400) at the one boundary where the domain meets transport.
+- `interface/api/channel/` — thin DRF views over `channels/`, secure-by-default:
+  reads require authentication, while writes (create / status change) require a
+  staff user, because a channel is platform-level configuration and deactivating
+  one takes a storefront offline. Views translate domain exceptions to HTTP
+  status codes (404 / 409 / 400) at the one boundary where the domain meets
+  transport.
 
 The ORM model lives under `infrastructure/`, registered in `INSTALLED_APPS` via
 its `AppConfig` path (`src.infrastructure.channel.apps.ChannelConfig`). The
@@ -50,5 +53,6 @@ its `AppConfig` path (`src.infrastructure.channel.apps.ChannelConfig`). The
   (minor units, formatting) belongs to the pricing context (Phase 2) and can wrap
   this value object without changing the channel domain.
 - Fine-grained, channel-scoped RBAC (object permissions via django-guardian) is
-  intentionally deferred to the identity/RBAC slice of Phase 1; for now the
-  endpoints are protected by the project-wide `IsAuthenticated` default.
+  intentionally deferred to the identity/RBAC slice of Phase 1; for now reads use
+  the project-wide `IsAuthenticated` default and writes are gated by `IsAdminUser`
+  (staff), so a self-registered member cannot reconfigure or disable storefronts.
