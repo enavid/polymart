@@ -40,8 +40,12 @@ async function logIn(page: Page): Promise<void> {
   await page.getByLabel(common.phoneNumber).fill(STAFF.phone);
   await page.getByLabel(common.password).fill(STAFF.password);
   await page.getByRole("button", { name: auth.loginCta }).click();
-  // Login returns to the requested page (/account) on success.
-  await expect(page).toHaveURL(/\/account/);
+  // Login returns to the requested page (/account) on success. Match on the
+  // pathname (not a substring): the URL `/login?next=/account` also *contains*
+  // "/account" in its query string, so an unanchored regex would pass while still
+  // on the login page -- before the login request completes -- and the next
+  // navigation would abandon the in-flight sign-in, dropping the session.
+  await page.waitForURL((url) => url.pathname === "/account");
 }
 
 test("guest cart merges into the user's cart on login", async ({ page }) => {
