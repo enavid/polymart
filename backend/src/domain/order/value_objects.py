@@ -18,6 +18,7 @@ from decimal import Decimal
 from enum import StrEnum
 
 from src.domain.order.exceptions import (
+    InvalidCapturedShippingError,
     InvalidChannelReferenceError,
     InvalidMoneyError,
     InvalidOrderNumberError,
@@ -56,6 +57,11 @@ _PROVINCE_MAX_LENGTH = 100
 _CITY_MAX_LENGTH = 100
 _POSTAL_CODE_MAX_LENGTH = 10
 _ADDRESS_LINE_MAX_LENGTH = 255
+# The captured shipping method's code/name bounds mirror the shipping context's precision;
+# like the address, this is a snapshot copied at placement, so the order context checks only
+# presence/length, not the shipping context's own code format.
+_SHIPPING_METHOD_CODE_MAX_LENGTH = 32
+_SHIPPING_METHOD_NAME_MAX_LENGTH = 120
 
 
 @dataclass(frozen=True)
@@ -242,3 +248,29 @@ class ShippingAddress:
             if not normalized_line2 or len(normalized_line2) > _ADDRESS_LINE_MAX_LENGTH:
                 raise InvalidShippingAddressError(f"line2: {self.line2!r}")
             object.__setattr__(self, "line2", normalized_line2)
+
+
+@dataclass(frozen=True)
+class CapturedShipping:
+    """The shipping method and its cost, captured onto an order at checkout.
+
+    Like a line's unit price, this is a *snapshot*: the chosen method's code, its display
+    name, and its price at placement time are copied onto the order, so a later change to the
+    channel's configured rates never rewrites a placed order's history. ``method_code`` is the
+    stable key (e.g. ``"standard"``); ``method_name`` is the label shown on the order; ``cost``
+    is the flat amount added to the order total.
+    """
+
+    method_code: str
+    method_name: str
+    cost: Money
+
+    def __post_init__(self) -> None:
+        code = self.method_code.strip()
+        if not code or len(code) > _SHIPPING_METHOD_CODE_MAX_LENGTH:
+            raise InvalidCapturedShippingError(f"method_code: {self.method_code!r}")
+        name = self.method_name.strip()
+        if not name or len(name) > _SHIPPING_METHOD_NAME_MAX_LENGTH:
+            raise InvalidCapturedShippingError(f"method_name: {self.method_name!r}")
+        object.__setattr__(self, "method_code", code)
+        object.__setattr__(self, "method_name", name)

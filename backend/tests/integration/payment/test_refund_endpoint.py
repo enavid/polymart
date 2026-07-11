@@ -139,7 +139,7 @@ class TestRefundToWallet:
         assert cart_add.status_code in (200, 201), cart_add.data
         placed = guest.post(
             _ORDERS_URL,
-            {"channel": _CHANNEL, "shipping_address": _INLINE_ADDRESS},
+            {"channel": _CHANNEL, "shipping_method": "free", "shipping_address": _INLINE_ADDRESS},
             format="json",
         )
         assert placed.status_code == 201, placed.data

@@ -54,7 +54,9 @@ def _place_second_order(shopper, client: APIClient, *, quantity: int = 1) -> str
         lambda cart: cart.add_item(CartSku("HB-250"), CartQuantity(quantity)),
     )
     placed = client.post(
-        _ORDERS_URL, {"channel": _CHANNEL, "address_id": _ADDRESS_ID}, format="json"
+        _ORDERS_URL,
+        {"channel": _CHANNEL, "shipping_method": "free", "address_id": _ADDRESS_ID},
+        format="json",
     )
     assert placed.status_code == 201, placed.data
     return placed.data["number"]
@@ -120,7 +122,7 @@ class TestPayWithWallet:
         )
         placed = guest.post(
             _ORDERS_URL,
-            {"channel": _CHANNEL, "shipping_address": _INLINE_ADDRESS},
+            {"channel": _CHANNEL, "shipping_method": "free", "shipping_address": _INLINE_ADDRESS},
             format="json",
         )
         assert placed.status_code == 201, placed.data

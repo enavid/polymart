@@ -46,6 +46,9 @@ async function checkoutToReview(page: Page): Promise<void> {
   await expect(page).toHaveURL(/\/checkout/);
   await page.locator("label").filter({ hasText: SEED }).getByRole("radio").check();
   await page.getByRole("button", { name: checkout.continue }).click();
+  // Use free shipping so the order total stays the goods amount -- this spec exercises the
+  // wallet money flow (fund via refund, spend, debit), not shipping cost.
+  await page.locator('input[type="radio"][value="free"]').check();
 }
 
 async function payOnline(page: Page): Promise<string> {

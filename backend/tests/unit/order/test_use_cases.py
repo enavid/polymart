@@ -28,6 +28,8 @@ from src.application.order.ports import (
     OrderRepository,
     OwnedAddress,
     PricingReader,
+    ShippingQuote,
+    ShippingRateReader,
     UnitOfWork,
 )
 from src.application.order.use_cases import (
@@ -58,6 +60,7 @@ from src.domain.order.exceptions import (
     OutOfStockError,
     UnknownChannelError,
     UnknownShippingAddressError,
+    UnknownShippingMethodError,
     VariantNotPurchasableError,
 )
 from src.domain.order.value_objects import Money, OrderNumber, OrderStatus
@@ -115,6 +118,23 @@ class FakeChannels(ChannelReader):
 
     def currency_of(self, channel: str) -> str | None:
         return self._currency
+
+
+class FakeShipping(ShippingRateReader):
+    """Quotes a small set of known methods; unknown codes quote ``None`` (unavailable).
+
+    Defaults to a *zero-cost* ``standard`` method so checkout tests that are not about
+    shipping keep their goods-only totals; pass ``costs`` to exercise a real shipping charge.
+    """
+
+    def __init__(self, costs: dict[str, Money] | None = None) -> None:
+        self._costs = costs if costs is not None else {"standard": Money(Decimal("0"), "IRR")}
+
+    def quote(self, *, channel: str, method_code: str, currency: str) -> ShippingQuote | None:
+        cost = self._costs.get(method_code)
+        if cost is None or cost.currency != currency:
+            return None
+        return ShippingQuote(method_code=method_code, method_name=method_code.title(), cost=cost)
 
 
 _DEFAULT_OWNED_ADDRESS = OwnedAddress(
@@ -281,6 +301,7 @@ def _build_place_order(
     inventory: FakeInventory | None = None,
     orders: FakeOrders | None = None,
     addresses: FakeAddresses | None = None,
+    shipping: FakeShipping | None = None,
     audit: RecordingAudit | None = None,
     events: RecordingEventPublisher | None = None,
 ) -> PlaceOrder:
@@ -290,6 +311,7 @@ def _build_place_order(
         pricing=FakePricing(prices),
         channels=FakeChannels(currency),
         addresses=addresses or FakeAddresses(),
+        shipping=shipping or FakeShipping(),
         inventory=inventory or FakeInventory(stock),
         orders=orders or FakeOrders(),
         numbers=FakeNumbers(),
@@ -311,7 +333,9 @@ class TestPlaceOrder:
         )
 
         order = place.execute(
-            PlaceOrderCommand(owner="7", channel="ir-main", address_id="ADDR-TEST01")
+            PlaceOrderCommand(
+                owner="7", channel="ir-main", shipping_method="standard", address_id="ADDR-TEST01"
+            )
         )
 
         assert order.total.amount == Decimal("390000.00")
@@ -327,7 +351,9 @@ class TestPlaceOrder:
         )
 
         order = place.execute(
-            PlaceOrderCommand(owner="7", channel="ir-main", address_id="ADDR-TEST01")
+            PlaceOrderCommand(
+                owner="7", channel="ir-main", shipping_method="standard", address_id="ADDR-TEST01"
+            )
         )
 
         assert order.shipping_address.recipient_name == "Sara Ahmadi"
@@ -343,7 +369,14 @@ class TestPlaceOrder:
         )
 
         with pytest.raises(UnknownShippingAddressError):
-            place.execute(PlaceOrderCommand(owner="7", channel="ir-main", address_id="ADDR-NOPE99"))
+            place.execute(
+                PlaceOrderCommand(
+                    owner="7",
+                    channel="ir-main",
+                    shipping_method="standard",
+                    address_id="ADDR-NOPE99",
+                )
+            )
         # Never entered the transaction at all (resolved before the unit of work).
         assert uow.committed is False
         assert uow.rolled_back is False
@@ -360,7 +393,14 @@ class TestPlaceOrder:
         )
 
         with pytest.raises(UnknownShippingAddressError):
-            place.execute(PlaceOrderCommand(owner="7", channel="ir-main", address_id="ADDR-OTHER0"))
+            place.execute(
+                PlaceOrderCommand(
+                    owner="7",
+                    channel="ir-main",
+                    shipping_method="standard",
+                    address_id="ADDR-OTHER0",
+                )
+            )
 
     def test_deducts_stock_for_each_line(self) -> None:
         inventory = FakeInventory({"HB-250": 5})
@@ -371,7 +411,11 @@ class TestPlaceOrder:
             inventory=inventory,
         )
 
-        place.execute(PlaceOrderCommand(owner="7", channel="ir-main", address_id="ADDR-TEST01"))
+        place.execute(
+            PlaceOrderCommand(
+                owner="7", channel="ir-main", shipping_method="standard", address_id="ADDR-TEST01"
+            )
+        )
 
         assert inventory.stock["HB-250"] == 3
 
@@ -383,6 +427,7 @@ class TestPlaceOrder:
             pricing=FakePricing({"HB-250": _money("120000.00")}),
             channels=FakeChannels("IRR"),
             addresses=FakeAddresses(),
+            shipping=FakeShipping(),
             inventory=FakeInventory({"HB-250": 5}),
             orders=FakeOrders(),
             numbers=FakeNumbers(),
@@ -391,7 +436,11 @@ class TestPlaceOrder:
             events=RecordingEventPublisher(),
         )
 
-        place.execute(PlaceOrderCommand(owner="7", channel="ir-main", address_id="ADDR-TEST01"))
+        place.execute(
+            PlaceOrderCommand(
+                owner="7", channel="ir-main", shipping_method="standard", address_id="ADDR-TEST01"
+            )
+        )
 
         assert cart.cleared is True
 
@@ -404,7 +453,11 @@ class TestPlaceOrder:
             audit=audit,
         )
 
-        place.execute(PlaceOrderCommand(owner="7", channel="ir-main", address_id="ADDR-TEST01"))
+        place.execute(
+            PlaceOrderCommand(
+                owner="7", channel="ir-main", shipping_method="standard", address_id="ADDR-TEST01"
+            )
+        )
 
         record = audit.records[-1]
         assert record["action"] == "order.placed"
@@ -421,7 +474,11 @@ class TestPlaceOrder:
             events=events,
         )
 
-        place.execute(PlaceOrderCommand(owner="7", channel="ir-main", address_id="ADDR-TEST01"))
+        place.execute(
+            PlaceOrderCommand(
+                owner="7", channel="ir-main", shipping_method="standard", address_id="ADDR-TEST01"
+            )
+        )
 
         [event] = events.events
         assert isinstance(event, OrderPlaced)
@@ -444,7 +501,14 @@ class TestPlaceOrder:
         )
 
         with pytest.raises(OutOfStockError):
-            place.execute(PlaceOrderCommand(owner="7", channel="ir-main", address_id="ADDR-TEST01"))
+            place.execute(
+                PlaceOrderCommand(
+                    owner="7",
+                    channel="ir-main",
+                    shipping_method="standard",
+                    address_id="ADDR-TEST01",
+                )
+            )
         assert events.events == []
 
     def test_never_logs_the_amount(self) -> None:
@@ -455,7 +519,14 @@ class TestPlaceOrder:
         )
 
         with capture_logs() as logs:
-            place.execute(PlaceOrderCommand(owner="7", channel="ir-main", address_id="ADDR-TEST01"))
+            place.execute(
+                PlaceOrderCommand(
+                    owner="7",
+                    channel="ir-main",
+                    shipping_method="standard",
+                    address_id="ADDR-TEST01",
+                )
+            )
 
         assert not any("120000" in str(event) for event in logs)
 
@@ -464,7 +535,14 @@ class TestPlaceOrder:
         place = _build_place_order(cart_items=(), prices={}, stock={}, uow=uow)
 
         with pytest.raises(EmptyCartError):
-            place.execute(PlaceOrderCommand(owner="7", channel="ir-main", address_id="ADDR-TEST01"))
+            place.execute(
+                PlaceOrderCommand(
+                    owner="7",
+                    channel="ir-main",
+                    shipping_method="standard",
+                    address_id="ADDR-TEST01",
+                )
+            )
         assert uow.rolled_back is True
         assert uow.committed is False
 
@@ -477,7 +555,11 @@ class TestPlaceOrder:
         )
 
         with pytest.raises(UnknownChannelError):
-            place.execute(PlaceOrderCommand(owner="7", channel="ghost", address_id="ADDR-TEST01"))
+            place.execute(
+                PlaceOrderCommand(
+                    owner="7", channel="ghost", shipping_method="standard", address_id="ADDR-TEST01"
+                )
+            )
 
     def test_an_unpriced_line_is_rejected(self) -> None:
         place = _build_place_order(
@@ -487,7 +569,14 @@ class TestPlaceOrder:
         )
 
         with pytest.raises(VariantNotPurchasableError):
-            place.execute(PlaceOrderCommand(owner="7", channel="ir-main", address_id="ADDR-TEST01"))
+            place.execute(
+                PlaceOrderCommand(
+                    owner="7",
+                    channel="ir-main",
+                    shipping_method="standard",
+                    address_id="ADDR-TEST01",
+                )
+            )
 
     def test_an_oversell_rolls_the_whole_order_back(self) -> None:
         # Two lines: the first deducts, the second oversells. The whole placement must
@@ -505,10 +594,98 @@ class TestPlaceOrder:
         )
 
         with pytest.raises(OutOfStockError):
-            place.execute(PlaceOrderCommand(owner="7", channel="ir-main", address_id="ADDR-TEST01"))
+            place.execute(
+                PlaceOrderCommand(
+                    owner="7",
+                    channel="ir-main",
+                    shipping_method="standard",
+                    address_id="ADDR-TEST01",
+                )
+            )
         assert uow.rolled_back is True
         # No order was persisted.
         assert orders.list_for_owner("7", limit=10, offset=0) == ((), 0)
+
+
+class TestPlaceOrderShipping:
+    def test_captures_the_selected_shipping_cost_into_the_total(self) -> None:
+        place = _build_place_order(
+            cart_items=(CheckoutLine("HB-250", 2),),
+            prices={"HB-250": _money("120000.00")},
+            stock={"HB-250": 5},
+            shipping=FakeShipping({"express": _money("120000.00")}),
+        )
+
+        order = place.execute(
+            PlaceOrderCommand(
+                owner="7", channel="ir-main", shipping_method="express", address_id="ADDR-TEST01"
+            )
+        )
+
+        assert order.items_subtotal.amount == Decimal("240000.00")
+        assert order.shipping is not None
+        assert order.shipping.method_code == "express"
+        assert order.shipping.cost.amount == Decimal("120000.00")
+        assert order.total.amount == Decimal("360000.00")  # goods + shipping
+
+    def test_publishes_the_grand_total_including_shipping(self) -> None:
+        events = RecordingEventPublisher()
+        place = _build_place_order(
+            cart_items=(CheckoutLine("HB-250", 1),),
+            prices={"HB-250": _money("120000.00")},
+            stock={"HB-250": 5},
+            shipping=FakeShipping({"express": _money("30000.00")}),
+            events=events,
+        )
+
+        place.execute(
+            PlaceOrderCommand(
+                owner="7", channel="ir-main", shipping_method="express", address_id="ADDR-TEST01"
+            )
+        )
+
+        [event] = events.events
+        assert event.total == Decimal("150000.00")  # 120000 goods + 30000 shipping
+
+    def test_audits_the_shipping_selection(self) -> None:
+        audit = RecordingAudit()
+        place = _build_place_order(
+            cart_items=(CheckoutLine("HB-250", 1),),
+            prices={"HB-250": _money("120000.00")},
+            stock={"HB-250": 5},
+            shipping=FakeShipping({"express": _money("30000.00")}),
+            audit=audit,
+        )
+
+        place.execute(
+            PlaceOrderCommand(
+                owner="7", channel="ir-main", shipping_method="express", address_id="ADDR-TEST01"
+            )
+        )
+
+        changes = {c.field: c.after for c in audit.records[-1]["changes"]}  # type: ignore[attr-defined]
+        assert changes["shipping_method"] == "express"
+        assert changes["shipping_cost"] == "30000.00"
+
+    def test_an_unknown_shipping_method_is_rejected_before_the_transaction(self) -> None:
+        uow = FakeUnitOfWork()
+        place = _build_place_order(
+            cart_items=(CheckoutLine("HB-250", 1),),
+            prices={"HB-250": _money("120000.00")},
+            stock={"HB-250": 5},
+            shipping=FakeShipping({"standard": _money("50000.00")}),
+            uow=uow,
+        )
+
+        with pytest.raises(UnknownShippingMethodError):
+            place.execute(
+                PlaceOrderCommand(
+                    owner="7", channel="ir-main", shipping_method="drone", address_id="ADDR-TEST01"
+                )
+            )
+        # Refused before the unit of work is ever entered (like an unknown address).
+        assert uow.committed is False
+        assert uow.rolled_back is False
 
 
 _INLINE_ADDRESS = InlineShippingAddress(
@@ -537,7 +714,10 @@ class TestPlaceOrderInlineShipping:
 
         order = place.execute(
             PlaceOrderCommand(
-                owner="g:tok-abc", channel="ir-main", shipping_address=_INLINE_ADDRESS
+                owner="g:tok-abc",
+                channel="ir-main",
+                shipping_method="standard",
+                shipping_address=_INLINE_ADDRESS,
             )
         )
 
@@ -559,6 +739,7 @@ class TestPlaceOrderInlineShipping:
             pricing=FakePricing({"HB-250": _money("120000.00")}),
             channels=FakeChannels("IRR"),
             addresses=ExplodingAddresses(),
+            shipping=FakeShipping(),
             inventory=FakeInventory({"HB-250": 5}),
             orders=FakeOrders(),
             numbers=FakeNumbers(),
@@ -569,7 +750,10 @@ class TestPlaceOrderInlineShipping:
 
         order = place.execute(
             PlaceOrderCommand(
-                owner="g:tok-abc", channel="ir-main", shipping_address=_INLINE_ADDRESS
+                owner="g:tok-abc",
+                channel="ir-main",
+                shipping_method="standard",
+                shipping_address=_INLINE_ADDRESS,
             )
         )
         assert order.total.amount == Decimal("120000.00")
@@ -588,7 +772,10 @@ class TestPlaceOrderInlineShipping:
 
         place.execute(
             PlaceOrderCommand(
-                owner="g:tok-xyz", channel="ir-main", shipping_address=_INLINE_ADDRESS
+                owner="g:tok-xyz",
+                channel="ir-main",
+                shipping_method="standard",
+                shipping_address=_INLINE_ADDRESS,
             )
         )
 
@@ -608,7 +795,10 @@ class TestPlaceOrderInlineShipping:
         with capture_logs() as logs:
             place.execute(
                 PlaceOrderCommand(
-                    owner="g:tok-secret", channel="ir-main", shipping_address=_INLINE_ADDRESS
+                    owner="g:tok-secret",
+                    channel="ir-main",
+                    shipping_method="standard",
+                    shipping_address=_INLINE_ADDRESS,
                 )
             )
 
@@ -622,7 +812,9 @@ class TestPlaceOrderInlineShipping:
         )
 
         with pytest.raises(UnknownShippingAddressError):
-            place.execute(PlaceOrderCommand(owner="g:tok-abc", channel="ir-main"))
+            place.execute(
+                PlaceOrderCommand(owner="g:tok-abc", channel="ir-main", shipping_method="standard")
+            )
 
 
 # --- ListMyOrders / GetMyOrder -------------------------------------------
@@ -637,13 +829,21 @@ class TestListMyOrders:
                 pricing=FakePricing({"HB-250": _money("120000.00")}),
                 channels=FakeChannels("IRR"),
                 addresses=FakeAddresses(),
+                shipping=FakeShipping(),
                 inventory=FakeInventory({"HB-250": 1000}),
                 orders=orders,
                 numbers=FakeNumbers(f"ORD-N{i:04d}"),
                 clock=FixedClock(),
                 audit=RecordingAudit(),
                 events=RecordingEventPublisher(),
-            ).execute(PlaceOrderCommand(owner=owner, channel="ir-main", address_id="ADDR-TEST01"))
+            ).execute(
+                PlaceOrderCommand(
+                    owner=owner,
+                    channel="ir-main",
+                    shipping_method="standard",
+                    address_id="ADDR-TEST01",
+                )
+            )
 
     def test_lists_only_the_owners_orders(self) -> None:
         orders = FakeOrders()
@@ -682,7 +882,11 @@ class TestGetMyOrder:
             prices={"HB-250": _money("120000.00")},
             stock={"HB-250": 5},
             orders=orders,
-        ).execute(PlaceOrderCommand(owner="7", channel="ir-main", address_id="ADDR-TEST01"))
+        ).execute(
+            PlaceOrderCommand(
+                owner="7", channel="ir-main", shipping_method="standard", address_id="ADDR-TEST01"
+            )
+        )
 
         order = GetMyOrder(orders).execute(owner="7", number="ORD-TEST01")
 
@@ -695,7 +899,11 @@ class TestGetMyOrder:
             prices={"HB-250": _money("120000.00")},
             stock={"HB-250": 5},
             orders=orders,
-        ).execute(PlaceOrderCommand(owner="7", channel="ir-main", address_id="ADDR-TEST01"))
+        ).execute(
+            PlaceOrderCommand(
+                owner="7", channel="ir-main", shipping_method="standard", address_id="ADDR-TEST01"
+            )
+        )
 
         with pytest.raises(OrderNotFoundError):
             GetMyOrder(orders).execute(owner="8", number="ORD-TEST01")
@@ -716,6 +924,7 @@ class TestCancelMyOrder:
             pricing=FakePricing({"HB-250": _money("120000.00")}),
             channels=FakeChannels("IRR"),
             addresses=FakeAddresses(),
+            shipping=FakeShipping(),
             inventory=inventory,
             orders=orders,
             numbers=FakeNumbers(),
@@ -724,7 +933,9 @@ class TestCancelMyOrder:
             events=RecordingEventPublisher(),
         )
         return place.execute(
-            PlaceOrderCommand(owner="7", channel="ir-main", address_id="ADDR-TEST01")
+            PlaceOrderCommand(
+                owner="7", channel="ir-main", shipping_method="standard", address_id="ADDR-TEST01"
+            )
         )
 
     def test_cancels_a_pending_order_and_restocks(self) -> None:

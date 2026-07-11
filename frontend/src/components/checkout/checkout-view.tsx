@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { AddressForm } from "@/components/addresses/address-form";
 import { Alert } from "@/components/ui/alert";
@@ -33,8 +33,9 @@ import {
   type PaymentInitiation,
   type PaymentMethod,
 } from "@/lib/api/payments";
+import { listShippingMethods, type ShippingMethod } from "@/lib/api/shipping";
 import { getWallet, type Wallet } from "@/lib/api/wallet";
-import { formatMoneyString } from "@/lib/format";
+import { formatMoneyString, sumMoneyStrings } from "@/lib/format";
 import { useCurrentUser } from "@/lib/hooks/use-auth";
 import { paymentMethodKey } from "@/lib/payments/labels";
 import { STOREFRONT_CHANNEL } from "@/lib/storefront/channel";
@@ -42,6 +43,7 @@ import { STOREFRONT_CHANNEL } from "@/lib/storefront/channel";
 const CART_KEY = (channel: string) => ["cart", channel] as const;
 const ADDRESSES_KEY = ["addresses"] as const;
 const WALLET_KEY = ["wallet"] as const;
+const SHIPPING_METHODS_KEY = (channel: string) => ["shipping-methods", channel] as const;
 
 type Step = "address" | "review";
 
@@ -133,6 +135,8 @@ export function CheckoutView() {
 interface CheckoutInput {
   shipping: PlaceOrderShipping;
   method: PaymentMethod;
+  /** The code of the chosen shipping method (its cost is quoted and captured server-side). */
+  shippingMethod: string;
 }
 
 interface CheckoutOutcome {
@@ -151,8 +155,12 @@ function useCheckout(channel: string) {
   const queryClient = useQueryClient();
   const router = useRouter();
   return useMutation({
-    mutationFn: async ({ shipping, method }: CheckoutInput): Promise<CheckoutOutcome> => {
-      const order = await placeOrder(channel, shipping);
+    mutationFn: async ({
+      shipping,
+      method,
+      shippingMethod,
+    }: CheckoutInput): Promise<CheckoutOutcome> => {
+      const order = await placeOrder(channel, shipping, shippingMethod);
       const initiation = await initiatePayment(order.number, method);
       return { order, initiation };
     },
@@ -267,9 +275,12 @@ function UserCheckout({ cart, channel }: FlowProps) {
         <ReviewStep
           address={selected}
           cart={cart}
+          channel={channel}
           wallet={walletQuery.data ?? null}
           onBack={() => setStep("address")}
-          onPlace={(method) => place.mutate({ shipping: { addressId: selected.id }, method })}
+          onPlace={(method, shippingMethod) =>
+            place.mutate({ shipping: { addressId: selected.id }, method, shippingMethod })
+          }
           placing={place.isPending}
           placeError={place.isError ? t("placeError") : null}
           blocked={hasUnavailable}
@@ -323,11 +334,12 @@ function GuestCheckout({ cart, channel }: FlowProps) {
         <ReviewStep
           address={inlineToDisplay(shipping)}
           cart={cart}
+          channel={channel}
           // A guest has no account and therefore no wallet -- pay-with-wallet is never offered.
           wallet={null}
           onBack={() => setStep("address")}
-          onPlace={(method) =>
-            place.mutate({ shipping: { shippingAddress: shipping }, method })
+          onPlace={(method, shippingMethod) =>
+            place.mutate({ shipping: { shippingAddress: shipping }, method, shippingMethod })
           }
           placing={place.isPending}
           placeError={place.isError ? t("placeError") : null}
@@ -470,10 +482,11 @@ function AddressStep({
 interface ReviewStepProps {
   address: ShippingDisplay;
   cart: Cart;
+  channel: string;
   /** The signed-in shopper's wallet (for the pay-with-wallet option), or null for a guest. */
   wallet: Wallet | null;
   onBack: () => void;
-  onPlace: (method: PaymentMethod) => void;
+  onPlace: (method: PaymentMethod, shippingMethod: string) => void;
   placing: boolean;
   placeError: string | null;
   blocked: boolean;
@@ -482,6 +495,7 @@ interface ReviewStepProps {
 function ReviewStep({
   address,
   cart,
+  channel,
   wallet,
   onBack,
   onPlace,
@@ -492,6 +506,32 @@ function ReviewStep({
   const t = useTranslations("checkout");
   const tCart = useTranslations("cart");
   const [method, setMethod] = useState<PaymentMethod>(DEFAULT_METHOD);
+  const [shippingCode, setShippingCode] = useState<string | null>(null);
+
+  const shippingQuery = useQuery({
+    queryKey: SHIPPING_METHODS_KEY(channel),
+    queryFn: () => listShippingMethods(channel),
+  });
+  // Memoised so the preselect effect below depends on a stable reference (it must not re-run
+  // every render just because `?? []` mints a fresh empty array).
+  const methods = useMemo(() => shippingQuery.data ?? [], [shippingQuery.data]);
+
+  // Preselect the first offered method once the list loads, so the shopper sees a priced
+  // total straight away and can place without an extra click.
+  useEffect(() => {
+    if (shippingCode === null && methods.length > 0) {
+      setShippingCode(methods[0].code);
+    }
+  }, [methods, shippingCode]);
+
+  const selectedMethod = methods.find((m) => m.code === shippingCode) ?? null;
+  // Preview total = goods subtotal + the selected method's shipping cost, added exactly.
+  // Both operands are server values; the authoritative grand total is the placed order's.
+  const grandTotal = selectedMethod
+    ? sumMoneyStrings(cart.total, selectedMethod.price)
+    : cart.total;
+
+  const noMethods = shippingQuery.isSuccess && methods.length === 0;
 
   return (
     <div className="flex flex-col gap-6">
@@ -515,7 +555,16 @@ function ReviewStep({
         </Card>
       </section>
 
-      <PaymentMethodStep method={method} onSelect={setMethod} wallet={wallet} total={cart.total} />
+      <ShippingMethodStep
+        methods={methods}
+        selectedCode={shippingCode}
+        onSelect={setShippingCode}
+        currency={cart.currency}
+        loading={shippingQuery.isLoading}
+        error={shippingQuery.isError ? t("shippingLoadError") : noMethods ? t("noShipping") : null}
+      />
+
+      <PaymentMethodStep method={method} onSelect={setMethod} wallet={wallet} total={grandTotal} />
 
       <section className="flex flex-col gap-2">
         <h3 className="text-sm font-medium text-muted-foreground">{t("orderSummary")}</h3>
@@ -539,12 +588,26 @@ function ReviewStep({
             ))}
           </TableBody>
         </Table>
-        <div className="flex items-center justify-between border-t border-border pt-4">
-          <span className="font-medium">{tCart("total")}</span>
-          <span className="text-lg font-semibold">
-            {formatMoneyString(cart.total, cart.currency)}
-          </span>
-        </div>
+        <dl className="flex flex-col gap-2 border-t border-border pt-4 text-sm">
+          <div className="flex items-center justify-between">
+            <dt className="text-muted-foreground">{t("subtotal")}</dt>
+            <dd>{formatMoneyString(cart.total, cart.currency)}</dd>
+          </div>
+          <div className="flex items-center justify-between">
+            <dt className="text-muted-foreground">{t("shippingCost")}</dt>
+            <dd data-testid="checkout-shipping-cost">
+              {selectedMethod
+                ? formatMoneyString(selectedMethod.price, cart.currency)
+                : "—"}
+            </dd>
+          </div>
+          <div className="flex items-center justify-between border-t border-border pt-2">
+            <dt className="font-medium">{tCart("total")}</dt>
+            <dd data-testid="checkout-total" className="text-lg font-semibold">
+              {formatMoneyString(grandTotal, cart.currency)}
+            </dd>
+          </div>
+        </dl>
       </section>
 
       {placeError ? <Alert variant="destructive">{placeError}</Alert> : null}
@@ -553,11 +616,74 @@ function ReviewStep({
         <Button type="button" variant="outline" onClick={onBack} disabled={placing}>
           {t("back")}
         </Button>
-        <Button type="button" onClick={() => onPlace(method)} disabled={placing || blocked}>
+        <Button
+          type="button"
+          onClick={() => shippingCode && onPlace(method, shippingCode)}
+          disabled={placing || blocked || shippingCode === null}
+        >
           {placing ? t("placing") : t("placeOrder")}
         </Button>
       </div>
     </div>
+  );
+}
+
+/**
+ * The shipping-method chooser shown in the review step. Radio list of the channel's offered
+ * methods, each with its flat price and estimated delivery window. The selected method's cost
+ * (the server's value) is added to the order total; the shopper must pick one to place the
+ * order. An empty/failed list disables placement with a note rather than silently blocking.
+ */
+function ShippingMethodStep({
+  methods,
+  selectedCode,
+  onSelect,
+  currency,
+  loading,
+  error,
+}: {
+  methods: ShippingMethod[];
+  selectedCode: string | null;
+  onSelect: (code: string) => void;
+  currency: string;
+  loading: boolean;
+  error: string | null;
+}) {
+  const t = useTranslations("checkout");
+
+  return (
+    <section className="flex flex-col gap-2">
+      <h3 className="text-sm font-medium text-muted-foreground">{t("shippingMethod")}</h3>
+      {loading ? <p className="text-sm text-muted-foreground">{t("shippingLoading")}</p> : null}
+      {error ? <Alert variant="destructive">{error}</Alert> : null}
+      <fieldset className="flex flex-col gap-3">
+        <legend className="sr-only">{t("chooseShipping")}</legend>
+        {methods.map((option) => (
+          <label
+            key={option.code}
+            className="flex cursor-pointer items-start gap-3 rounded-xl border border-border p-4"
+          >
+            <input
+              type="radio"
+              name="shipping_method"
+              className="mt-1"
+              value={option.code}
+              checked={selectedCode === option.code}
+              onChange={() => onSelect(option.code)}
+            />
+            <span className="flex flex-1 flex-col gap-1 text-sm">
+              <span className="flex items-center justify-between gap-2">
+                <span className="font-medium">{option.name}</span>
+                <span className="font-medium">{formatMoneyString(option.price, currency)}</span>
+              </span>
+              <span className="text-muted-foreground">
+                {t("deliveryEstimate", { min: option.min_days, max: option.max_days })}
+              </span>
+            </span>
+          </label>
+        ))}
+      </fieldset>
+    </section>
   );
 }
 

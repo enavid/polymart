@@ -48,6 +48,7 @@ from src.infrastructure.catalog.repositories import (
 from src.infrastructure.channel.repositories import DjangoChannelRepository
 from src.infrastructure.order.clock import SystemClock
 from src.infrastructure.order.repositories import (
+    ConfiguredShippingRateReader,
     DjangoAddressReader,
     DjangoCartForCheckout,
     DjangoChannelReader,
@@ -64,6 +65,9 @@ pytestmark = [pytest.mark.django_db, pytest.mark.integration]
 
 _CHANNEL = "ir-main"
 _ADDRESS_ID = "ADDR-SHIP000001"
+# The default channel's flat-rate methods come from settings.SHIPPING_METHODS (see
+# config/settings/test.py): "standard" costs this much, added to the goods subtotal.
+_STANDARD_SHIPPING = Decimal("50000")
 
 
 class _FixedNumbers(OrderNumberGenerator):
@@ -127,6 +131,7 @@ def _place_order(numbers: OrderNumberGenerator | None = None) -> PlaceOrder:
         pricing=DjangoPricingReader(),
         channels=DjangoChannelReader(),
         addresses=DjangoAddressReader(),
+        shipping=ConfiguredShippingRateReader(),
         inventory=DjangoInventory(),
         orders=DjangoOrderRepository(),
         numbers=numbers or _FixedNumbers(),
@@ -137,7 +142,9 @@ def _place_order(numbers: OrderNumberGenerator | None = None) -> PlaceOrder:
 
 
 def _checkout_command(owner: str) -> PlaceOrderCommand:
-    return PlaceOrderCommand(owner=owner, channel=_CHANNEL, address_id=_ADDRESS_ID)
+    return PlaceOrderCommand(
+        owner=owner, channel=_CHANNEL, shipping_method="standard", address_id=_ADDRESS_ID
+    )
 
 
 class TestCheckoutHappyPath:
@@ -151,10 +158,17 @@ class TestCheckoutHappyPath:
 
         order = _place_order().execute(_checkout_command(owner))
 
-        # Order persisted with the captured total.
-        assert order.total.amount == Decimal("390000.00")
+        # Order persisted with the captured grand total (goods 390000 + shipping 50000).
+        assert order.items_subtotal.amount == Decimal("390000.00")
+        assert order.total.amount == Decimal("390000.00") + _STANDARD_SHIPPING
         assert order.status is OrderStatus.PENDING
-        assert DjangoOrderRepository().get_for_owner(owner, order.number.value).id == order.id
+        # The captured shipping selection persists and reloads (round-trip through the ORM).
+        reloaded = DjangoOrderRepository().get_for_owner(owner, order.number.value)
+        assert reloaded.id == order.id
+        assert reloaded.shipping is not None
+        assert reloaded.shipping.method_code == "standard"
+        assert reloaded.shipping.cost.amount == _STANDARD_SHIPPING
+        assert reloaded.total.amount == order.total.amount
         # The shipping address was captured from the shopper's address book.
         assert order.shipping_address.recipient_name == "Sara Ahmadi"
         # Stock deducted for both lines.
@@ -181,6 +195,7 @@ class TestGuestCheckoutIntegration:
             PlaceOrderCommand(
                 owner=owner,
                 channel=_CHANNEL,
+                shipping_method="standard",
                 shipping_address=InlineShippingAddress(
                     recipient_name="Guest Buyer",
                     phone_number="09121112233",
@@ -194,11 +209,34 @@ class TestGuestCheckoutIntegration:
         )
 
         assert order.owner == owner
-        assert order.total.amount == Decimal("240000.00")
+        assert order.total.amount == Decimal("240000.00") + _STANDARD_SHIPPING
+        assert order.shipping is not None and order.shipping.method_code == "standard"
         assert order.shipping_address.recipient_name == "Guest Buyer"
         assert DjangoOrderRepository().get_for_owner(owner, order.number.value).id == order.id
         assert DjangoStockRepository().get_quantity("HB-250").value == 3
         assert DjangoCartForCheckout().line_items(owner, _CHANNEL) == ()
+
+
+class TestCheckoutShippingRejection:
+    def test_an_unknown_shipping_method_is_refused_and_places_nothing(self) -> None:
+        _seed_catalog()
+        user = get_user_model().objects.create_user(phone_number="09120000001", password="pw")
+        owner = _owner(user)
+        seed_address(user.pk)
+        _add_to_cart(owner, "HB-250", 1)
+
+        from src.domain.order.exceptions import UnknownShippingMethodError
+
+        with pytest.raises(UnknownShippingMethodError):
+            _place_order().execute(
+                PlaceOrderCommand(
+                    owner=owner, channel=_CHANNEL, shipping_method="drone", address_id=_ADDRESS_ID
+                )
+            )
+        # Refused before the transaction: no order, stock and cart intact.
+        assert DjangoOrderRepository().list_for_owner(owner, limit=10, offset=0) == ((), 0)
+        assert DjangoStockRepository().get_quantity("HB-250").value == 5
+        assert len(DjangoCartForCheckout().line_items(owner, _CHANNEL)) == 1
 
 
 class TestCheckoutAtomicity:

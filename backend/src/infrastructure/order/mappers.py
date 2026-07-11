@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from src.domain.order.entities import Order, OrderLine
 from src.domain.order.value_objects import (
+    CapturedShipping,
     ChannelRef,
     Money,
     OrderNumber,
@@ -33,6 +34,22 @@ def _line_to_domain(model: OrderLineModel, currency: str) -> OrderLine:
         quantity=OrderQuantity(model.quantity),
         unit_price=Money(amount=model.unit_price, currency=currency),
         line_total=Money(amount=model.line_total, currency=currency),
+    )
+
+
+def _captured_shipping_to_domain(model: OrderModel, currency: str) -> CapturedShipping | None:
+    """Rebuild the captured shipping selection, or ``None`` if the order had no delivery charge.
+
+    A blank ``shipping_method_code`` (the backfill default for orders that predate shipping, and
+    the value manual/pre-invoice orders carry) means no shipping was captured -- the aggregate
+    reads that as ``shipping=None`` and its total is the goods subtotal alone.
+    """
+    if not model.shipping_method_code:
+        return None
+    return CapturedShipping(
+        method_code=model.shipping_method_code,
+        method_name=model.shipping_method_name,
+        cost=Money(amount=model.shipping_cost, currency=currency),
     )
 
 
@@ -66,5 +83,6 @@ def order_to_domain(model: OrderModel) -> Order:
         status=OrderStatus(model.status),
         placed_at=model.placed_at,
         shipping_address=_shipping_address_to_domain(model),
+        shipping=_captured_shipping_to_domain(model, currency),
         id=model.pk,
     )

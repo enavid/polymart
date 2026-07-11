@@ -25,6 +25,36 @@ PAYMENT_ONLINE_MOCK = True
 PAYMENT_CARD_TO_CARD = {
     "ir-main": {"number": "6037-9911-1234-5678", "holder": "Polymart Store"},
 }
+# Deterministic flat-rate shipping methods for the default channel, so the shipping tests
+# and E2E resolve a known set of methods and prices.
+SHIPPING_METHODS = {
+    "ir-main": [
+        {
+            "code": "standard",
+            "name": "پست پیشتاز",
+            "price": "50000",
+            "currency": "IRR",
+            "min_days": 3,
+            "max_days": 5,
+        },
+        {
+            "code": "express",
+            "name": "پیک اکسپرس",
+            "price": "120000",
+            "currency": "IRR",
+            "min_days": 1,
+            "max_days": 2,
+        },
+        {
+            "code": "free",
+            "name": "ارسال رایگان",
+            "price": "0",
+            "currency": "IRR",
+            "min_days": 5,
+            "max_days": 7,
+        },
+    ],
+}
 
 # Tests are hermetic: they never touch the dev/prod database from DATABASE_URL.
 # Default to an isolated in-memory SQLite; CI sets TEST_DATABASE_URL to run the

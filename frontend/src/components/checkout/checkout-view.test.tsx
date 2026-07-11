@@ -38,6 +38,7 @@ function authed() {
     http.get("*/wallet/", () =>
       HttpResponse.json({ balance: "0", currency: "IRR", transactions: [] }),
     ),
+    shippingHandler(),
   );
 }
 
@@ -94,6 +95,26 @@ const savedAddress = {
   created_at: "2026-07-02T12:00:00Z",
 };
 
+// The channel's offered shipping methods. "standard" is first, so it is preselected and its
+// cost (50000) is added to the 240000 goods subtotal for a 290000 preview total.
+const shippingMethods = [
+  { code: "standard", name: "پست پیشتاز", price: "50000.0000", currency: "IRR", min_days: 3, max_days: 5 },
+  { code: "express", name: "پیک اکسپرس", price: "120000.0000", currency: "IRR", min_days: 1, max_days: 2 },
+];
+
+function shippingHandler() {
+  return http.get("*/shipping/methods/", () =>
+    HttpResponse.json({ channel: "ir-main", methods: shippingMethods }),
+  );
+}
+
+/** Wait for the (preselected) shipping method to load, then place the order. */
+async function placeOrderNow() {
+  const button = await screen.findByRole("button", { name: checkout.placeOrder });
+  await waitFor(() => expect(button).toBeEnabled());
+  await userEvent.click(button);
+}
+
 const checkout = messages.checkout;
 
 const addresses = messages.addresses;
@@ -124,6 +145,7 @@ describe("CheckoutView", () => {
     // and the order is placed with that captured address (never an address_id).
     let placedBody: unknown;
     server.use(
+      shippingHandler(),
       http.get("*/cart/", () => HttpResponse.json(cartWithLine)),
       http.post("*/orders/", async ({ request }) => {
         placedBody = await request.json();
@@ -133,7 +155,11 @@ describe("CheckoutView", () => {
             channel: "ir-main",
             currency: "IRR",
             status: "pending",
-            total: "240000.0000",
+            subtotal: "240000.0000",
+            shipping_cost: "50000.0000",
+            shipping_method: "standard",
+            shipping_method_name: "پست پیشتاز",
+            total: "290000.0000",
             placed_at: "2026-07-02T12:00:00Z",
             items: [],
             shipping_address: {
@@ -172,12 +198,14 @@ describe("CheckoutView", () => {
       screen.queryByLabelText(payment.methodWallet, { exact: false }),
     ).not.toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole("button", { name: checkout.placeOrder }));
+    await placeOrderNow();
 
     await waitFor(() => expect(push).toHaveBeenCalledWith("/orders/ORD-GUEST00001"));
-    // A one-off inline address is submitted -- never an address_id (a guest has no book).
+    // A one-off inline address is submitted -- never an address_id (a guest has no book) --
+    // together with the chosen (preselected) shipping method.
     expect(placedBody).toEqual({
       channel: "ir-main",
+      shipping_method: "standard",
       shipping_address: {
         recipient_name: "Guest Buyer",
         phone_number: "09121112233",
@@ -235,12 +263,16 @@ describe("CheckoutView", () => {
     await userEvent.click(screen.getByRole("button", { name: checkout.continue }));
 
     // Review step: place the order.
-    const placeButton = await screen.findByRole("button", { name: checkout.placeOrder });
-    await userEvent.click(placeButton);
+    await placeOrderNow();
 
     await waitFor(() => expect(push).toHaveBeenCalledWith("/orders/ORD-ABC123XYZ0"));
-    // The chosen saved address id is what was submitted (a snapshot is captured server-side).
-    expect(placedBody).toEqual({ channel: "ir-main", address_id: "ADDR-HOME000001" });
+    // The chosen saved address id and the (preselected) shipping method are submitted; a
+    // snapshot of the address and the quoted shipping cost are captured server-side.
+    expect(placedBody).toEqual({
+      channel: "ir-main",
+      shipping_method: "standard",
+      address_id: "ADDR-HOME000001",
+    });
   });
 
   it("initiates a COD payment for the placed order and shows the method choices", async () => {
@@ -281,7 +313,7 @@ describe("CheckoutView", () => {
     expect(screen.getByLabelText(payment.methodOnline, { exact: false })).toBeEnabled();
     expect(screen.getByLabelText(payment.methodCardToCard, { exact: false })).toBeEnabled();
 
-    await userEvent.click(screen.getByRole("button", { name: checkout.placeOrder }));
+    await placeOrderNow();
 
     await waitFor(() => expect(push).toHaveBeenCalledWith("/orders/ORD-ABC123XYZ0"));
     // The chosen method (COD) is initiated against the just-placed order.
@@ -340,7 +372,7 @@ describe("CheckoutView", () => {
 
     // Choose online, then place the order.
     await userEvent.click(await screen.findByLabelText(payment.methodOnline, { exact: false }));
-    await userEvent.click(screen.getByRole("button", { name: checkout.placeOrder }));
+    await placeOrderNow();
 
     // The browser is handed off to the gateway URL; it does NOT navigate to the order yet.
     await waitFor(() =>
@@ -388,7 +420,7 @@ describe("CheckoutView", () => {
     const walletOption = await screen.findByLabelText(payment.methodWallet, { exact: false });
     expect(walletOption).toBeEnabled();
     await userEvent.click(walletOption);
-    await userEvent.click(screen.getByRole("button", { name: checkout.placeOrder }));
+    await placeOrderNow();
 
     // A captured wallet payment is settled server-side; the shopper lands on the paid order.
     await waitFor(() => expect(push).toHaveBeenCalledWith("/orders/ORD-WALLET0001"));
@@ -426,7 +458,7 @@ describe("CheckoutView", () => {
     renderWithProviders(<CheckoutView />);
     await screen.findByText("Sara Ahmadi");
     await userEvent.click(screen.getByRole("button", { name: checkout.continue }));
-    await userEvent.click(await screen.findByRole("button", { name: checkout.placeOrder }));
+    await placeOrderNow();
 
     // The raw backend detail is not shopper-appropriate; a localized message is shown.
     expect(await screen.findByText(checkout.placeError)).toBeInTheDocument();
@@ -463,6 +495,28 @@ describe("CheckoutView", () => {
     await waitFor(() =>
       expect(screen.getByRole("button", { name: checkout.continue })).toBeInTheDocument(),
     );
+  });
+
+  it("adds the selected shipping cost to the total and updates it when the method changes", async () => {
+    authed();
+    server.use(
+      http.get("*/cart/", () => HttpResponse.json(cartWithLine)),
+      http.get("*/addresses/", () => HttpResponse.json([savedAddress])),
+    );
+
+    renderWithProviders(<CheckoutView />);
+    await screen.findByText("Sara Ahmadi");
+    await userEvent.click(screen.getByRole("button", { name: checkout.continue }));
+
+    // The preselected "standard" method (50000) is added to the 240000 goods subtotal.
+    const shippingCost = await screen.findByTestId("checkout-shipping-cost");
+    const total = screen.getByTestId("checkout-total");
+    await waitFor(() => expect(shippingCost).toHaveTextContent("۵٬۰۰۰")); // 50000 IRR -> 5000 Toman
+    expect(total).toHaveTextContent("۲۹٬۰۰۰"); // 290000 IRR -> 29000 Toman
+
+    // Switching to "express" (120000) re-prices the total to 360000 (36000 Toman).
+    await userEvent.click(screen.getByLabelText("پیک اکسپرس", { exact: false }));
+    await waitFor(() => expect(total).toHaveTextContent("۳۶٬۰۰۰"));
   });
 
   it("blocks checkout when a cart line is unavailable", async () => {

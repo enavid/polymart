@@ -99,7 +99,9 @@ def _place_user_order(user: AbstractBaseUser, *, quantity: int = 2) -> tuple[API
     )
     client = _client(user)
     placed = client.post(
-        _ORDERS_URL, {"channel": _CHANNEL, "address_id": _ADDRESS_ID}, format="json"
+        _ORDERS_URL,
+        {"channel": _CHANNEL, "shipping_method": "free", "address_id": _ADDRESS_ID},
+        format="json",
     )
     assert placed.status_code == 201, placed.data
     return client, placed.data["number"]
@@ -229,7 +231,9 @@ class TestGuestCodPayment:
             == 200
         )
         number = client.post(
-            _ORDERS_URL, {"channel": _CHANNEL, "shipping_address": _INLINE_ADDRESS}, format="json"
+            _ORDERS_URL,
+            {"channel": _CHANNEL, "shipping_method": "free", "shipping_address": _INLINE_ADDRESS},
+            format="json",
         ).data["number"]
 
         response = _initiate(client, number)
@@ -247,7 +251,9 @@ class TestGuestCodPayment:
             _CART_ITEMS_URL, {"channel": _CHANNEL, "sku": "HB-250", "quantity": 1}, format="json"
         )
         number = client.post(
-            _ORDERS_URL, {"channel": _CHANNEL, "shipping_address": _INLINE_ADDRESS}, format="json"
+            _ORDERS_URL,
+            {"channel": _CHANNEL, "shipping_method": "free", "shipping_address": _INLINE_ADDRESS},
+            format="json",
         ).data["number"]
         reference = _initiate(client, number).data["reference"]
 
@@ -379,7 +385,9 @@ class TestOnlinePayment:
             _CART_ITEMS_URL, {"channel": _CHANNEL, "sku": "HB-250", "quantity": 1}, format="json"
         )
         number = client.post(
-            _ORDERS_URL, {"channel": _CHANNEL, "shipping_address": _INLINE_ADDRESS}, format="json"
+            _ORDERS_URL,
+            {"channel": _CHANNEL, "shipping_method": "free", "shipping_address": _INLINE_ADDRESS},
+            format="json",
         ).data["number"]
         authority = self._initiate_online(client, number)
 

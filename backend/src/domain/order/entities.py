@@ -25,6 +25,7 @@ from src.domain.order.exceptions import (
     OrderTotalMismatchError,
 )
 from src.domain.order.value_objects import (
+    CapturedShipping,
     ChannelRef,
     Money,
     OrderNumber,
@@ -80,6 +81,11 @@ class Order:
     Identity is the public ``number`` (and the database ``id`` once persisted). The
     owner is the stable user id -- an order is always resolved from the authenticated
     user, never from a client-supplied id, so cross-user access is impossible.
+
+    ``shipping`` is the captured delivery method and its cost (``None`` for an order with
+    no shipping charge, e.g. a manual/pre-invoice order). The stated ``total`` is the grand
+    total -- the sum of the line totals *plus* the shipping cost -- so the aggregate owns the
+    money invariant across both the goods and the delivery charge.
     """
 
     number: OrderNumber
@@ -91,6 +97,7 @@ class Order:
     status: OrderStatus
     placed_at: datetime
     shipping_address: ShippingAddress
+    shipping: CapturedShipping | None = None
     id: int | None = field(default=None)
 
     def __post_init__(self) -> None:
@@ -104,6 +111,23 @@ class Order:
             if line.sku.value in seen:
                 raise DuplicateOrderLineError(line.sku.value)
             seen.add(line.sku.value)
+        subtotal = self._sum_lines()
+        expected = subtotal
+        if self.shipping is not None:
+            if self.shipping.cost.currency != self.currency:
+                raise OrderCurrencyMismatchError(
+                    f"shipping currency {self.shipping.cost.currency!r} "
+                    f"!= order currency {self.currency!r}"
+                )
+            expected = expected.add(self.shipping.cost)
+        if self.total.currency != self.currency or self.total.amount != expected.amount:
+            raise OrderTotalMismatchError(
+                f"order total {self.total.amount} {self.total.currency} "
+                f"!= lines + shipping {expected.amount} {expected.currency}"
+            )
+
+    def _sum_lines(self) -> Money:
+        """Sum the line totals, refusing to mix currencies (the goods subtotal)."""
         summed = Money.zero(self.currency)
         for line in self.lines:
             if line.line_total.currency != self.currency:
@@ -112,11 +136,17 @@ class Order:
                     f"!= order currency {self.currency!r}"
                 )
             summed = summed.add(line.line_total)
-        if self.total.currency != self.currency or self.total.amount != summed.amount:
-            raise OrderTotalMismatchError(
-                f"order total {self.total.amount} {self.total.currency} "
-                f"!= sum of lines {summed.amount} {summed.currency}"
-            )
+        return summed
+
+    @property
+    def items_subtotal(self) -> Money:
+        """The sum of the line totals (the goods total, before shipping)."""
+        return self._sum_lines()
+
+    @property
+    def shipping_cost(self) -> Money:
+        """The captured shipping cost, or zero in the order currency if none was charged."""
+        return self.shipping.cost if self.shipping is not None else Money.zero(self.currency)
 
     def transition_to(self, target: OrderStatus) -> Order:
         """Return a copy of the order in ``target`` status, or raise if illegal.

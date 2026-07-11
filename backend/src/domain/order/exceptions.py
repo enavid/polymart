@@ -77,6 +77,19 @@ class UnknownShippingAddressError(OrderError):
     """Raised when checkout references an address that is not one of the owner's own."""
 
 
+class UnknownShippingMethodError(OrderError):
+    """Raised when checkout references a shipping method the channel does not offer."""
+
+    def __init__(self, channel: str, method: str) -> None:
+        super().__init__(f"shipping method {method!r} is not available in channel {channel!r}")
+        self.channel = channel
+        self.method = method
+
+
+class InvalidCapturedShippingError(OrderError):
+    """Raised when a captured shipping selection is missing a required field."""
+
+
 class VariantNotFoundError(OrderError):
     """Raised when an ordered SKU has no matching catalog variant."""
 

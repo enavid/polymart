@@ -17,6 +17,7 @@ from src.application.order.use_cases import (
 from src.infrastructure.order.clock import SystemClock
 from src.infrastructure.order.number_generator import SecureOrderNumberGenerator
 from src.infrastructure.order.repositories import (
+    ConfiguredShippingRateReader,
     DjangoAddressReader,
     DjangoCartForCheckout,
     DjangoChannelReader,
@@ -36,6 +37,7 @@ def build_place_order() -> PlaceOrder:
         pricing=DjangoPricingReader(),
         channels=DjangoChannelReader(),
         addresses=DjangoAddressReader(),
+        shipping=ConfiguredShippingRateReader(),
         inventory=DjangoInventory(),
         orders=DjangoOrderRepository(),
         numbers=SecureOrderNumberGenerator(),

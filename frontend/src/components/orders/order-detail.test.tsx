@@ -58,7 +58,12 @@ function order(overrides: Record<string, unknown> = {}) {
     channel: "ir-main",
     currency: "IRR",
     status: "pending",
-    total: "240000.0000",
+    // Grand total = goods 240000 + standard shipping 50000.
+    subtotal: "240000.0000",
+    shipping_cost: "50000.0000",
+    shipping_method: "standard",
+    shipping_method_name: "پست پیشتاز",
+    total: "290000.0000",
     placed_at: "2026-07-02T12:00:00Z",
     items: [
       { sku: "HB-250", quantity: 2, unit_price: "120000.0000", line_total: "240000.0000" },
@@ -93,6 +98,11 @@ describe("OrderDetail", () => {
     // The captured shipping address is shown.
     expect(screen.getByText(messages.orders.shippingAddress)).toBeInTheDocument();
     expect(screen.getByText("Sara Ahmadi")).toBeInTheDocument();
+    // The order shows the subtotal / shipping / total breakdown (server values, not recomputed).
+    expect(screen.getByText(messages.orders.subtotal)).toBeInTheDocument();
+    expect(screen.getByText("پست پیشتاز", { exact: false })).toBeInTheDocument();
+    // 290000 IRR grand total -> 29000 Toman.
+    expect(screen.getByText("۲۹٬۰۰۰ تومان")).toBeInTheDocument();
   });
 
   it("shows the payment method and status block", async () => {

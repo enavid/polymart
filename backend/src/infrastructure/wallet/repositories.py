@@ -58,9 +58,7 @@ class DjangoWalletRepository(WalletRepository):
             # row to lock and both reached here; the OneToOne owner constraint let only one
             # win. The loser re-reads the wallet that now exists rather than surfacing a
             # transient 500 -- its credit then proceeds against the shared wallet.
-            existing = (
-                WalletModel.objects.select_for_update().filter(owner_id=owner_pk).first()
-            )
+            existing = WalletModel.objects.select_for_update().filter(owner_id=owner_pk).first()
             if existing is None:  # pragma: no cover - the constraint guarantees a row exists
                 raise
             return wallet_to_domain(existing)

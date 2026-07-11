@@ -16,6 +16,7 @@ from src.domain.order.exceptions import (
     OrderTotalMismatchError,
 )
 from src.domain.order.value_objects import (
+    CapturedShipping,
     ChannelRef,
     Money,
     OrderNumber,
@@ -55,10 +56,16 @@ def _shipping_address(**overrides: str | None) -> ShippingAddress:
     return ShippingAddress(**fields)  # type: ignore[arg-type]
 
 
-def _order(lines: tuple[OrderLine, ...], status: OrderStatus = OrderStatus.PENDING) -> Order:
+def _order(
+    lines: tuple[OrderLine, ...],
+    status: OrderStatus = OrderStatus.PENDING,
+    shipping: CapturedShipping | None = None,
+) -> Order:
     total = Money.zero("IRR")
     for line in lines:
         total = total.add(line.line_total)
+    if shipping is not None:
+        total = total.add(shipping.cost)
     return Order(
         number=OrderNumber("ORD-ABC123"),
         owner="7",
@@ -69,6 +76,13 @@ def _order(lines: tuple[OrderLine, ...], status: OrderStatus = OrderStatus.PENDI
         status=status,
         placed_at=datetime(2026, 7, 2, tzinfo=UTC),
         shipping_address=_shipping_address(),
+        shipping=shipping,
+    )
+
+
+def _shipping(amount: str = "50000.00", currency: str = "IRR") -> CapturedShipping:
+    return CapturedShipping(
+        method_code="standard", method_name="Standard post", cost=_money(amount, currency)
     )
 
 
@@ -156,6 +170,64 @@ class TestOrderInvariants:
                 placed_at=datetime(2026, 7, 2, tzinfo=UTC),
                 shipping_address=_shipping_address(),
             )
+
+
+class TestOrderShipping:
+    def test_total_includes_the_shipping_cost(self) -> None:
+        order = _order((_line("HB-250", 2, "120000.00"),), shipping=_shipping("50000.00"))
+        # subtotal 240000 + shipping 50000 = 290000 grand total.
+        assert order.items_subtotal.amount == Decimal("240000.00")
+        assert order.shipping_cost.amount == Decimal("50000.00")
+        assert order.total.amount == Decimal("290000.00")
+
+    def test_no_shipping_reports_a_zero_cost_and_subtotal_equals_total(self) -> None:
+        order = _order((_line("HB-250", 1, "120000.00"),))
+        assert order.shipping is None
+        assert order.shipping_cost.amount == Decimal("0")
+        assert order.total.amount == order.items_subtotal.amount
+
+    def test_a_free_shipping_method_is_valid(self) -> None:
+        order = _order((_line("HB-250", 1, "120000.00"),), shipping=_shipping("0"))
+        assert order.total.amount == Decimal("120000.00")
+        assert order.shipping is not None
+        assert order.shipping.method_code == "standard"
+
+    def test_rejects_a_total_that_omits_the_shipping_cost(self) -> None:
+        line = _line("HB-250", 1, "120000.00")
+        with pytest.raises(OrderTotalMismatchError):
+            Order(
+                number=OrderNumber("ORD-ABC123"),
+                owner="7",
+                channel=ChannelRef("ir-main"),
+                currency="IRR",
+                lines=(line,),
+                total=_money("120000.00"),  # subtotal only -- shipping not added
+                status=OrderStatus.PENDING,
+                placed_at=datetime(2026, 7, 2, tzinfo=UTC),
+                shipping_address=_shipping_address(),
+                shipping=_shipping("50000.00"),
+            )
+
+    def test_rejects_shipping_in_another_currency(self) -> None:
+        line = _line("HB-250", 1, "120000.00")
+        with pytest.raises(OrderCurrencyMismatchError):
+            Order(
+                number=OrderNumber("ORD-ABC123"),
+                owner="7",
+                channel=ChannelRef("ir-main"),
+                currency="IRR",
+                lines=(line,),
+                total=_money("170000.00"),
+                status=OrderStatus.PENDING,
+                placed_at=datetime(2026, 7, 2, tzinfo=UTC),
+                shipping_address=_shipping_address(),
+                shipping=_shipping("50000.00", "USD"),
+            )
+
+    def test_a_transition_preserves_the_captured_shipping(self) -> None:
+        order = _order((_line("HB-250", 1, "120000.00"),), shipping=_shipping("50000.00"))
+        moved = order.transition_to(OrderStatus.PAID)
+        assert moved.shipping == order.shipping
 
 
 class TestStateMachine:

@@ -45,3 +45,33 @@ export function formatMoneyString(amount: string | null, currency: string): stri
   }
   return formatCurrency(Number(amount), currency);
 }
+
+// The backend stores money at four decimal places; scale to integer "milli-units" so
+// addition is exact (no binary-float drift) for the one place the UI must combine two
+// server amounts: the checkout preview total (goods subtotal + shipping cost) shown before
+// the order exists server-side. The authoritative grand total is still the placed order's.
+const MONEY_SCALE = 4;
+
+function toScaledInt(amount: string): bigint {
+  const negative = amount.startsWith("-");
+  const [whole, fraction = ""] = amount.replace("-", "").split(".");
+  const padded = (fraction + "0".repeat(MONEY_SCALE)).slice(0, MONEY_SCALE);
+  const scaled = BigInt(whole || "0") * 10n ** BigInt(MONEY_SCALE) + BigInt(padded || "0");
+  return negative ? -scaled : scaled;
+}
+
+/**
+ * Add exact decimal money strings, returning a string at the stored 4-dp precision.
+ *
+ * Uses integer (BigInt) arithmetic on scaled amounts so no float rounding is introduced --
+ * the same discipline the backend uses. Only for previewing a total the shopper has not yet
+ * committed (the order the server places is the source of truth once it exists).
+ */
+export function sumMoneyStrings(...amounts: string[]): string {
+  const total = amounts.reduce((acc, amount) => acc + toScaledInt(amount), 0n);
+  const negative = total < 0n;
+  const digits = (negative ? -total : total).toString().padStart(MONEY_SCALE + 1, "0");
+  const whole = digits.slice(0, -MONEY_SCALE);
+  const fraction = digits.slice(-MONEY_SCALE);
+  return `${negative ? "-" : ""}${whole}.${fraction}`;
+}

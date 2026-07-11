@@ -35,6 +35,9 @@ _PROVINCE_MAX_LENGTH = 100
 _CITY_MAX_LENGTH = 100
 _POSTAL_CODE_MAX_LENGTH = 10
 _ADDRESS_LINE_MAX_LENGTH = 255
+# Captured shipping-method code/name lengths mirror the shipping context's stored precision.
+_SHIPPING_METHOD_CODE_MAX_LENGTH = 32
+_SHIPPING_METHOD_NAME_MAX_LENGTH = 120
 
 
 class OrderModel(models.Model):
@@ -64,6 +67,20 @@ class OrderModel(models.Model):
     )
     channel_slug = models.SlugField(max_length=_CHANNEL_SLUG_MAX_LENGTH)
     currency_code = models.CharField(max_length=_CURRENCY_CODE_MAX_LENGTH)
+    # ``total`` is the grand total (goods + shipping). Shipping is captured at placement like
+    # a line's price: a later change to the channel's configured rates never rewrites a placed
+    # order. ``shipping_method_code`` is "" for an order with no delivery charge (e.g. a manual
+    # pre-invoice); the mapper reads that as "no captured shipping". Existing rows predate
+    # shipping, so the migration backfills 0 / "" (which the aggregate reads as no shipping).
+    shipping_cost = models.DecimalField(
+        max_digits=_AMOUNT_MAX_DIGITS, decimal_places=_AMOUNT_DECIMAL_PLACES, default=0
+    )
+    shipping_method_code = models.CharField(
+        max_length=_SHIPPING_METHOD_CODE_MAX_LENGTH, blank=True, default=""
+    )
+    shipping_method_name = models.CharField(
+        max_length=_SHIPPING_METHOD_NAME_MAX_LENGTH, blank=True, default=""
+    )
     total = models.DecimalField(
         max_digits=_AMOUNT_MAX_DIGITS, decimal_places=_AMOUNT_DECIMAL_PLACES
     )

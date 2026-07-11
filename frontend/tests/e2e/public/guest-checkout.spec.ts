@@ -79,14 +79,18 @@ test("guest: build a cart, check out inline, see the order, then cancel it", asy
   await expect(page.getByText(checkout.guestAddressHint)).toBeVisible();
   await fillInlineShipping(page);
 
-  // 5) Review, then place the order.
+  // 5) Review: pick the standard shipping method (its cost is added to the total), then place.
+  await page.locator('input[type="radio"][value="standard"]').check();
   await page.getByRole("button", { name: checkout.placeOrder }).click();
 
-  // 6) Order confirmation: captured total, pending status, and the captured recipient.
+  // 6) Order confirmation: the captured breakdown (goods 150,000 + shipping 50,000 =
+  //    200,000), pending status, and the captured recipient.
   await expect(page).toHaveURL(/\/orders\/ORD-/);
   const orderNumber = page.url().split("/orders/")[1].replace(/\/$/, "");
   await expect(page.getByText(orders.statusPending).first()).toBeVisible();
   await expect(page.getByText(money(150000)).first()).toBeVisible();
+  await expect(page.getByText(money(50000)).first()).toBeVisible();
+  await expect(page.getByText(money(200000)).first()).toBeVisible();
   await expect(page.getByRole("heading", { name: orders.shippingAddress })).toBeVisible();
   await expect(page.getByText(ADDRESS.recipientName)).toBeVisible();
 

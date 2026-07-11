@@ -45,6 +45,9 @@ _CHANNEL = "ir-main"
 _ORDERS_URL = "/api/v1/orders/"
 _CART_ITEMS_URL = "/api/v1/cart/items/"
 _ADDRESS_ID = "ADDR-SHIP000001"
+# "standard" flat rate from settings.SHIPPING_METHODS (config/settings/test.py), added to
+# the goods subtotal at the stored 4-dp precision.
+_SHIPPING = "50000.0000"
 
 # A guest's one-off inline shipping address (Iranian mobile + 10-digit postal), the shape
 # the checkout form submits when there is no address book.
@@ -104,9 +107,19 @@ def _add_to_cart(owner_pk: int, sku: str, quantity: int) -> None:
     )
 
 
-def _checkout(client: APIClient, *, address_id: str = _ADDRESS_ID, channel: str = _CHANNEL):
-    """POST the checkout body (channel + saved address id)."""
-    return client.post(_ORDERS_URL, {"channel": channel, "address_id": address_id}, format="json")
+def _checkout(
+    client: APIClient,
+    *,
+    address_id: str = _ADDRESS_ID,
+    channel: str = _CHANNEL,
+    shipping_method: str = "standard",
+):
+    """POST the checkout body (channel + shipping method + saved address id)."""
+    return client.post(
+        _ORDERS_URL,
+        {"channel": channel, "shipping_method": shipping_method, "address_id": address_id},
+        format="json",
+    )
 
 
 def _guest_add_to_cart(client: APIClient, sku: str, quantity: int):
@@ -119,11 +132,17 @@ def _guest_add_to_cart(client: APIClient, sku: str, quantity: int):
     )
 
 
-def _guest_checkout(client: APIClient, *, address=None, channel: str = _CHANNEL):
-    """POST the checkout body a guest submits (channel + inline shipping address)."""
+def _guest_checkout(
+    client: APIClient, *, address=None, channel: str = _CHANNEL, shipping_method: str = "standard"
+):
+    """POST the checkout body a guest submits (channel + method + inline shipping address)."""
     return client.post(
         _ORDERS_URL,
-        {"channel": channel, "shipping_address": address or _INLINE_ADDRESS},
+        {
+            "channel": channel,
+            "shipping_method": shipping_method,
+            "shipping_address": address or _INLINE_ADDRESS,
+        },
         format="json",
     )
 
@@ -141,7 +160,11 @@ class TestGuestCheckout:
 
         assert response.status_code == 201
         assert response.data["status"] == "pending"
-        assert response.data["total"] == "240000.0000"
+        # Grand total = goods 240000 + standard shipping 50000.
+        assert response.data["subtotal"] == "240000.0000"
+        assert response.data["shipping_cost"] == _SHIPPING
+        assert response.data["shipping_method"] == "standard"
+        assert response.data["total"] == "290000.0000"
         assert response.data["shipping_address"]["recipient_name"] == "Guest Buyer"
         assert response.data["shipping_address"]["city"] == "Isfahan"
         # Stock was captured for the guest's order exactly as for a user's.
@@ -231,7 +254,12 @@ class TestPlaceOrder:
         assert response.data["status"] == "pending"
         # Money round-trips through the DB at the stored 4-dp precision (as the
         # storefront/cart already expose), so the exact Decimal survives as a string.
-        assert response.data["total"] == "240000.0000"
+        # Grand total = goods 240000 + standard shipping 50000.
+        assert response.data["subtotal"] == "240000.0000"
+        assert response.data["shipping_cost"] == _SHIPPING
+        assert response.data["shipping_method"] == "standard"
+        assert response.data["shipping_method_name"] == "پست پیشتاز"
+        assert response.data["total"] == "290000.0000"
         assert response.data["number"].startswith("ORD-")
         assert response.data["items"][0]["unit_price"] == "120000.0000"
         # The shipping address was captured from the shopper's address book.
@@ -243,7 +271,31 @@ class TestPlaceOrder:
         user = _user("09120000001")
         _add_to_cart(user.pk, "HB-250", 1)
 
-        response = _client(user).post(_ORDERS_URL, {"channel": _CHANNEL}, format="json")
+        response = _client(user).post(
+            _ORDERS_URL, {"channel": _CHANNEL, "shipping_method": "standard"}, format="json"
+        )
+
+        assert response.status_code == 400
+
+    def test_a_missing_shipping_method_field_is_a_400(self) -> None:
+        _seed_catalog()
+        user = _user("09120000001")
+        seed_address(user.pk)
+        _add_to_cart(user.pk, "HB-250", 1)
+
+        response = _client(user).post(
+            _ORDERS_URL, {"channel": _CHANNEL, "address_id": _ADDRESS_ID}, format="json"
+        )
+
+        assert response.status_code == 400
+
+    def test_an_unknown_shipping_method_is_a_400(self) -> None:
+        _seed_catalog()
+        user = _user("09120000001")
+        seed_address(user.pk)
+        _add_to_cart(user.pk, "HB-250", 1)
+
+        response = _checkout(_client(user), shipping_method="drone")
 
         assert response.status_code == 400
 
@@ -545,7 +597,8 @@ class TestPreInvoice:
         response = staff.get(f"{_ORDERS_URL}{number}/pre-invoice/")
 
         assert response.status_code == 200
-        assert response.data["grand_total"] == "120000.0000"
+        # Guest order: goods 120000 + standard shipping 50000.
+        assert response.data["grand_total"] == "170000.0000"
 
     def test_an_unknown_number_is_a_404(self) -> None:
         _seed_catalog()

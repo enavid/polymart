@@ -44,6 +44,7 @@ from src.domain.order.exceptions import (
     OutOfStockError,
     UnknownChannelError,
     UnknownShippingAddressError,
+    UnknownShippingMethodError,
     VariantNotFoundError,
     VariantNotPurchasableError,
 )
@@ -99,11 +100,16 @@ def _inline_shipping(data: dict[str, object]) -> InlineShippingAddress | None:
 
 def _order_payload(order: Order) -> dict[str, object]:
     """Project an order to the response body (money as exact strings)."""
+    shipping = order.shipping
     return {
         "number": order.number.value,
         "channel": order.channel.value,
         "currency": order.currency,
         "status": order.status.value,
+        "subtotal": str(order.items_subtotal.amount),
+        "shipping_cost": str(order.shipping_cost.amount),
+        "shipping_method": shipping.method_code if shipping is not None else None,
+        "shipping_method_name": shipping.method_name if shipping is not None else None,
         "total": str(order.total.amount),
         "placed_at": order.placed_at,
         "items": [
@@ -257,16 +263,21 @@ class OrderCollectionView(APIView):
         command = PlaceOrderCommand(
             owner=_owner(request),
             channel=data["channel"],
+            shipping_method=data["shipping_method"],
             address_id=data.get("address_id"),
             shipping_address=_inline_shipping(data),
         )
         try:
             order = build_place_order().execute(command)
-        except (UnknownChannelError, UnknownShippingAddressError) as exc:
-            # A well-formed request-body reference (channel or saved address) that does
-            # not resolve for this shopper. A not-owned address resolves to the same
-            # error as a nonexistent one, so checkout never reveals whether another
-            # shopper's address id exists.
+        except (
+            UnknownChannelError,
+            UnknownShippingAddressError,
+            UnknownShippingMethodError,
+        ) as exc:
+            # A well-formed request-body reference (channel, saved address, or shipping
+            # method) that does not resolve for this shopper. A not-owned address resolves
+            # to the same error as a nonexistent one, so checkout never reveals whether
+            # another shopper's address id exists.
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         except VariantNotFoundError as exc:  # pragma: no cover - defensive
             # Unreachable in practice: the price check precedes the stock deduction, and

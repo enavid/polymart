@@ -7,6 +7,7 @@ from decimal import Decimal
 import pytest
 
 from src.domain.order.exceptions import (
+    InvalidCapturedShippingError,
     InvalidChannelReferenceError,
     InvalidMoneyError,
     InvalidOrderNumberError,
@@ -15,6 +16,7 @@ from src.domain.order.exceptions import (
     InvalidSkuError,
 )
 from src.domain.order.value_objects import (
+    CapturedShipping,
     ChannelRef,
     Money,
     OrderNumber,
@@ -187,3 +189,40 @@ class TestShippingAddress:
     def test_rejects_a_field_beyond_its_bound(self, field: str, limit: int) -> None:
         with pytest.raises(InvalidShippingAddressError):
             _shipping_address(**{field: "x" * (limit + 1)})
+
+
+class TestCapturedShipping:
+    def _captured(self, **overrides: object) -> CapturedShipping:
+        kwargs: dict[str, object] = {
+            "method_code": "standard",
+            "method_name": "Standard post",
+            "cost": Money(amount=Decimal("50000.00"), currency="IRR"),
+        }
+        kwargs.update(overrides)
+        return CapturedShipping(**kwargs)  # type: ignore[arg-type]
+
+    def test_builds_a_valid_capture(self) -> None:
+        captured = self._captured()
+        assert captured.method_code == "standard"
+        assert captured.method_name == "Standard post"
+        assert captured.cost.amount == Decimal("50000.00")
+
+    def test_a_zero_cost_capture_is_valid(self) -> None:
+        assert self._captured(cost=Money(amount=Decimal("0"), currency="IRR")).cost.amount == 0
+
+    def test_trims_the_code_and_name(self) -> None:
+        captured = self._captured(method_code="  standard  ", method_name="  Standard  ")
+        assert captured.method_code == "standard"
+        assert captured.method_name == "Standard"
+
+    def test_rejects_a_blank_code(self) -> None:
+        with pytest.raises(InvalidCapturedShippingError):
+            self._captured(method_code="   ")
+
+    def test_rejects_a_blank_name(self) -> None:
+        with pytest.raises(InvalidCapturedShippingError):
+            self._captured(method_name="")
+
+    def test_rejects_an_over_long_code(self) -> None:
+        with pytest.raises(InvalidCapturedShippingError):
+            self._captured(method_code="x" * 33)

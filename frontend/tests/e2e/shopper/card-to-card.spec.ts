@@ -42,6 +42,8 @@ async function checkoutToReview(page: Page): Promise<void> {
   await expect(page).toHaveURL(/\/checkout/);
   await page.locator("label").filter({ hasText: SEED }).getByRole("radio").check();
   await page.getByRole("button", { name: checkout.continue }).click();
+  // Pick a shipping method (its cost is captured onto the order); "standard" is preselected.
+  await page.locator('input[type="radio"][value="standard"]').check();
 }
 
 test.describe.serial("card-to-card payment", () => {

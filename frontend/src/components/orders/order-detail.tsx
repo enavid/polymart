@@ -167,12 +167,27 @@ export function OrderDetail({ number }: { number: string }) {
         </TableBody>
       </Table>
 
-      <div className="flex items-center justify-between border-t border-border pt-4">
-        <span className="font-medium">{t("total")}</span>
-        <span className="text-lg font-semibold">
-          {formatMoneyString(order.total, order.currency)}
-        </span>
-      </div>
+      <dl className="flex flex-col gap-2 border-t border-border pt-4 text-sm">
+        <div className="flex items-center justify-between">
+          <dt className="text-muted-foreground">{t("subtotal")}</dt>
+          <dd>{formatMoneyString(order.subtotal, order.currency)}</dd>
+        </div>
+        <div className="flex items-center justify-between">
+          <dt className="text-muted-foreground">
+            {t("shipping")}
+            {order.shipping_method_name ? (
+              <span className="text-muted-foreground"> · {order.shipping_method_name}</span>
+            ) : null}
+          </dt>
+          <dd>{formatMoneyString(order.shipping_cost, order.currency)}</dd>
+        </div>
+        <div className="flex items-center justify-between border-t border-border pt-2">
+          <dt className="font-medium">{t("total")}</dt>
+          <dd className="text-lg font-semibold">
+            {formatMoneyString(order.total, order.currency)}
+          </dd>
+        </div>
+      </dl>
 
       {cancel.isError ? (
         <Alert variant="destructive">

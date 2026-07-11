@@ -30,6 +30,8 @@ from src.application.order.ports import (
     OrderRepository,
     OwnedAddress,
     PricingReader,
+    ShippingQuote,
+    ShippingRateReader,
     UnitOfWork,
 )
 from src.application.shared.events import EventPublisher
@@ -42,10 +44,12 @@ from src.domain.order.exceptions import (
     OrderNotCancellableError,
     UnknownChannelError,
     UnknownShippingAddressError,
+    UnknownShippingMethodError,
     VariantNotPurchasableError,
 )
 from src.domain.order.services import PricedItem, build_order_lines, order_total
 from src.domain.order.value_objects import (
+    CapturedShipping,
     ChannelRef,
     OrderNumber,
     OrderQuantity,
@@ -136,10 +140,15 @@ class PlaceOrderCommand:
     shopper picks a saved ``address_id`` (resolved from their address book), while a guest
     supplies a one-off ``shipping_address`` inline (they have no book). Supplying neither
     is rejected as an unknown address.
+
+    ``shipping_method`` is the code of the chosen delivery method (e.g. ``"standard"``); its
+    cost is *quoted* from the channel's configured rates and captured onto the order. The
+    transport requires it, so it is always supplied by a real request.
     """
 
     owner: str
     channel: str
+    shipping_method: str
     address_id: str | None = None
     shipping_address: InlineShippingAddress | None = None
 
@@ -162,6 +171,7 @@ class PlaceOrder:
         pricing: PricingReader,
         channels: ChannelReader,
         addresses: AddressReader,
+        shipping: ShippingRateReader,
         inventory: Inventory,
         orders: OrderRepository,
         numbers: OrderNumberGenerator,
@@ -174,6 +184,7 @@ class PlaceOrder:
         self._pricing = pricing
         self._channels = channels
         self._addresses = addresses
+        self._shipping = shipping
         self._inventory = inventory
         self._orders = orders
         self._numbers = numbers
@@ -185,6 +196,10 @@ class PlaceOrder:
         channel = ChannelRef(command.channel)
         currency = _resolve_currency(self._channels, channel.value)
         shipping_address = self._resolve_shipping(command)
+        quote = self._resolve_shipping_quote(channel.value, command.shipping_method, currency)
+        captured_shipping = CapturedShipping(
+            method_code=quote.method_code, method_name=quote.method_name, cost=quote.cost
+        )
 
         with self._uow.atomic():
             items = self._carts.line_items(command.owner, channel.value)
@@ -199,7 +214,7 @@ class PlaceOrder:
                 inventory=self._inventory,
             )
             lines = build_order_lines(priced_items)
-            total = order_total(lines, currency)
+            total = order_total(lines, currency, captured_shipping.cost)
             order = Order(
                 number=self._numbers.next(),
                 owner=command.owner,
@@ -210,6 +225,7 @@ class PlaceOrder:
                 status=OrderStatus.PENDING,
                 placed_at=self._clock.now(),
                 shipping_address=shipping_address,
+                shipping=captured_shipping,
             )
             saved = self._orders.add(order)
             self._carts.clear(command.owner, channel.value)
@@ -221,6 +237,8 @@ class PlaceOrder:
                 changes=(
                     FieldChange(field="status", after=OrderStatus.PENDING.value),
                     FieldChange(field="total", after=str(total.amount)),
+                    FieldChange(field="shipping_method", after=captured_shipping.method_code),
+                    FieldChange(field="shipping_cost", after=str(captured_shipping.cost.amount)),
                     FieldChange(field="line_count", after=len(lines)),
                 ),
             )
@@ -263,6 +281,19 @@ class PlaceOrder:
         if command.address_id is not None:
             return _resolve_shipping_address(self._addresses, command.owner, command.address_id)
         raise UnknownShippingAddressError("")
+
+    def _resolve_shipping_quote(
+        self, channel: str, method_code: str, currency: str
+    ) -> ShippingQuote:
+        """Quote the chosen shipping method, or refuse a method the channel does not offer.
+
+        Resolved before the transaction (a pure config read, like the address); an unknown
+        or currency-mismatched method never enters the unit of work.
+        """
+        quote = self._shipping.quote(channel=channel, method_code=method_code, currency=currency)
+        if quote is None:
+            raise UnknownShippingMethodError(channel, method_code)
+        return quote
 
 
 @dataclass(frozen=True)

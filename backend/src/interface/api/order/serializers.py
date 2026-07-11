@@ -44,6 +44,7 @@ class PlaceOrderSerializer(serializers.Serializer):
     """
 
     channel = serializers.CharField()
+    shipping_method = serializers.CharField()
     address_id = serializers.CharField(required=False)
     shipping_address = InlineShippingAddressSerializer(required=False)
 
@@ -112,12 +113,21 @@ class OrderLineSerializer(serializers.Serializer):
 
 
 class OrderSerializer(serializers.Serializer):
-    """Response projection of a placed order."""
+    """Response projection of a placed order.
+
+    ``total`` is the grand total (goods + shipping); ``subtotal`` is the goods total and
+    ``shipping_cost`` the delivery charge (money as exact strings). ``shipping_method`` and
+    ``shipping_method_name`` are ``null`` for an order with no delivery charge.
+    """
 
     number = serializers.CharField()
     channel = serializers.CharField()
     currency = serializers.CharField()
     status = serializers.CharField()
+    subtotal = serializers.CharField()
+    shipping_cost = serializers.CharField()
+    shipping_method = serializers.CharField(allow_null=True)
+    shipping_method_name = serializers.CharField(allow_null=True)
     total = serializers.CharField()
     placed_at = serializers.DateTimeField()
     items = OrderLineSerializer(many=True)

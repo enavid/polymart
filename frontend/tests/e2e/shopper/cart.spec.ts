@@ -59,22 +59,27 @@ async function checkoutWithSeededAddress(page: Page): Promise<void> {
   await expect(page).toHaveURL(/\/checkout/);
   await page.locator("label").filter({ hasText: SEED }).getByRole("radio").check();
   await page.getByRole("button", { name: checkout.continue }).click();
-  // The review step offers payment methods: COD is the default (selected), and online and
-  // card-to-card are available too. Located by the radio's value (the localized labels
-  // contain parentheses, unsafe in a name regex).
+  // The review step offers shipping methods first: "standard" is preselected (its cost is
+  // added to the total). Select it explicitly so the flow is deterministic regardless of the
+  // configured order.
+  await page.locator('input[type="radio"][value="standard"]').check();
+  // Then payment methods: COD is the default (selected), and online and card-to-card are
+  // available too. Located by the radio's value (the localized labels contain parentheses,
+  // unsafe in a name regex).
   await expect(page.locator('input[type="radio"][value="cod"]')).toBeChecked();
   await expect(page.locator('input[type="radio"][value="card_to_card"]')).toBeEnabled();
   await page.getByRole("button", { name: checkout.placeOrder }).click();
 }
 
-/** Checkout choosing the online method: select the seeded address, continue, pick online,
- * and place -- which hands the browser off to the gateway. */
+/** Checkout choosing the online method: select the seeded address, continue, pick the
+ * standard shipping method and online payment, and place -- handing off to the gateway. */
 async function checkoutSelectingOnline(page: Page): Promise<void> {
   await page.goto("/cart");
   await page.getByRole("link", { name: cart.checkout }).click();
   await expect(page).toHaveURL(/\/checkout/);
   await page.locator("label").filter({ hasText: SEED }).getByRole("radio").check();
   await page.getByRole("button", { name: checkout.continue }).click();
+  await page.locator('input[type="radio"][value="standard"]').check();
   await page.locator('input[type="radio"][value="online"]').check();
   await page.getByRole("button", { name: checkout.placeOrder }).click();
 }
@@ -131,7 +136,11 @@ test.describe.serial("shopper cart & checkout", () => {
     const orderNumber = page.url().split("/orders/")[1].replace(/\/$/, "");
     await expect(page.getByText(orderNumber).first()).toBeVisible();
     await expect(page.getByText(orders.statusPending).first()).toBeVisible();
+    // The order shows the captured breakdown: goods subtotal 150,000, standard shipping
+    // 50,000, and a grand total of 200,000 (all the server's values, rendered by the UI).
     await expect(page.getByText(money(150000)).first()).toBeVisible();
+    await expect(page.getByText(money(50000)).first()).toBeVisible();
+    await expect(page.getByText(money(200000)).first()).toBeVisible();
     await expect(page.getByRole("heading", { name: orders.shippingAddress })).toBeVisible();
     await expect(page.getByText(SEED)).toBeVisible();
 

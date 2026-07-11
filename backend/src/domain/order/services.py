@@ -38,9 +38,18 @@ def build_order_lines(items: Sequence[PricedItem]) -> tuple[OrderLine, ...]:
     )
 
 
-def order_total(lines: Sequence[OrderLine], currency: str) -> Money:
-    """Sum the line totals into the order total, refusing to mix currencies."""
+def order_total(
+    lines: Sequence[OrderLine], currency: str, shipping_cost: Money | None = None
+) -> Money:
+    """Sum the line totals plus any shipping cost into the grand total.
+
+    Refuses to mix currencies (a shipping cost in another currency is rejected). The
+    shipping cost defaults to nothing, so a manual/pre-invoice order (no delivery charge)
+    keeps the goods total unchanged.
+    """
     total = Money.zero(currency)
     for line in lines:
         total = total.add(line.line_total)
+    if shipping_cost is not None:
+        total = total.add(shipping_cost)
     return total

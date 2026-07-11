@@ -138,6 +138,18 @@ PAYMENT_CARD_TO_CARD = env.json("PAYMENT_CARD_TO_CARD", default={})
 # wallet's real currency is fixed by its first credit (the refunded payment's currency).
 WALLET_DEFAULT_CURRENCY = env("WALLET_DEFAULT_CURRENCY", default="IRR")
 
+# --- Shipping (flat-rate) ---------------------------------------------------
+# The delivery methods each channel offers, keyed by channel slug. Flat-rate config in this
+# slice (a later slice moves rates to an admin model behind the same port), so it lives here
+# like the other per-channel commerce settings. Each entry is a method:
+#   SHIPPING_METHODS = {"ir-main": [
+#       {"code": "standard", "name": "Standard post", "price": "50000",
+#        "currency": "IRR", "min_days": 3, "max_days": 5}, ...]}
+# The price is a string so the exact Decimal survives; currency is per-method (it must match
+# the channel currency to be quotable at checkout). Empty by default; dev/test/E2E provide a
+# deterministic set for ``ir-main``.
+SHIPPING_METHODS = env.json("SHIPPING_METHODS", default={})
+
 # --- Auth -------------------------------------------------------------------
 AUTHENTICATION_BACKENDS = [
     "django.contrib.auth.backends.ModelBackend",

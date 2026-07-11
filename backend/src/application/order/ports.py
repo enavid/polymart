@@ -115,6 +115,37 @@ class ChannelReader(ABC):
 
 
 @dataclass(frozen=True)
+class ShippingQuote:
+    """A quoted shipping method for a channel, flattened for checkout capture.
+
+    Carries the stable ``method_code``, its display ``name``, and its ``cost`` -- everything
+    the order context needs to capture the selection onto the order, with no shipping-domain
+    type leaking across the boundary.
+    """
+
+    method_code: str
+    method_name: str
+    cost: Money
+
+
+class ShippingRateReader(ABC):
+    """Narrow boundary onto the shipping context: quote a chosen method for checkout.
+
+    The order context asks "what does this method cost in this channel?" and captures the
+    answer; whether the rate comes from config or a table (and how zones are matched later)
+    is invisible here.
+    """
+
+    @abstractmethod
+    def quote(self, *, channel: str, method_code: str, currency: str) -> ShippingQuote | None:
+        """Quote the method for the channel, or ``None`` if it is not offered there.
+
+        The ``currency`` is the resolved order currency; an adapter returns ``None`` (rather
+        than a mismatched quote) if a configured method's currency does not match it.
+        """
+
+
+@dataclass(frozen=True)
 class OwnedAddress:
     """A shopper's saved address, flattened for checkout (no address-domain types leak here)."""
 

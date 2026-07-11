@@ -41,7 +41,12 @@ export interface Order {
   channel: string;
   currency: string;
   status: OrderStatus;
-  /** Exact string total. */
+  /** Exact string amounts. `total` is the grand total = `subtotal` + `shipping_cost`. */
+  subtotal: string;
+  shipping_cost: string;
+  /** The captured shipping method, or null for an order with no delivery charge. */
+  shipping_method: string | null;
+  shipping_method_name: string | null;
   total: string;
   placed_at: string;
   items: OrderLine[];
@@ -67,14 +72,19 @@ export type PlaceOrderShipping =
 
 /**
  * Place an order by checking out the given channel's cart, shipping to either a saved
- * address (`{ addressId }`) or a one-off inline address (`{ shippingAddress }`).
+ * address (`{ addressId }`) or a one-off inline address (`{ shippingAddress }`), by the
+ * chosen `shippingMethod` (its cost is quoted server-side and captured onto the order).
  */
-export function placeOrder(channel: string, shipping: PlaceOrderShipping): Promise<Order> {
-  const body =
+export function placeOrder(
+  channel: string,
+  shipping: PlaceOrderShipping,
+  shippingMethod: string,
+): Promise<Order> {
+  const base =
     "addressId" in shipping
       ? { channel, address_id: shipping.addressId }
       : { channel, shipping_address: shipping.shippingAddress };
-  return apiPost<Order>("/orders/", body);
+  return apiPost<Order>("/orders/", { ...base, shipping_method: shippingMethod });
 }
 
 /** List the authenticated shopper's own orders (newest first). */
