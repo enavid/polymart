@@ -90,6 +90,10 @@ class InvalidCapturedShippingError(OrderError):
     """Raised when a captured shipping selection is missing a required field."""
 
 
+class InvalidCapturedTaxError(OrderError):
+    """Raised when a captured tax has an out-of-range rate or an invalid amount."""
+
+
 class VariantNotFoundError(OrderError):
     """Raised when an ordered SKU has no matching catalog variant."""
 

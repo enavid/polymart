@@ -58,6 +58,10 @@ SHIPPING_ZONES = {
     "ir-main": [{"code": "tehran", "name": "تهران", "provinces": ["تهران"]}],
 }
 
+# Iran levies a 9% value-added tax; the default channel charges it so the checkout/order
+# breakdown and the E2E harness show a known tax on every placed order (goods + shipping).
+TAX_RATES = {"ir-main": "9"}
+
 # The Next.js storefront runs on :3000. Allow both hostnames a developer might
 # use so the cookie-JWT flow works regardless of how the dev server is opened.
 # (Browsers treat localhost and 127.0.0.1 as distinct origins.)

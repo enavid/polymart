@@ -34,8 +34,9 @@ import {
   type PaymentMethod,
 } from "@/lib/api/payments";
 import { listShippingMethods, type ShippingMethod } from "@/lib/api/shipping";
+import { getTaxRate } from "@/lib/api/tax";
 import { getWallet, type Wallet } from "@/lib/api/wallet";
-import { formatMoneyString, sumMoneyStrings } from "@/lib/format";
+import { formatMoneyString, formatPercent, sumMoneyStrings, taxAmountString } from "@/lib/format";
 import { useCurrentUser } from "@/lib/hooks/use-auth";
 import { paymentMethodKey } from "@/lib/payments/labels";
 import { STOREFRONT_CHANNEL } from "@/lib/storefront/channel";
@@ -45,6 +46,7 @@ const ADDRESSES_KEY = ["addresses"] as const;
 const WALLET_KEY = ["wallet"] as const;
 const SHIPPING_METHODS_KEY = (channel: string, province: string, city: string) =>
   ["shipping-methods", channel, province, city] as const;
+const TAX_RATE_KEY = (channel: string) => ["tax-rate", channel] as const;
 
 type Step = "address" | "review";
 
@@ -529,12 +531,21 @@ function ReviewStep({
     }
   }, [methods, shippingCode]);
 
+  // The channel's tax rate (null when untaxed), used only to preview the tax on the total;
+  // the authoritative tax is captured on the placed order server-side.
+  const taxRateQuery = useQuery({
+    queryKey: TAX_RATE_KEY(channel),
+    queryFn: () => getTaxRate(channel),
+  });
+  const taxRate = taxRateQuery.data ?? null;
+
   const selectedMethod = methods.find((m) => m.code === shippingCode) ?? null;
-  // Preview total = goods subtotal + the selected method's shipping cost, added exactly.
-  // Both operands are server values; the authoritative grand total is the placed order's.
-  const grandTotal = selectedMethod
-    ? sumMoneyStrings(cart.total, selectedMethod.price)
-    : cart.total;
+  // Preview total = goods subtotal + shipping + tax, each added with exact integer money math.
+  // Every operand is a server value (the rate too); the authoritative grand total is the
+  // placed order's. Tax applies to the pre-tax total (goods + shipping), matching the backend.
+  const preTax = selectedMethod ? sumMoneyStrings(cart.total, selectedMethod.price) : cart.total;
+  const taxAmount = taxRate ? taxAmountString(preTax, taxRate) : null;
+  const grandTotal = taxAmount ? sumMoneyStrings(preTax, taxAmount) : preTax;
 
   const noMethods = shippingQuery.isSuccess && methods.length === 0;
 
@@ -606,6 +617,14 @@ function ReviewStep({
                 : "—"}
             </dd>
           </div>
+          {taxAmount && taxRate ? (
+            <div className="flex items-center justify-between">
+              <dt className="text-muted-foreground">
+                {t("tax", { rate: formatPercent(taxRate) })}
+              </dt>
+              <dd data-testid="checkout-tax">{formatMoneyString(taxAmount, cart.currency)}</dd>
+            </div>
+          ) : null}
           <div className="flex items-center justify-between border-t border-border pt-2">
             <dt className="font-medium">{tCart("total")}</dt>
             <dd data-testid="checkout-total" className="text-lg font-semibold">

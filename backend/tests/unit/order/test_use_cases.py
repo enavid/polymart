@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 
 import pytest
 from structlog.testing import capture_logs
@@ -30,6 +30,8 @@ from src.application.order.ports import (
     PricingReader,
     ShippingQuote,
     ShippingRateReader,
+    TaxCalculator,
+    TaxQuote,
     UnitOfWork,
 )
 from src.application.order.use_cases import (
@@ -141,6 +143,29 @@ class FakeShipping(ShippingRateReader):
         if cost is None or cost.currency != currency:
             return None
         return ShippingQuote(method_code=method_code, method_name=method_code.title(), cost=cost)
+
+
+class FakeTax(TaxCalculator):
+    """Computes tax at a fixed percentage of the taxable base.
+
+    Defaults to *no tax* (``rate=None``) so checkout tests that are not about tax keep their
+    goods+shipping totals; pass a rate to exercise a real tax charge. The amount mirrors the
+    domain service (exact ``Decimal``, half-up to 4 dp) so a use-case test asserts against the
+    same rounded value the real bridge produces.
+    """
+
+    def __init__(self, rate: Decimal | None = None) -> None:
+        self._rate = rate
+        self.seen_taxable: Money | None = None
+
+    def calculate(self, *, channel: str, taxable: Money) -> TaxQuote | None:
+        self.seen_taxable = taxable
+        if self._rate is None:
+            return None
+        amount = (taxable.amount * self._rate / Decimal("100")).quantize(
+            Decimal("0.0001"), rounding=ROUND_HALF_UP
+        )
+        return TaxQuote(rate=self._rate, amount=Money(amount, taxable.currency))
 
 
 _DEFAULT_OWNED_ADDRESS = OwnedAddress(
@@ -308,6 +333,7 @@ def _build_place_order(
     orders: FakeOrders | None = None,
     addresses: FakeAddresses | None = None,
     shipping: FakeShipping | None = None,
+    tax: FakeTax | None = None,
     audit: RecordingAudit | None = None,
     events: RecordingEventPublisher | None = None,
 ) -> PlaceOrder:
@@ -318,6 +344,7 @@ def _build_place_order(
         channels=FakeChannels(currency),
         addresses=addresses or FakeAddresses(),
         shipping=shipping or FakeShipping(),
+        tax=tax or FakeTax(),
         inventory=inventory or FakeInventory(stock),
         orders=orders or FakeOrders(),
         numbers=FakeNumbers(),
@@ -434,6 +461,7 @@ class TestPlaceOrder:
             channels=FakeChannels("IRR"),
             addresses=FakeAddresses(),
             shipping=FakeShipping(),
+            tax=FakeTax(),
             inventory=FakeInventory({"HB-250": 5}),
             orders=FakeOrders(),
             numbers=FakeNumbers(),
@@ -714,6 +742,92 @@ class TestPlaceOrderShipping:
         assert uow.rolled_back is False
 
 
+class TestPlaceOrderTax:
+    def test_captures_tax_on_the_subtotal_plus_shipping(self) -> None:
+        tax = FakeTax(Decimal("9"))
+        place = _build_place_order(
+            cart_items=(CheckoutLine("HB-250", 1),),
+            prices={"HB-250": _money("120000.00")},
+            stock={"HB-250": 5},
+            shipping=FakeShipping({"standard": _money("50000.00")}),
+            tax=tax,
+        )
+
+        order = place.execute(
+            PlaceOrderCommand(
+                owner="7", channel="ir-main", shipping_method="standard", address_id="ADDR-TEST01"
+            )
+        )
+
+        # Tax base is goods 120000 + shipping 50000 = 170000; 9% = 15300.
+        assert tax.seen_taxable is not None
+        assert tax.seen_taxable.amount == Decimal("170000.00")
+        assert order.tax is not None
+        assert order.tax.rate == Decimal("9")
+        assert order.tax.amount.amount == Decimal("15300.00")
+        # Grand total = goods + shipping + tax.
+        assert order.total.amount == Decimal("185300.00")
+
+    def test_no_tax_leaves_the_total_at_goods_plus_shipping(self) -> None:
+        place = _build_place_order(
+            cart_items=(CheckoutLine("HB-250", 1),),
+            prices={"HB-250": _money("120000.00")},
+            stock={"HB-250": 5},
+            shipping=FakeShipping({"standard": _money("50000.00")}),
+            tax=FakeTax(None),  # untaxed channel
+        )
+
+        order = place.execute(
+            PlaceOrderCommand(
+                owner="7", channel="ir-main", shipping_method="standard", address_id="ADDR-TEST01"
+            )
+        )
+
+        assert order.tax is None
+        assert order.total.amount == Decimal("170000.00")
+
+    def test_audits_the_tax_amount(self) -> None:
+        audit = RecordingAudit()
+        place = _build_place_order(
+            cart_items=(CheckoutLine("HB-250", 1),),
+            prices={"HB-250": _money("120000.00")},
+            stock={"HB-250": 5},
+            shipping=FakeShipping({"standard": _money("50000.00")}),
+            tax=FakeTax(Decimal("9")),
+            audit=audit,
+        )
+
+        place.execute(
+            PlaceOrderCommand(
+                owner="7", channel="ir-main", shipping_method="standard", address_id="ADDR-TEST01"
+            )
+        )
+
+        changes = {c.field: c.after for c in audit.records[-1]["changes"]}  # type: ignore[attr-defined]
+        # The tax service quantizes to the stored precision (4 dp), so the amount is exact.
+        assert changes["tax"] == "15300.0000"
+
+    def test_publishes_the_grand_total_including_tax(self) -> None:
+        events = RecordingEventPublisher()
+        place = _build_place_order(
+            cart_items=(CheckoutLine("HB-250", 1),),
+            prices={"HB-250": _money("120000.00")},
+            stock={"HB-250": 5},
+            shipping=FakeShipping({"standard": _money("50000.00")}),
+            tax=FakeTax(Decimal("9")),
+            events=events,
+        )
+
+        place.execute(
+            PlaceOrderCommand(
+                owner="7", channel="ir-main", shipping_method="standard", address_id="ADDR-TEST01"
+            )
+        )
+
+        [event] = events.events
+        assert event.total == Decimal("185300.00")
+
+
 _INLINE_ADDRESS = InlineShippingAddress(
     recipient_name="Guest Buyer",
     phone_number="09121112233",
@@ -766,6 +880,7 @@ class TestPlaceOrderInlineShipping:
             channels=FakeChannels("IRR"),
             addresses=ExplodingAddresses(),
             shipping=FakeShipping(),
+            tax=FakeTax(),
             inventory=FakeInventory({"HB-250": 5}),
             orders=FakeOrders(),
             numbers=FakeNumbers(),
@@ -856,6 +971,7 @@ class TestListMyOrders:
                 channels=FakeChannels("IRR"),
                 addresses=FakeAddresses(),
                 shipping=FakeShipping(),
+                tax=FakeTax(),
                 inventory=FakeInventory({"HB-250": 1000}),
                 orders=orders,
                 numbers=FakeNumbers(f"ORD-N{i:04d}"),
@@ -951,6 +1067,7 @@ class TestCancelMyOrder:
             channels=FakeChannels("IRR"),
             addresses=FakeAddresses(),
             shipping=FakeShipping(),
+            tax=FakeTax(),
             inventory=inventory,
             orders=orders,
             numbers=FakeNumbers(),
@@ -1040,6 +1157,7 @@ def _build_create_manual_order(
     uow: FakeUnitOfWork | None = None,
     inventory: FakeInventory | None = None,
     orders: FakeOrders | None = None,
+    tax: FakeTax | None = None,
     audit: RecordingAudit | None = None,
     events: RecordingEventPublisher | None = None,
 ) -> CreateManualOrder:
@@ -1047,6 +1165,7 @@ def _build_create_manual_order(
         unit_of_work=uow or FakeUnitOfWork(),
         pricing=FakePricing(prices),
         channels=FakeChannels(currency),
+        tax=tax or FakeTax(),
         inventory=inventory or FakeInventory(stock),
         orders=orders or FakeOrders(),
         numbers=FakeNumbers(),
@@ -1077,6 +1196,30 @@ class TestCreateManualOrder:
         assert order.total == _money("390000.00")
         assert order.shipping_address.recipient_name == "Guest Buyer"
         assert [line.sku.value for line in order.lines] == ["HB-250", "DR-250"]
+
+    def test_captures_tax_on_the_goods_subtotal(self) -> None:
+        tax = FakeTax(Decimal("9"))
+        create = _build_create_manual_order(
+            prices={"HB-250": _money("120000.00")},
+            stock={"HB-250": 5},
+            tax=tax,
+        )
+
+        order = create.execute(
+            CreateManualOrderCommand(
+                actor="u:9",
+                channel="ir-main",
+                items=(ManualOrderItem("HB-250", 1),),
+                shipping_address=_INLINE_ADDRESS,
+            )
+        )
+
+        # A manual order has no shipping, so the tax base is the goods subtotal alone.
+        assert tax.seen_taxable is not None
+        assert tax.seen_taxable.amount == Decimal("120000.00")
+        assert order.tax is not None
+        assert order.tax.amount.amount == Decimal("10800.00")
+        assert order.total.amount == Decimal("130800.00")
 
     def test_deducts_stock_for_each_line(self) -> None:
         inventory = FakeInventory({"HB-250": 5})

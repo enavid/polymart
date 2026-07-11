@@ -581,9 +581,30 @@ class TestPreInvoice:
 
         assert response.status_code == 200
         assert response.data["document_type"] == "pre_invoice"
+        # No TAX_RATES configured for the channel -> the manual order is untaxed.
         assert response.data["tax"] is None
+        assert response.data["tax_rate"] is None
         assert response.data["grand_total"] == "240000.0000"
         assert response.data["items"][0]["sku"] == "HB-250"
+
+    def test_a_taxed_pre_invoice_shows_the_tax_and_a_grand_total_including_it(
+        self, settings
+    ) -> None:  # type: ignore[no-untyped-def]
+        settings.TAX_RATES = {"ir-main": "9"}
+        _seed_catalog()
+        client = _client(_staff_with_order_perm())
+        number = client.post(_MANUAL_URL, _manual_body(), format="json").data["number"]
+
+        response = client.get(f"{_ORDERS_URL}{number}/pre-invoice/")
+
+        assert response.status_code == 200
+        # Goods 240000; 9% tax = 21600; grand total 261600 (tax included).
+        assert response.data["tax"] == "21600.0000"
+        # The rate round-trips through the stored 4-dp column as an exact string; the frontend
+        # formats it for display (e.g. "9%").
+        assert response.data["tax_rate"] == "9.0000"
+        assert response.data["subtotal"] == "240000.0000"
+        assert response.data["grand_total"] == "261600.0000"
 
     def test_staff_can_pre_invoice_any_order_including_a_guest_order(self) -> None:
         # The pre-invoice is not owner-scoped: a staff member prints a proforma for a

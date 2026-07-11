@@ -101,6 +101,7 @@ def _inline_shipping(data: dict[str, object]) -> InlineShippingAddress | None:
 def _order_payload(order: Order) -> dict[str, object]:
     """Project an order to the response body (money as exact strings)."""
     shipping = order.shipping
+    tax = order.tax
     return {
         "number": order.number.value,
         "channel": order.channel.value,
@@ -110,6 +111,10 @@ def _order_payload(order: Order) -> dict[str, object]:
         "shipping_cost": str(order.shipping_cost.amount),
         "shipping_method": shipping.method_code if shipping is not None else None,
         "shipping_method_name": shipping.method_name if shipping is not None else None,
+        # ``tax`` is the captured tax amount and ``tax_rate`` the percentage; both are ``null``
+        # for an order in an untaxed channel (and orders that predate tax).
+        "tax": str(tax.amount.amount) if tax is not None else None,
+        "tax_rate": str(tax.rate) if tax is not None else None,
         "total": str(order.total.amount),
         "placed_at": order.placed_at,
         "items": [
@@ -136,13 +141,13 @@ def _order_payload(order: Order) -> dict[str, object]:
 def _pre_invoice_payload(order: Order) -> dict[str, object]:
     """Project an order to its pre-invoice (proforma) body.
 
-    The full order plus a document marker and a tax placeholder: tax is computed in a
-    later phase, so it is ``null`` and the grand total equals the order total for now.
+    The full order plus a document marker: ``tax`` comes from the captured order (``null`` when
+    the channel is untaxed), and the grand total equals the order total (which already includes
+    the tax).
     """
     return {
         **_order_payload(order),
         "document_type": "pre_invoice",
-        "tax": None,
         "grand_total": str(order.total.amount),
     }
 

@@ -32,6 +32,7 @@ from src.application.order.ports import (
     PricingReader,
     ShippingQuote,
     ShippingRateReader,
+    TaxCalculator,
     UnitOfWork,
 )
 from src.application.shared.events import EventPublisher
@@ -50,7 +51,9 @@ from src.domain.order.exceptions import (
 from src.domain.order.services import PricedItem, build_order_lines, order_total
 from src.domain.order.value_objects import (
     CapturedShipping,
+    CapturedTax,
     ChannelRef,
+    Money,
     OrderNumber,
     OrderQuantity,
     OrderStatus,
@@ -120,6 +123,24 @@ def _capture_and_deduct(
     return priced
 
 
+def _resolve_tax(tax: TaxCalculator, channel: str, taxable: Money) -> CapturedTax | None:
+    """Compute and capture the tax due on the taxable base, or ``None`` if the channel is untaxed.
+
+    The amount is computed by the tax context (with its rounding rule) and captured verbatim;
+    the order context never recomputes it from the rate, so the captured amount and the total
+    can never drift. Shared by checkout and manual order creation.
+    """
+    quote = tax.calculate(channel=channel, taxable=taxable)
+    if quote is None:
+        return None
+    return CapturedTax(rate=quote.rate, amount=quote.amount)
+
+
+def _tax_amount(captured_tax: CapturedTax | None) -> Money | None:
+    """The captured tax amount for the total maths, or ``None`` when the order is untaxed."""
+    return captured_tax.amount if captured_tax is not None else None
+
+
 def _to_shipping_address(owned: OwnedAddress | InlineShippingAddress) -> ShippingAddress:
     return ShippingAddress(
         recipient_name=owned.recipient_name,
@@ -172,6 +193,7 @@ class PlaceOrder:
         channels: ChannelReader,
         addresses: AddressReader,
         shipping: ShippingRateReader,
+        tax: TaxCalculator,
         inventory: Inventory,
         orders: OrderRepository,
         numbers: OrderNumberGenerator,
@@ -185,6 +207,7 @@ class PlaceOrder:
         self._channels = channels
         self._addresses = addresses
         self._shipping = shipping
+        self._tax = tax
         self._inventory = inventory
         self._orders = orders
         self._numbers = numbers
@@ -216,7 +239,11 @@ class PlaceOrder:
                 inventory=self._inventory,
             )
             lines = build_order_lines(priced_items)
-            total = order_total(lines, currency, captured_shipping.cost)
+            # Tax applies to the goods subtotal plus shipping (the pre-tax total); resolve it
+            # against that base and capture the computed amount onto the order.
+            taxable = order_total(lines, currency, captured_shipping.cost)
+            captured_tax = _resolve_tax(self._tax, channel.value, taxable)
+            total = order_total(lines, currency, captured_shipping.cost, _tax_amount(captured_tax))
             order = Order(
                 number=self._numbers.next(),
                 owner=command.owner,
@@ -228,6 +255,7 @@ class PlaceOrder:
                 placed_at=self._clock.now(),
                 shipping_address=shipping_address,
                 shipping=captured_shipping,
+                tax=captured_tax,
             )
             saved = self._orders.add(order)
             self._carts.clear(command.owner, channel.value)
@@ -241,6 +269,7 @@ class PlaceOrder:
                     FieldChange(field="total", after=str(total.amount)),
                     FieldChange(field="shipping_method", after=captured_shipping.method_code),
                     FieldChange(field="shipping_cost", after=str(captured_shipping.cost.amount)),
+                    FieldChange(field="tax", after=str(order.tax_amount.amount)),
                     FieldChange(field="line_count", after=len(lines)),
                 ),
             )
@@ -345,6 +374,7 @@ class CreateManualOrder:
         unit_of_work: UnitOfWork,
         pricing: PricingReader,
         channels: ChannelReader,
+        tax: TaxCalculator,
         inventory: Inventory,
         orders: OrderRepository,
         numbers: OrderNumberGenerator,
@@ -355,6 +385,7 @@ class CreateManualOrder:
         self._uow = unit_of_work
         self._pricing = pricing
         self._channels = channels
+        self._tax = tax
         self._inventory = inventory
         self._orders = orders
         self._numbers = numbers
@@ -376,7 +407,9 @@ class CreateManualOrder:
                 inventory=self._inventory,
             )
             lines = build_order_lines(priced_items)
-            total = order_total(lines, currency)
+            # A manual order has no shipping charge, so tax applies to the goods subtotal alone.
+            captured_tax = _resolve_tax(self._tax, channel.value, order_total(lines, currency))
+            total = order_total(lines, currency, None, _tax_amount(captured_tax))
             # An empty line list can build no order (EmptyOrderError from the aggregate)
             # and a repeated sku is rejected (DuplicateOrderLineError) -- both roll back.
             order = Order(
@@ -389,6 +422,7 @@ class CreateManualOrder:
                 status=OrderStatus.PENDING,
                 placed_at=self._clock.now(),
                 shipping_address=shipping_address,
+                tax=captured_tax,
             )
             saved = self._orders.add(order)
             self._audit.record(
@@ -399,6 +433,7 @@ class CreateManualOrder:
                 changes=(
                     FieldChange(field="status", after=OrderStatus.PENDING.value),
                     FieldChange(field="total", after=str(total.amount)),
+                    FieldChange(field="tax", after=str(order.tax_amount.amount)),
                     FieldChange(field="line_count", after=len(lines)),
                     FieldChange(field="origin", after="manual"),
                 ),

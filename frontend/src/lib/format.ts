@@ -46,6 +46,23 @@ export function formatMoneyString(amount: string | null, currency: string): stri
   return formatCurrency(Number(amount), currency);
 }
 
+// A tax rate carries at most four decimal places (the domain bound); display drops any
+// trailing zeros within that precision.
+const RATE_MAX_FRACTION_DIGITS = 4;
+
+/**
+ * Format a percentage rate (an exact string such as "9" or "9.5000") for display.
+ *
+ * The rate is a label, not money: it is parsed to a number and localised with Persian
+ * digits, dropping trailing zeros (so "9.0000" shows as «۹»). The money amounts on screen
+ * remain the server's exact strings; only this display label is derived.
+ */
+export function formatPercent(rate: string): string {
+  return new Intl.NumberFormat("fa-IR", {
+    maximumFractionDigits: RATE_MAX_FRACTION_DIGITS,
+  }).format(Number(rate));
+}
+
 // The backend stores money at four decimal places; scale to integer "milli-units" so
 // addition is exact (no binary-float drift) for the one place the UI must combine two
 // server amounts: the checkout preview total (goods subtotal + shipping cost) shown before
@@ -69,9 +86,32 @@ function toScaledInt(amount: string): bigint {
  */
 export function sumMoneyStrings(...amounts: string[]): string {
   const total = amounts.reduce((acc, amount) => acc + toScaledInt(amount), 0n);
-  const negative = total < 0n;
-  const digits = (negative ? -total : total).toString().padStart(MONEY_SCALE + 1, "0");
+  return scaledToMoneyString(total);
+}
+
+function scaledToMoneyString(scaled: bigint): string {
+  const negative = scaled < 0n;
+  const digits = (negative ? -scaled : scaled).toString().padStart(MONEY_SCALE + 1, "0");
   const whole = digits.slice(0, -MONEY_SCALE);
   const fraction = digits.slice(-MONEY_SCALE);
   return `${negative ? "-" : ""}${whole}.${fraction}`;
+}
+
+/**
+ * Preview the tax due on a taxable money string at a percentage rate, matching the backend.
+ *
+ * Uses the *same* exact integer arithmetic and half-up rounding as the server's tax domain
+ * service, so the previewed tax cannot drift from the amount the backend captures. This is
+ * only for the pre-placement preview (the tax on a placed order is the server's value). Both
+ * inputs are exact strings (never binary floats); a non-negative money amount is assumed
+ * (money is non-negative), so half-up is `floor((n + d/2) / d)`.
+ */
+export function taxAmountString(taxableBase: string, ratePercent: string): string {
+  const baseUnits = toScaledInt(taxableBase); // base * 10^MONEY_SCALE
+  const rateUnits = toScaledInt(ratePercent); // rate * 10^MONEY_SCALE
+  // tax * 10^SCALE = base * rate / 100 * 10^SCALE = baseUnits * rateUnits / (10^SCALE * 100).
+  const denominator = 10n ** BigInt(MONEY_SCALE) * 100n;
+  const numerator = baseUnits * rateUnits;
+  const scaledTax = (numerator + denominator / 2n) / denominator; // half-up (non-negative)
+  return scaledToMoneyString(scaledTax);
 }

@@ -6,8 +6,9 @@ force, so a later catalog price change never rewrites history. The shipping addr
 captured the same way -- copied from the owner's address book at placement, not
 referenced by id, so a later edit or deletion of that saved address never rewrites a
 placed order's history either. The aggregate owns two invariants -- every line is in
-the order's currency, and the stated total equals the sum of the line totals -- and the
-lifecycle state machine that governs which status changes are legal.
+the order's currency, and the stated total equals the sum of the line totals plus the
+captured shipping cost and tax -- and the lifecycle state machine that governs which
+status changes are legal.
 
 Pure Python -- no Django, no DRF, no ORM.
 """
@@ -26,6 +27,7 @@ from src.domain.order.exceptions import (
 )
 from src.domain.order.value_objects import (
     CapturedShipping,
+    CapturedTax,
     ChannelRef,
     Money,
     OrderNumber,
@@ -83,9 +85,11 @@ class Order:
     user, never from a client-supplied id, so cross-user access is impossible.
 
     ``shipping`` is the captured delivery method and its cost (``None`` for an order with
-    no shipping charge, e.g. a manual/pre-invoice order). The stated ``total`` is the grand
-    total -- the sum of the line totals *plus* the shipping cost -- so the aggregate owns the
-    money invariant across both the goods and the delivery charge.
+    no shipping charge, e.g. a manual/pre-invoice order). ``tax`` is the captured tax rate and
+    amount (``None`` for an order in a channel that levies no tax, and for orders that predate
+    tax). The stated ``total`` is the grand total -- the sum of the line totals *plus* the
+    shipping cost *plus* the tax amount -- so the aggregate owns the money invariant across the
+    goods, the delivery charge, and the tax.
     """
 
     number: OrderNumber
@@ -98,6 +102,7 @@ class Order:
     placed_at: datetime
     shipping_address: ShippingAddress
     shipping: CapturedShipping | None = None
+    tax: CapturedTax | None = None
     id: int | None = field(default=None)
 
     def __post_init__(self) -> None:
@@ -120,10 +125,16 @@ class Order:
                     f"!= order currency {self.currency!r}"
                 )
             expected = expected.add(self.shipping.cost)
+        if self.tax is not None:
+            if self.tax.amount.currency != self.currency:
+                raise OrderCurrencyMismatchError(
+                    f"tax currency {self.tax.amount.currency!r} != order currency {self.currency!r}"
+                )
+            expected = expected.add(self.tax.amount)
         if self.total.currency != self.currency or self.total.amount != expected.amount:
             raise OrderTotalMismatchError(
                 f"order total {self.total.amount} {self.total.currency} "
-                f"!= lines + shipping {expected.amount} {expected.currency}"
+                f"!= lines + shipping + tax {expected.amount} {expected.currency}"
             )
 
     def _sum_lines(self) -> Money:
@@ -147,6 +158,11 @@ class Order:
     def shipping_cost(self) -> Money:
         """The captured shipping cost, or zero in the order currency if none was charged."""
         return self.shipping.cost if self.shipping is not None else Money.zero(self.currency)
+
+    @property
+    def tax_amount(self) -> Money:
+        """The captured tax amount, or zero in the order currency if the order is untaxed."""
+        return self.tax.amount if self.tax is not None else Money.zero(self.currency)
 
     def transition_to(self, target: OrderStatus) -> Order:
         """Return a copy of the order in ``target`` status, or raise if illegal.

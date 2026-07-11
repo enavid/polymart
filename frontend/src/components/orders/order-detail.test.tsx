@@ -63,6 +63,8 @@ function order(overrides: Record<string, unknown> = {}) {
     shipping_cost: "50000.0000",
     shipping_method: "standard",
     shipping_method_name: "پست پیشتاز",
+    tax: null,
+    tax_rate: null,
     total: "290000.0000",
     placed_at: "2026-07-02T12:00:00Z",
     items: [
@@ -103,6 +105,22 @@ describe("OrderDetail", () => {
     expect(screen.getByText("پست پیشتاز", { exact: false })).toBeInTheDocument();
     // 290000 IRR grand total -> 29000 Toman.
     expect(screen.getByText("۲۹٬۰۰۰ تومان")).toBeInTheDocument();
+    // An untaxed order shows no tax line.
+    expect(screen.queryByTestId("order-tax")).not.toBeInTheDocument();
+  });
+
+  it("shows the captured tax line for a taxed order", async () => {
+    authed();
+    // Goods 240000 + shipping 50000 = 290000 base; 9% tax 26100; grand total 316100.
+    const taxed = order({ tax: "26100.0000", tax_rate: "9.0000", total: "316100.0000" });
+    server.use(http.get(`*/orders/${NUMBER}/`, () => HttpResponse.json(taxed)));
+
+    renderWithProviders(<OrderDetail number={NUMBER} />);
+
+    const tax = await screen.findByTestId("order-tax");
+    // 26100 IRR -> 2610 Toman; grand total 316100 IRR -> 31610 Toman (server values).
+    expect(tax).toHaveTextContent("۲٬۶۱۰");
+    expect(screen.getByText("۳۱٬۶۱۰ تومان")).toBeInTheDocument();
   });
 
   it("shows the payment method and status block", async () => {

@@ -5,6 +5,7 @@ from __future__ import annotations
 from src.domain.order.entities import Order, OrderLine
 from src.domain.order.value_objects import (
     CapturedShipping,
+    CapturedTax,
     ChannelRef,
     Money,
     OrderNumber,
@@ -53,6 +54,22 @@ def _captured_shipping_to_domain(model: OrderModel, currency: str) -> CapturedSh
     )
 
 
+def _captured_tax_to_domain(model: OrderModel, currency: str) -> CapturedTax | None:
+    """Rebuild the captured tax, or ``None`` if the order was placed in an untaxed channel.
+
+    A NULL ``tax_rate`` (the backfill value for orders that predate tax, and the value orders
+    in an untaxed channel carry) means no tax was captured -- the aggregate reads that as
+    ``tax=None`` and its total is the pre-tax amount. A stored rate of 0 is distinct: it
+    rebuilds a captured 0-amount tax line.
+    """
+    if model.tax_rate is None:
+        return None
+    return CapturedTax(
+        rate=model.tax_rate,
+        amount=Money(amount=model.tax_amount, currency=currency),
+    )
+
+
 def _shipping_address_to_domain(model: OrderModel) -> ShippingAddress:
     return ShippingAddress(
         recipient_name=model.shipping_recipient_name,
@@ -84,5 +101,6 @@ def order_to_domain(model: OrderModel) -> Order:
         placed_at=model.placed_at,
         shipping_address=_shipping_address_to_domain(model),
         shipping=_captured_shipping_to_domain(model, currency),
+        tax=_captured_tax_to_domain(model, currency),
         id=model.pk,
     )

@@ -138,10 +138,12 @@ test.describe.serial("shopper cart & checkout", () => {
     await expect(page.getByText(orders.statusPending).first()).toBeVisible();
     // The order shows the captured breakdown: goods subtotal 150,000, standard shipping
     // 30,000 (the Tehran-zone rate -- the seeded home address is in تهران, a discounted zone),
-    // and a grand total of 180,000 (all the server's values, rendered by the UI).
+    // 9% VAT of 16,200 on the 180,000 pre-tax total, and a grand total of 196,200 (all the
+    // server's values, rendered by the UI -- never recomputed on the client).
     await expect(page.getByText(money(150000)).first()).toBeVisible();
     await expect(page.getByText(money(30000)).first()).toBeVisible();
-    await expect(page.getByText(money(180000)).first()).toBeVisible();
+    await expect(page.getByTestId("order-tax")).toHaveText(money(16200));
+    await expect(page.getByText(money(196200)).first()).toBeVisible();
     await expect(page.getByRole("heading", { name: orders.shippingAddress })).toBeVisible();
     await expect(page.getByText(SEED)).toBeVisible();
 

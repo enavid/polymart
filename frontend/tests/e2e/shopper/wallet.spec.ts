@@ -107,15 +107,17 @@ test.describe.serial("wallet & refund-to-wallet", () => {
     await page.reload();
     await expect(page.getByText(payment.statusRefunded)).toBeVisible();
 
-    // 5) The wallet page shows the credited balance (150,000 IRR -> Toman) and the entry.
+    // 5) The wallet page shows the credited balance and the entry. The refunded order was
+    //    DR-250 (150,000) with free shipping plus 9% VAT (13,500) = 163,500 captured/refunded.
     await page.goto("/account/wallet");
-    await expect(page.getByTestId("wallet-balance")).toHaveText(money(150000));
+    await expect(page.getByTestId("wallet-balance")).toHaveText(money(163500));
     // Scope to the statement cell so the reason word cannot collide with page chrome.
     await expect(page.getByRole("cell", { name: wallet.reasonRefund })).toBeVisible();
   });
 
   test("the shopper pays a new order from the wallet and sees the debit", async ({ page }) => {
-    // The wallet holds 150,000 from the refund in the previous test; spend it on a new order.
+    // The wallet holds 163,500 from the refund in the previous test; spend it on a new order
+    // (an identical DR-250 with free shipping + 9% VAT = 163,500, so the balance covers it).
     await addFromPdp(page, PRODUCTS.darkRoast.code, dr250.sku);
     const orderNumber = await payWithWallet(page);
 
@@ -128,7 +130,7 @@ test.describe.serial("wallet & refund-to-wallet", () => {
     expect(paid.method).toBe("wallet");
     expect(paid.status).toBe("captured");
 
-    // The wallet is now empty and shows the debit entry (150,000 spent -> 0 balance).
+    // The wallet is now empty and shows the debit entry (163,500 spent -> 0 balance).
     await page.goto("/account/wallet");
     await expect(page.getByTestId("wallet-balance")).toHaveText(money(0));
     // Scope to the statement cell -- the reason word must not collide with page chrome.

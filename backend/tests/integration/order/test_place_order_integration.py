@@ -49,6 +49,7 @@ from src.infrastructure.channel.repositories import DjangoChannelRepository
 from src.infrastructure.order.clock import SystemClock
 from src.infrastructure.order.repositories import (
     ConfiguredShippingRateReader,
+    ConfiguredTaxCalculator,
     DjangoAddressReader,
     DjangoCartForCheckout,
     DjangoChannelReader,
@@ -132,6 +133,7 @@ def _place_order(numbers: OrderNumberGenerator | None = None) -> PlaceOrder:
         channels=DjangoChannelReader(),
         addresses=DjangoAddressReader(),
         shipping=ConfiguredShippingRateReader(),
+        tax=ConfiguredTaxCalculator(),
         inventory=DjangoInventory(),
         orders=DjangoOrderRepository(),
         numbers=numbers or _FixedNumbers(),
@@ -180,6 +182,44 @@ class TestCheckoutHappyPath:
         assert AuditLogModel.objects.filter(
             action="order.placed", resource_id=order.number.value
         ).exists()
+
+
+class TestCheckoutTax:
+    def test_captures_and_reloads_tax_on_subtotal_plus_shipping(self, settings) -> None:  # type: ignore[no-untyped-def]
+        # A taxed channel: tax applies to goods + shipping, is captured onto the order, and
+        # survives the round-trip through the ORM (the reloaded order carries the same tax).
+        settings.TAX_RATES = {"ir-main": "9"}
+        _seed_catalog()
+        user = get_user_model().objects.create_user(phone_number="09120000001", password="pw")
+        owner = _owner(user)
+        seed_address(user.pk)
+        _add_to_cart(owner, "HB-250", 2)
+
+        order = _place_order().execute(_checkout_command(owner))
+
+        # Goods 240000 + shipping 50000 = 290000 base; 9% tax = 26100; grand total 316100.
+        assert order.tax is not None
+        assert order.tax.rate == Decimal("9")
+        assert order.tax.amount.amount == Decimal("26100")
+        assert order.total.amount == Decimal("316100")
+        reloaded = DjangoOrderRepository().get_for_owner(owner, order.number.value)
+        assert reloaded.tax is not None
+        assert reloaded.tax.rate == Decimal("9")
+        assert reloaded.tax.amount.amount == Decimal("26100")
+        assert reloaded.total.amount == Decimal("316100")
+
+    def test_an_untaxed_channel_captures_no_tax(self, settings) -> None:  # type: ignore[no-untyped-def]
+        settings.TAX_RATES = {}
+        _seed_catalog()
+        user = get_user_model().objects.create_user(phone_number="09120000002", password="pw")
+        owner = _owner(user)
+        seed_address(user.pk)
+        _add_to_cart(owner, "HB-250", 1)
+
+        order = _place_order().execute(_checkout_command(owner))
+
+        assert order.tax is None
+        assert DjangoOrderRepository().get_for_owner(owner, order.number.value).tax is None
 
 
 class TestGuestCheckoutIntegration:

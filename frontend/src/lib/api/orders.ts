@@ -41,12 +41,15 @@ export interface Order {
   channel: string;
   currency: string;
   status: OrderStatus;
-  /** Exact string amounts. `total` is the grand total = `subtotal` + `shipping_cost`. */
+  /** Exact string amounts. `total` is the grand total = `subtotal` + `shipping_cost` + `tax`. */
   subtotal: string;
   shipping_cost: string;
   /** The captured shipping method, or null for an order with no delivery charge. */
   shipping_method: string | null;
   shipping_method_name: string | null;
+  /** The captured tax amount and percentage rate, or null for an order in an untaxed channel. */
+  tax: string | null;
+  tax_rate: string | null;
   total: string;
   placed_at: string;
   items: OrderLine[];
@@ -116,12 +119,11 @@ export interface ManualOrderInput {
 }
 
 /**
- * A pre-invoice (proforma): the full order plus a tax placeholder. Tax is not computed
- * until a later phase, so `tax` is null and `grand_total` equals the order total for now.
+ * A pre-invoice (proforma): the full order (which carries `tax`/`tax_rate`) plus a document
+ * marker and a `grand_total` equal to the order total (which already includes the tax).
  */
 export interface PreInvoice extends Order {
   document_type: "pre_invoice";
-  tax: string | null;
   grand_total: string;
 }
 

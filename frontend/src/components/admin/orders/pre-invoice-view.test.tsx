@@ -14,6 +14,12 @@ const INVOICE = {
   channel: "ir-main",
   currency: "IRR",
   status: "pending",
+  subtotal: "390000.0000",
+  shipping_cost: "0.0000",
+  shipping_method: null,
+  shipping_method_name: null,
+  tax: null,
+  tax_rate: null,
   total: "390000.0000",
   placed_at: "2026-07-03T09:00:00Z",
   items: [
@@ -30,8 +36,16 @@ const INVOICE = {
     line2: null,
   },
   document_type: "pre_invoice",
-  tax: null,
   grand_total: "390000.0000",
+};
+
+// A taxed pre-invoice: goods 390,000 + 9% tax 35,100 = grand total 425,100 (all server values).
+const TAXED_INVOICE = {
+  ...INVOICE,
+  tax: "35100.0000",
+  tax_rate: "9.0000",
+  total: "425100.0000",
+  grand_total: "425100.0000",
 };
 
 const server = setupServer();
@@ -50,10 +64,24 @@ describe("PreInvoiceView", () => {
     // ledger currency), never recomputed: the 390,000 IRR total and grand total
     // render as 39,000 Toman with Persian digits + grouping.
     expect(screen.getAllByText(/۳۹[٬,]۰۰۰/).length).toBeGreaterThanOrEqual(2);
-    // The tax placeholder is shown (null tax -> "computed later" note).
+    // An untaxed channel: the tax placeholder note is shown (null tax).
     expect(screen.getByText(pre.taxPending)).toBeInTheDocument();
     expect(screen.getByText("HB-250")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: pre.print })).toBeInTheDocument();
+  });
+
+  it("renders the captured tax and a grand total including it", async () => {
+    server.use(
+      http.get("*/orders/ORD-MANUAL01/pre-invoice/", () => HttpResponse.json(TAXED_INVOICE)),
+    );
+
+    renderWithProviders(<PreInvoiceView number="ORD-MANUAL01" />);
+
+    expect(await screen.findByText("ORD-MANUAL01")).toBeInTheDocument();
+    // Tax 35,100 IRR -> 3,510 Toman, and the grand total 425,100 IRR -> 42,510 Toman, both
+    // the exact server values (never recomputed on the client).
+    expect(screen.getByText(/۳[٬,]۵۱۰/)).toBeInTheDocument();
+    expect(screen.getByText(/۴۲[٬,]۵۱۰/)).toBeInTheDocument();
   });
 
   it("shows an error state when the pre-invoice cannot be loaded", async () => {

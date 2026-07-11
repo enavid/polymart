@@ -17,6 +17,7 @@ from src.domain.order.exceptions import (
 )
 from src.domain.order.value_objects import (
     CapturedShipping,
+    CapturedTax,
     ChannelRef,
     Money,
     OrderNumber,
@@ -60,12 +61,15 @@ def _order(
     lines: tuple[OrderLine, ...],
     status: OrderStatus = OrderStatus.PENDING,
     shipping: CapturedShipping | None = None,
+    tax: CapturedTax | None = None,
 ) -> Order:
     total = Money.zero("IRR")
     for line in lines:
         total = total.add(line.line_total)
     if shipping is not None:
         total = total.add(shipping.cost)
+    if tax is not None:
+        total = total.add(tax.amount)
     return Order(
         number=OrderNumber("ORD-ABC123"),
         owner="7",
@@ -77,6 +81,7 @@ def _order(
         placed_at=datetime(2026, 7, 2, tzinfo=UTC),
         shipping_address=_shipping_address(),
         shipping=shipping,
+        tax=tax,
     )
 
 
@@ -84,6 +89,10 @@ def _shipping(amount: str = "50000.00", currency: str = "IRR") -> CapturedShippi
     return CapturedShipping(
         method_code="standard", method_name="Standard post", cost=_money(amount, currency)
     )
+
+
+def _tax(rate: str = "9", amount: str = "15300.00", currency: str = "IRR") -> CapturedTax:
+    return CapturedTax(rate=Decimal(rate), amount=_money(amount, currency))
 
 
 class TestOrderLine:
@@ -228,6 +237,79 @@ class TestOrderShipping:
         order = _order((_line("HB-250", 1, "120000.00"),), shipping=_shipping("50000.00"))
         moved = order.transition_to(OrderStatus.PAID)
         assert moved.shipping == order.shipping
+
+
+class TestOrderTax:
+    def test_total_includes_the_tax_amount(self) -> None:
+        # subtotal 240000 + shipping 50000 = 290000 base; 9% tax = 26100 -> total 316100.
+        order = _order(
+            (_line("HB-250", 2, "120000.00"),),
+            shipping=_shipping("50000.00"),
+            tax=_tax("9", "26100.00"),
+        )
+        assert order.items_subtotal.amount == Decimal("240000.00")
+        assert order.shipping_cost.amount == Decimal("50000.00")
+        assert order.tax_amount.amount == Decimal("26100.00")
+        assert order.total.amount == Decimal("316100.00")
+
+    def test_tax_on_goods_only_when_no_shipping(self) -> None:
+        # subtotal 120000, no shipping; 9% tax = 10800 -> total 130800.
+        order = _order((_line("HB-250", 1, "120000.00"),), tax=_tax("9", "10800.00"))
+        assert order.shipping is None
+        assert order.tax_amount.amount == Decimal("10800.00")
+        assert order.total.amount == Decimal("130800.00")
+
+    def test_no_tax_reports_a_zero_amount(self) -> None:
+        order = _order((_line("HB-250", 1, "120000.00"),))
+        assert order.tax is None
+        assert order.tax_amount.amount == Decimal("0")
+
+    def test_a_zero_amount_tax_line_is_valid(self) -> None:
+        order = _order((_line("HB-250", 1, "120000.00"),), tax=_tax("0", "0"))
+        assert order.tax is not None
+        assert order.tax.rate == Decimal("0")
+        assert order.total.amount == Decimal("120000.00")
+
+    def test_rejects_a_total_that_omits_the_tax(self) -> None:
+        line = _line("HB-250", 1, "120000.00")
+        with pytest.raises(OrderTotalMismatchError):
+            Order(
+                number=OrderNumber("ORD-ABC123"),
+                owner="7",
+                channel=ChannelRef("ir-main"),
+                currency="IRR",
+                lines=(line,),
+                total=_money("120000.00"),  # subtotal only -- tax not added
+                status=OrderStatus.PENDING,
+                placed_at=datetime(2026, 7, 2, tzinfo=UTC),
+                shipping_address=_shipping_address(),
+                tax=_tax("9", "10800.00"),
+            )
+
+    def test_rejects_tax_in_another_currency(self) -> None:
+        line = _line("HB-250", 1, "120000.00")
+        with pytest.raises(OrderCurrencyMismatchError):
+            Order(
+                number=OrderNumber("ORD-ABC123"),
+                owner="7",
+                channel=ChannelRef("ir-main"),
+                currency="IRR",
+                lines=(line,),
+                total=_money("130800.00"),
+                status=OrderStatus.PENDING,
+                placed_at=datetime(2026, 7, 2, tzinfo=UTC),
+                shipping_address=_shipping_address(),
+                tax=_tax("9", "10800.00", "USD"),
+            )
+
+    def test_total_includes_both_shipping_and_tax_together(self) -> None:
+        order = _order((_line("HB-250", 1, "120000.00"),), shipping=_shipping("50000.00"))
+        assert order.total.amount == Decimal("170000.00")
+
+    def test_a_transition_preserves_the_captured_tax(self) -> None:
+        order = _order((_line("HB-250", 1, "120000.00"),), tax=_tax("9", "10800.00"))
+        moved = order.transition_to(OrderStatus.PAID)
+        assert moved.tax == order.tax
 
 
 class TestStateMachine:

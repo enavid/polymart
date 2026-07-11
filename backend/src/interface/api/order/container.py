@@ -18,6 +18,7 @@ from src.infrastructure.order.clock import SystemClock
 from src.infrastructure.order.number_generator import SecureOrderNumberGenerator
 from src.infrastructure.order.repositories import (
     ConfiguredShippingRateReader,
+    ConfiguredTaxCalculator,
     DjangoAddressReader,
     DjangoCartForCheckout,
     DjangoChannelReader,
@@ -38,6 +39,7 @@ def build_place_order() -> PlaceOrder:
         channels=DjangoChannelReader(),
         addresses=DjangoAddressReader(),
         shipping=ConfiguredShippingRateReader(),
+        tax=ConfiguredTaxCalculator(),
         inventory=DjangoInventory(),
         orders=DjangoOrderRepository(),
         numbers=SecureOrderNumberGenerator(),
@@ -69,6 +71,7 @@ def build_create_manual_order() -> CreateManualOrder:
         unit_of_work=DjangoUnitOfWork(),
         pricing=DjangoPricingReader(),
         channels=DjangoChannelReader(),
+        tax=ConfiguredTaxCalculator(),
         inventory=DjangoInventory(),
         orders=DjangoOrderRepository(),
         numbers=SecureOrderNumberGenerator(),

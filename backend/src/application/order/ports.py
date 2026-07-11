@@ -23,6 +23,7 @@ from abc import ABC, abstractmethod
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from datetime import datetime
+from decimal import Decimal
 
 from src.domain.order.entities import Order
 from src.domain.order.value_objects import Money, OrderNumber, OrderStatus
@@ -146,6 +147,38 @@ class ShippingRateReader(ABC):
         for the zone the province falls into (falling back to the method's default rate). The
         ``currency`` is the resolved order currency; an adapter returns ``None`` (rather than a
         mismatched quote) if a configured method's currency does not match it.
+        """
+
+
+@dataclass(frozen=True)
+class TaxQuote:
+    """The tax computed for a taxable amount, flattened for checkout capture.
+
+    Carries the applied ``rate`` (a percentage, for display on the order) and the computed
+    ``amount`` -- everything the order context needs to capture tax onto the order, with no
+    tax-domain type leaking across the boundary.
+    """
+
+    rate: Decimal
+    amount: Money
+
+
+class TaxCalculator(ABC):
+    """Narrow boundary onto the tax context: compute the tax due at checkout.
+
+    The order context asks "what tax is due on this taxable amount in this channel?" and
+    captures the answer; whether the rate comes from config or a table (and how classes/zones
+    are matched later) is invisible here. The tax *amount* is computed by the tax context (with
+    its rounding rule), never recomputed by the order context.
+    """
+
+    @abstractmethod
+    def calculate(self, *, channel: str, taxable: Money) -> TaxQuote | None:
+        """Return the tax due on ``taxable`` in the channel, or ``None`` if the channel is untaxed.
+
+        The ``taxable`` amount is the base the tax applies to (goods subtotal plus shipping) in
+        the resolved order currency. ``None`` means the channel levies no tax, so the order
+        captures no tax line and its total is the pre-tax amount.
         """
 
 

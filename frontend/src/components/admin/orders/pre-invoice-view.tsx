@@ -107,13 +107,21 @@ export function PreInvoiceView({ number }: PreInvoiceViewProps) {
 
       <div className="flex flex-col gap-2 border-t border-border pt-4 text-sm">
         <div className="flex items-center justify-between">
-          <span className="text-muted-foreground">{tOrders("total")}</span>
-          <span>{formatMoneyString(invoice.total, invoice.currency)}</span>
+          <span className="text-muted-foreground">{tOrders("subtotal")}</span>
+          <span>{formatMoneyString(invoice.subtotal, invoice.currency)}</span>
+        </div>
+        <div className="flex items-center justify-between">
+          <span className="text-muted-foreground">{tOrders("shipping")}</span>
+          <span>{formatMoneyString(invoice.shipping_cost, invoice.currency)}</span>
         </div>
         <div className="flex items-center justify-between">
           <span className="text-muted-foreground">{t("tax")}</span>
-          {/* Tax is computed in a later phase; the server sends null, shown as a note. */}
-          <span className="text-muted-foreground">{invoice.tax ?? t("taxPending")}</span>
+          {/* Tax is captured on the order (null when the channel is untaxed, shown as a note). */}
+          <span className={invoice.tax ? undefined : "text-muted-foreground"}>
+            {invoice.tax
+              ? formatMoneyString(invoice.tax, invoice.currency)
+              : t("taxPending")}
+          </span>
         </div>
         <div className="flex items-center justify-between border-t border-border pt-2">
           <span className="font-medium">{t("grandTotal")}</span>

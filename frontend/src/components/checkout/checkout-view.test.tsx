@@ -39,6 +39,7 @@ function authed() {
       HttpResponse.json({ balance: "0", currency: "IRR", transactions: [] }),
     ),
     shippingHandler(),
+    taxHandler(),
   );
 }
 
@@ -108,6 +109,12 @@ function shippingHandler() {
   );
 }
 
+/** The channel's tax rate. Defaults to untaxed (null) so preview-total assertions stay focused
+ * on goods + shipping; the taxed test overrides with a real rate. */
+function taxHandler(rate: string | null = null) {
+  return http.get("*/tax/rate/", () => HttpResponse.json({ channel: "ir-main", rate }));
+}
+
 /** Wait for the (preselected) shipping method to load, then place the order. */
 async function placeOrderNow() {
   const button = await screen.findByRole("button", { name: checkout.placeOrder });
@@ -146,6 +153,7 @@ describe("CheckoutView", () => {
     let placedBody: unknown;
     server.use(
       shippingHandler(),
+      taxHandler(),
       http.get("*/cart/", () => HttpResponse.json(cartWithLine)),
       http.post("*/orders/", async ({ request }) => {
         placedBody = await request.json();
@@ -517,6 +525,24 @@ describe("CheckoutView", () => {
     // Switching to "express" (120000) re-prices the total to 360000 (36000 Toman).
     await userEvent.click(screen.getByLabelText("پیک اکسپرس", { exact: false }));
     await waitFor(() => expect(total).toHaveTextContent("۳۶٬۰۰۰"));
+  });
+
+  it("adds the previewed tax to the total for a taxed channel", async () => {
+    authed();
+    server.use(
+      http.get("*/cart/", () => HttpResponse.json(cartWithLine)),
+      http.get("*/addresses/", () => HttpResponse.json([savedAddress])),
+      taxHandler("9"), // 9% VAT on (goods 240000 + shipping 50000) = 26100.
+    );
+
+    renderWithProviders(<CheckoutView />);
+    await screen.findByText("Sara Ahmadi");
+    await userEvent.click(screen.getByRole("button", { name: checkout.continue }));
+
+    const tax = await screen.findByTestId("checkout-tax");
+    // 26100 IRR -> 2610 Toman; grand total 316100 IRR -> 31610 Toman (both exact server-derived).
+    await waitFor(() => expect(tax).toHaveTextContent("۲٬۶۱۰"));
+    expect(screen.getByTestId("checkout-total")).toHaveTextContent("۳۱٬۶۱۰");
   });
 
   it("requests methods for the address province and shows the zoned price", async () => {

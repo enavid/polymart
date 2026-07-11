@@ -19,6 +19,7 @@ from enum import StrEnum
 
 from src.domain.order.exceptions import (
     InvalidCapturedShippingError,
+    InvalidCapturedTaxError,
     InvalidChannelReferenceError,
     InvalidMoneyError,
     InvalidOrderNumberError,
@@ -62,6 +63,10 @@ _ADDRESS_LINE_MAX_LENGTH = 255
 # presence/length, not the shipping context's own code format.
 _SHIPPING_METHOD_CODE_MAX_LENGTH = 32
 _SHIPPING_METHOD_NAME_MAX_LENGTH = 120
+# The captured tax rate is a percentage snapshot copied at placement; like the shipping
+# method it is a snapshot, so the order context checks only that it is a sane percentage
+# (0..100), not the tax context's own precision rules.
+_TAX_RATE_MAX = Decimal("100")
 
 
 @dataclass(frozen=True)
@@ -274,3 +279,25 @@ class CapturedShipping:
             raise InvalidCapturedShippingError(f"method_name: {self.method_name!r}")
         object.__setattr__(self, "method_code", code)
         object.__setattr__(self, "method_name", name)
+
+
+@dataclass(frozen=True)
+class CapturedTax:
+    """The tax rate and amount captured onto an order at checkout.
+
+    Like a line's unit price, this is a *snapshot*: the channel's tax rate and the amount it
+    produced at placement time are copied onto the order, so a later change to the channel's
+    configured rate never rewrites a placed order's history. ``rate`` is the percentage shown
+    on the order (e.g. ``Decimal("9")`` for 9%); ``amount`` is the money added to the total.
+    The amount is *computed by the tax context* (with its rounding rule) and captured here --
+    the order context does not recompute it from the rate, so the two can never drift.
+    """
+
+    rate: Decimal
+    amount: Money
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.rate, Decimal) or not self.rate.is_finite():
+            raise InvalidCapturedTaxError(f"rate must be a finite Decimal: {self.rate!r}")
+        if self.rate < 0 or self.rate > _TAX_RATE_MAX:
+            raise InvalidCapturedTaxError(f"rate out of range [0, 100]: {self.rate!r}")

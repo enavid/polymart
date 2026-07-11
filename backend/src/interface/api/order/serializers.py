@@ -115,9 +115,10 @@ class OrderLineSerializer(serializers.Serializer):
 class OrderSerializer(serializers.Serializer):
     """Response projection of a placed order.
 
-    ``total`` is the grand total (goods + shipping); ``subtotal`` is the goods total and
-    ``shipping_cost`` the delivery charge (money as exact strings). ``shipping_method`` and
-    ``shipping_method_name`` are ``null`` for an order with no delivery charge.
+    ``total`` is the grand total (goods + shipping + tax); ``subtotal`` is the goods total,
+    ``shipping_cost`` the delivery charge, and ``tax`` the tax amount (money as exact strings).
+    ``shipping_method``/``shipping_method_name`` are ``null`` for an order with no delivery
+    charge; ``tax``/``tax_rate`` are ``null`` for an order in an untaxed channel.
     """
 
     number = serializers.CharField()
@@ -128,6 +129,8 @@ class OrderSerializer(serializers.Serializer):
     shipping_cost = serializers.CharField()
     shipping_method = serializers.CharField(allow_null=True)
     shipping_method_name = serializers.CharField(allow_null=True)
+    tax = serializers.CharField(allow_null=True)
+    tax_rate = serializers.CharField(allow_null=True)
     total = serializers.CharField()
     placed_at = serializers.DateTimeField()
     items = OrderLineSerializer(many=True)
@@ -146,11 +149,9 @@ class OrderPageSerializer(serializers.Serializer):
 class PreInvoiceSerializer(OrderSerializer):
     """Response projection of an order's pre-invoice (proforma).
 
-    The full order plus a ``document_type`` marker and a ``tax`` placeholder: tax is not
-    computed until a later phase, so it is ``null`` and ``grand_total`` equals the order
-    total for now (the field exists so the printable document is forward-compatible).
+    The full order (which already carries ``tax``/``tax_rate``) plus a ``document_type`` marker
+    and a ``grand_total`` (equal to the order total, which includes the tax).
     """
 
     document_type = serializers.CharField()
-    tax = serializers.CharField(allow_null=True)
     grand_total = serializers.CharField()

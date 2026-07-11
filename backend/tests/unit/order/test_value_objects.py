@@ -8,6 +8,7 @@ import pytest
 
 from src.domain.order.exceptions import (
     InvalidCapturedShippingError,
+    InvalidCapturedTaxError,
     InvalidChannelReferenceError,
     InvalidMoneyError,
     InvalidOrderNumberError,
@@ -17,6 +18,7 @@ from src.domain.order.exceptions import (
 )
 from src.domain.order.value_objects import (
     CapturedShipping,
+    CapturedTax,
     ChannelRef,
     Money,
     OrderNumber,
@@ -226,3 +228,41 @@ class TestCapturedShipping:
     def test_rejects_an_over_long_code(self) -> None:
         with pytest.raises(InvalidCapturedShippingError):
             self._captured(method_code="x" * 33)
+
+
+class TestCapturedTax:
+    def _captured(self, **overrides: object) -> CapturedTax:
+        kwargs: dict[str, object] = {
+            "rate": Decimal("9"),
+            "amount": Money(amount=Decimal("10800.00"), currency="IRR"),
+        }
+        kwargs.update(overrides)
+        return CapturedTax(**kwargs)  # type: ignore[arg-type]
+
+    def test_builds_a_valid_capture(self) -> None:
+        captured = self._captured()
+        assert captured.rate == Decimal("9")
+        assert captured.amount.amount == Decimal("10800.00")
+
+    def test_a_zero_rate_zero_amount_capture_is_valid(self) -> None:
+        captured = self._captured(rate=Decimal("0"), amount=Money(Decimal("0"), "IRR"))
+        assert captured.rate == Decimal("0")
+
+    def test_rejects_a_negative_rate(self) -> None:
+        with pytest.raises(InvalidCapturedTaxError):
+            self._captured(rate=Decimal("-1"))
+
+    def test_rejects_a_rate_above_one_hundred(self) -> None:
+        with pytest.raises(InvalidCapturedTaxError):
+            self._captured(rate=Decimal("100.01"))
+
+    def test_rejects_a_non_finite_rate(self) -> None:
+        with pytest.raises(InvalidCapturedTaxError):
+            self._captured(rate=Decimal("NaN"))
+
+    def test_rejects_a_non_decimal_rate(self) -> None:
+        with pytest.raises(InvalidCapturedTaxError):
+            self._captured(rate=9)
+
+    def test_equality_is_by_value(self) -> None:
+        assert self._captured() == self._captured()

@@ -18,6 +18,7 @@ api_v1_patterns = [
     path("", include("src.interface.api.payment.urls")),
     path("", include("src.interface.api.wallet.urls")),
     path("", include("src.interface.api.shipping.urls")),
+    path("", include("src.interface.api.tax.urls")),
 ]
 
 urlpatterns = [

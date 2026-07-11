@@ -54,9 +54,11 @@ test("staff create a manual order and reach its printable pre-invoice", async ({
   await expect(page).toHaveURL(/\/manage\/orders\/ORD-[A-Z0-9]+\/pre-invoice$/);
   await expect(page.getByRole("heading", { name: pre.title })).toBeVisible();
   await expect(page.getByText(hb250.sku)).toBeVisible();
+  // Subtotal 240,000; 9% VAT of 21,600; grand total 261,600 (all exact server values).
   await expect(page.getByText(money(240000)).first()).toBeVisible();
-  // Tax is a placeholder (computed in a later phase) and a Print control is offered.
-  await expect(page.getByText(pre.taxPending)).toBeVisible();
+  await expect(page.getByText(money(21600)).first()).toBeVisible();
+  await expect(page.getByText(money(261600)).first()).toBeVisible();
+  // A Print control is offered.
   await expect(page.getByRole("button", { name: pre.print })).toBeVisible();
 
   // Cleanup: the staff member owns this order, so cancel it (restocks) to keep the

@@ -38,6 +38,10 @@ _ADDRESS_LINE_MAX_LENGTH = 255
 # Captured shipping-method code/name lengths mirror the shipping context's stored precision.
 _SHIPPING_METHOD_CODE_MAX_LENGTH = 32
 _SHIPPING_METHOD_NAME_MAX_LENGTH = 120
+# A captured tax rate is a percentage (0..100) with up to 4 decimal places: 100.0000 needs
+# 3 + 4 = 7 significant digits.
+_TAX_RATE_MAX_DIGITS = 7
+_TAX_RATE_DECIMAL_PLACES = 4
 
 
 class OrderModel(models.Model):
@@ -80,6 +84,19 @@ class OrderModel(models.Model):
     )
     shipping_method_name = models.CharField(
         max_length=_SHIPPING_METHOD_NAME_MAX_LENGTH, blank=True, default=""
+    )
+    # Captured tax, at placement like a line's price: a later change to the channel's rate never
+    # rewrites a placed order. ``tax_rate`` is NULL (never 0) for an order in an untaxed channel
+    # and for orders that predate tax; the mapper reads NULL as "no captured tax" (total
+    # unchanged). A configured rate of 0 is distinct from NULL -- it captures a 0-amount tax line.
+    tax_amount = models.DecimalField(
+        max_digits=_AMOUNT_MAX_DIGITS, decimal_places=_AMOUNT_DECIMAL_PLACES, default=0
+    )
+    tax_rate = models.DecimalField(
+        max_digits=_TAX_RATE_MAX_DIGITS,
+        decimal_places=_TAX_RATE_DECIMAL_PLACES,
+        null=True,
+        blank=True,
     )
     total = models.DecimalField(
         max_digits=_AMOUNT_MAX_DIGITS, decimal_places=_AMOUNT_DECIMAL_PLACES

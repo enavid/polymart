@@ -160,6 +160,16 @@ SHIPPING_METHODS = env.json("SHIPPING_METHODS", default={})
 # Empty by default (no zones -> every destination pays the default rate).
 SHIPPING_ZONES = env.json("SHIPPING_ZONES", default={})
 
+# --- Tax (per-channel VAT rate) ---------------------------------------------
+# The tax (value-added) rate each channel levies, keyed by channel slug. The value is the
+# percentage as a string (so the exact Decimal survives), e.g. "9" for 9% VAT. Tax config in
+# this slice (a later slice moves rates to an admin model, and tax classes/zones plug in,
+# behind the same port), so it lives here like the other per-channel commerce settings:
+#   TAX_RATES = {"ir-main": "9"}
+# A channel absent from the map (or a malformed value) levies no tax. Empty by default;
+# dev/test/E2E provide a deterministic rate for ``ir-main``.
+TAX_RATES = env.json("TAX_RATES", default={})
+
 # --- Auth -------------------------------------------------------------------
 AUTHENTICATION_BACKENDS = [
     "django.contrib.auth.backends.ModelBackend",

@@ -70,26 +70,28 @@ test("guest: the shipping rate is zoned by province and re-quotes when the addre
   await page.getByRole("link", { name: cart.checkout }).click();
   await expect(page).toHaveURL(/\/checkout/);
 
-  // 2) Ship to تهران (the discounted zone): standard is quoted at 30,000, so the preview total
-  //    is 150,000 + 30,000 = 180,000 (both server values).
+  // 2) Ship to تهران (the discounted zone): standard is quoted at 30,000; with 9% VAT on the
+  //    180,000 pre-tax total (16,200), the preview total is 196,200 (all server values).
   await fillInlineShipping(page, "تهران");
   await page.locator('input[type="radio"][value="standard"]').check();
   await expect(page.getByTestId("checkout-shipping-cost")).toHaveText(money(30000));
-  await expect(page.getByTestId("checkout-total")).toHaveText(money(180000));
+  await expect(page.getByTestId("checkout-tax")).toHaveText(money(16200));
+  await expect(page.getByTestId("checkout-total")).toHaveText(money(196200));
 
   // 3) Change the address to اصفهان (outside every zone): the chooser refetches and standard
-  //    now costs the default 50,000, re-pricing the total to 200,000. This proves the rate is
-  //    re-quoted from the destination, not remembered from the first province.
+  //    now costs the default 50,000, re-pricing the pre-tax total to 200,000 and, with 9% VAT
+  //    (18,000), the grand total to 218,000. This proves the rate is re-quoted from the
+  //    destination, not remembered from the first province.
   await page.getByRole("button", { name: checkout.back }).click();
   await page.getByLabel(addresses.province).fill("اصفهان");
   await page.getByRole("button", { name: addresses.save }).click();
   await page.locator('input[type="radio"][value="standard"]').check();
   await expect(page.getByTestId("checkout-shipping-cost")).toHaveText(money(50000));
-  await expect(page.getByTestId("checkout-total")).toHaveText(money(200000));
+  await expect(page.getByTestId("checkout-total")).toHaveText(money(218000));
 
   // 4) Go back to تهران and place the order: the captured cost is the zoned 30,000, and the
-  //    order page shows the breakdown 150,000 / 30,000 / 180,000 -- the server's re-resolved
-  //    rate, never the client's.
+  //    order page shows the breakdown 150,000 / 30,000 / 16,200 tax / 196,200 -- the server's
+  //    re-resolved rate, never the client's.
   await page.getByRole("button", { name: checkout.back }).click();
   await page.getByLabel(addresses.province).fill("تهران");
   await page.getByRole("button", { name: addresses.save }).click();
@@ -100,7 +102,8 @@ test("guest: the shipping rate is zoned by province and re-quotes when the addre
   const orderNumber = page.url().split("/orders/")[1].replace(/\/$/, "");
   await expect(page.getByText(money(150000)).first()).toBeVisible();
   await expect(page.getByText(money(30000)).first()).toBeVisible();
-  await expect(page.getByText(money(180000)).first()).toBeVisible();
+  await expect(page.getByTestId("order-tax")).toHaveText(money(16200));
+  await expect(page.getByText(money(196200)).first()).toBeVisible();
 
   // 5) The server confirms the captured cost is the zoned rate (not the amount last shown for
   //    اصفهان), read back from the guest's own order.
@@ -108,7 +111,8 @@ test("guest: the shipping rate is zoned by province and re-quotes when the addre
   expect(orderRes.ok()).toBeTruthy();
   const order = await orderRes.json();
   expect(order.shipping_cost).toBe("30000.0000");
-  expect(order.total).toBe("180000.0000");
+  expect(order.tax).toBe("16200.0000");
+  expect(order.total).toBe("196200.0000");
 
   // 6) Clean up: cancel the order so the shared stock pool stays pristine for other specs.
   await page.getByRole("button", { name: orders.cancel }).click();

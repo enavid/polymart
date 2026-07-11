@@ -26,7 +26,7 @@ import {
   type Payment,
 } from "@/lib/api/payments";
 import { refundPaymentToWallet } from "@/lib/api/wallet";
-import { formatJalaliDateTime, formatMoneyString } from "@/lib/format";
+import { formatJalaliDateTime, formatMoneyString, formatPercent } from "@/lib/format";
 import { useCurrentUser } from "@/lib/hooks/use-auth";
 import { orderStatusKey } from "@/lib/orders/status";
 import { paymentMethodKey, paymentStatusKey } from "@/lib/payments/labels";
@@ -181,6 +181,14 @@ export function OrderDetail({ number }: { number: string }) {
           </dt>
           <dd>{formatMoneyString(order.shipping_cost, order.currency)}</dd>
         </div>
+        {order.tax && order.tax_rate ? (
+          <div className="flex items-center justify-between">
+            <dt className="text-muted-foreground">
+              {t("tax", { rate: formatPercent(order.tax_rate) })}
+            </dt>
+            <dd data-testid="order-tax">{formatMoneyString(order.tax, order.currency)}</dd>
+          </div>
+        ) : null}
         <div className="flex items-center justify-between border-t border-border pt-2">
           <dt className="font-medium">{t("total")}</dt>
           <dd className="text-lg font-semibold">

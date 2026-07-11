@@ -58,3 +58,21 @@ class TestOrderTotal:
         shipping = Money(amount=Decimal("50000.00"), currency="USD")
         with pytest.raises(InvalidMoneyError):
             order_total(lines, "IRR", shipping)
+
+    def test_adds_shipping_and_tax_to_the_grand_total(self) -> None:
+        lines = build_order_lines([_item("HB-250", 2, "120000.00")])
+        shipping = Money(amount=Decimal("50000.00"), currency="IRR")
+        tax = Money(amount=Decimal("26100.00"), currency="IRR")
+        # 240000 goods + 50000 shipping + 26100 tax = 316100.
+        assert order_total(lines, "IRR", shipping, tax).amount == Decimal("316100.00")
+
+    def test_adds_tax_without_shipping(self) -> None:
+        lines = build_order_lines([_item("HB-250", 1, "120000.00")])
+        tax = Money(amount=Decimal("10800.00"), currency="IRR")
+        assert order_total(lines, "IRR", None, tax).amount == Decimal("130800.00")
+
+    def test_refuses_tax_in_another_currency(self) -> None:
+        lines = build_order_lines([_item("HB-250", 1, "120000.00")])
+        tax = Money(amount=Decimal("10800.00"), currency="USD")
+        with pytest.raises(InvalidMoneyError):
+            order_total(lines, "IRR", None, tax)

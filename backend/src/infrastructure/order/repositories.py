@@ -25,9 +25,12 @@ from src.application.order.ports import (
     PricingReader,
     ShippingQuote,
     ShippingRateReader,
+    TaxCalculator,
+    TaxQuote,
     UnitOfWork,
 )
 from src.application.shipping.use_cases import GetShippingMethod
+from src.application.tax.use_cases import CalculateTax
 from src.domain.catalog.exceptions import InsufficientStockError
 from src.domain.catalog.exceptions import VariantNotFoundError as CatalogVariantNotFoundError
 from src.domain.order.entities import Order
@@ -39,6 +42,7 @@ from src.domain.order.exceptions import (
 from src.domain.order.value_objects import Money, OrderStatus
 from src.domain.shipping.exceptions import ShippingError, ShippingMethodNotFoundError
 from src.domain.shipping.value_objects import Destination
+from src.domain.tax.value_objects import Money as TaxMoney
 from src.infrastructure.address.models import AddressModel
 from src.infrastructure.cart.models import CartLineModel, CartModel
 from src.infrastructure.catalog.models import VariantPriceModel
@@ -47,6 +51,7 @@ from src.infrastructure.channel.models import ChannelModel
 from src.infrastructure.order.mappers import order_to_domain
 from src.infrastructure.order.models import OrderLineModel, OrderModel
 from src.infrastructure.shipping.methods import SettingsShippingMethodReader
+from src.infrastructure.tax.rates import SettingsTaxRateReader
 
 logger = structlog.get_logger(__name__)
 
@@ -84,6 +89,7 @@ class DjangoOrderRepository(OrderRepository):
     def add(self, order: Order) -> Order:
         address = order.shipping_address
         shipping = order.shipping
+        tax = order.tax
         model = OrderModel.objects.create(
             number=order.number.value,
             **_owner_filter(order.owner),
@@ -93,6 +99,9 @@ class DjangoOrderRepository(OrderRepository):
             shipping_cost=order.shipping_cost.amount,
             shipping_method_code=shipping.method_code if shipping is not None else "",
             shipping_method_name=shipping.method_name if shipping is not None else "",
+            # NULL rate is "no captured tax"; a captured tax (even at rate 0) stores both fields.
+            tax_amount=tax.amount.amount if tax is not None else 0,
+            tax_rate=tax.rate if tax is not None else None,
             status=order.status.value,
             placed_at=order.placed_at,
             shipping_recipient_name=address.recipient_name,
@@ -265,6 +274,32 @@ class ConfiguredShippingRateReader(ShippingRateReader):
             method_code=method.code.value,
             method_name=method.name,
             cost=Money(amount=method.price.amount, currency=method.price.currency),
+        )
+
+
+class ConfiguredTaxCalculator(TaxCalculator):
+    """Compute checkout tax by bridging to the tax context.
+
+    Implements the order context's narrow ``TaxCalculator`` port by delegating to the tax
+    context's ``CalculateTax`` use case (over the settings-backed rate reader). A channel that
+    levies no tax calculates ``None`` -- so the order captures no tax line. No tax-domain type
+    crosses back: the result is the order context's own ``TaxQuote``, and the amount is the tax
+    context's computed value (never recomputed here).
+    """
+
+    def __init__(self) -> None:
+        self._calculate = CalculateTax(SettingsTaxRateReader())
+
+    def calculate(self, *, channel: str, taxable: Money) -> TaxQuote | None:
+        result = self._calculate.execute(
+            channel=channel,
+            taxable=TaxMoney(amount=taxable.amount, currency=taxable.currency),
+        )
+        if result is None:
+            return None
+        return TaxQuote(
+            rate=result.rate.value,
+            amount=Money(amount=result.amount.amount, currency=result.amount.currency),
         )
 
 
