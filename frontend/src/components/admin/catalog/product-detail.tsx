@@ -280,6 +280,7 @@ function VariantsCard({ code }: { code: string }) {
   const [showAdd, setShowAdd] = useState(false);
   const [sku, setSku] = useState("");
   const [name, setName] = useState("");
+  const [weightGrams, setWeightGrams] = useState("");
   const [options, setOptions] = useState<AttributeValue[]>([]);
   const [media, setMedia] = useState<VariantMedia[]>([]);
 
@@ -293,12 +294,15 @@ function VariantsCard({ code }: { code: string }) {
       createVariant(code, {
         sku,
         name,
+        // Blank weight means "unset" (0); a numeric value is the shipping weight in grams.
+        weight_grams: weightGrams.trim() === "" ? 0 : Number(weightGrams),
         values: options.filter((option) => option.attribute.trim().length > 0),
         media: media.filter((asset) => asset.url.trim().length > 0),
       }),
     onSuccess: () => {
       setSku("");
       setName("");
+      setWeightGrams("");
       setOptions([]);
       setMedia([]);
       setShowAdd(false);
@@ -395,6 +399,14 @@ function VariantsCard({ code }: { code: string }) {
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   required
+                />
+                <FormField
+                  id="variant_weight"
+                  type="number"
+                  min={0}
+                  label={t("productDetail.weightGrams")}
+                  value={weightGrams}
+                  onChange={(e) => setWeightGrams(e.target.value)}
                 />
               </div>
 

@@ -535,6 +535,7 @@ class CreateVariantCommand:
     name: str
     values: tuple[AttributeValueInput, ...] = field(default_factory=tuple)
     media: tuple[MediaInput, ...] = field(default_factory=tuple)
+    weight_grams: int = 0
 
 
 class CreateVariant:
@@ -568,6 +569,7 @@ class CreateVariant:
             product=ProductCode(command.product),
             sku=Sku(command.sku),
             name=command.name,
+            weight_grams=command.weight_grams,
             values=tuple(
                 AttributeValue(attribute=AttributeCode(item.attribute), value=item.value)
                 for item in command.values

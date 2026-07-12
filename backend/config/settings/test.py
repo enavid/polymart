@@ -55,6 +55,15 @@ SHIPPING_METHODS = {
             "min_days": 5,
             "max_days": 7,
         },
+        {
+            "code": "pickup",
+            "name": "تحویل حضوری",
+            "price": "0",
+            "currency": "IRR",
+            "min_days": 0,
+            "max_days": 1,
+            "pickup": True,
+        },
     ],
 }
 # Tehran is a discounted zone; the E2E harness relies on this deterministic set. The seeded

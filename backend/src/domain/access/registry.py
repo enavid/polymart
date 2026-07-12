@@ -14,6 +14,7 @@ from src.domain.access.permissions import (
 from src.domain.catalog.permissions import CATALOG_PERMISSIONS, MANAGE_CATALOG
 from src.domain.channel.permissions import CHANNEL_PERMISSIONS, MANAGE_CHANNEL
 from src.domain.identity.permissions import IDENTITY_PERMISSIONS, MANAGE_ACCESS
+from src.domain.inventory.permissions import INVENTORY_PERMISSIONS, MANAGE_STOCK_SOURCE
 from src.domain.order.permissions import MANAGE_ORDERS, ORDER_PERMISSIONS
 
 # Role names are stable identifiers (used as Django Group names); keep them in
@@ -22,6 +23,7 @@ CHANNEL_ADMIN_ROLE = "channel_admin"
 ACCESS_ADMIN_ROLE = "access_admin"
 CATALOG_ADMIN_ROLE = "catalog_admin"
 ORDER_ADMIN_ROLE = "order_admin"
+INVENTORY_ADMIN_ROLE = "inventory_admin"
 
 
 def build_default_registry() -> PermissionRegistry:
@@ -33,6 +35,7 @@ def build_default_registry() -> PermissionRegistry:
         *IDENTITY_PERMISSIONS,
         *CATALOG_PERMISSIONS,
         *ORDER_PERMISSIONS,
+        *INVENTORY_PERMISSIONS,
     ):
         registry.register_permission(permission)
 
@@ -65,6 +68,15 @@ def build_default_registry() -> PermissionRegistry:
         RoleDefinition(
             name=ORDER_ADMIN_ROLE,
             permissions=frozenset({MANAGE_ORDERS.codename}),
+        )
+    )
+    # The global "manage stock sources" role: create sources and set/adjust stock at
+    # any source. A warehouse-scoped manager is granted the same permission per-source
+    # via guardian instead of this role.
+    registry.register_role(
+        RoleDefinition(
+            name=INVENTORY_ADMIN_ROLE,
+            permissions=frozenset({MANAGE_STOCK_SOURCE.codename}),
         )
     )
 

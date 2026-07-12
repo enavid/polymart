@@ -168,3 +168,153 @@ class TestZonedRates:
         )
         standard = next(m for m in methods if m.code.value == "standard")
         assert standard.price.amount == Decimal("50000")
+
+
+_WEIGHT_METHODS = {
+    "ir-main": [
+        {
+            "code": "table",
+            "name": "Weight table",
+            "currency": "IRR",
+            "min_days": 2,
+            "max_days": 4,
+            "weight_brackets": [
+                {"up_to_grams": 1000, "price": "30000"},
+                {"up_to_grams": 5000, "price": "60000"},
+                {"up_to_grams": None, "price": "100000"},
+            ],
+        },
+    ],
+}
+
+
+class TestWeightRates:
+    @override_settings(SHIPPING_METHODS=_WEIGHT_METHODS)
+    def test_a_weight_method_lists_its_lightest_bracket_as_the_from_price(self) -> None:
+        method = SettingsShippingMethodReader().get("ir-main", "table")
+        assert method is not None
+        assert method.price.amount == Decimal("30000")
+        assert method.weight_table is not None
+
+    @override_settings(SHIPPING_METHODS=_WEIGHT_METHODS)
+    def test_the_method_quotes_the_bracket_for_the_order_weight(self) -> None:
+        method = SettingsShippingMethodReader().get("ir-main", "table")
+        assert method is not None
+        assert method.quote(500).amount == Decimal("30000")
+        assert method.quote(3000).amount == Decimal("60000")
+        assert method.quote(9000).amount == Decimal("100000")
+
+    @override_settings(
+        SHIPPING_METHODS={
+            "ir-main": [
+                {
+                    "code": "bad",
+                    "name": "Both",
+                    "price": "50000",
+                    "currency": "IRR",
+                    "min_days": 1,
+                    "max_days": 2,
+                    "zone_rates": {"tehran": "30000"},
+                    "weight_brackets": [{"up_to_grams": None, "price": "40000"}],
+                }
+            ]
+        }
+    )
+    def test_a_method_mixing_zone_rates_and_weight_brackets_is_skipped(self) -> None:
+        # Configuring both pricing modes on one method is a bug: it is dropped, not shown.
+        assert SettingsShippingMethodReader().available_for("ir-main") == ()
+
+    @override_settings(
+        SHIPPING_METHODS={
+            "ir-main": [
+                {
+                    "code": "bad",
+                    "name": "Bad brackets",
+                    "currency": "IRR",
+                    "min_days": 1,
+                    "max_days": 2,
+                    "weight_brackets": "not-a-list",
+                }
+            ]
+        }
+    )
+    def test_a_non_list_weight_brackets_is_skipped(self) -> None:
+        assert SettingsShippingMethodReader().available_for("ir-main") == ()
+
+
+_CITY_ZONES = {
+    "ir-main": [
+        {
+            "code": "tehran-city",
+            "name": "Tehran city",
+            "provinces": ["تهران"],
+            "cities": ["تهران"],
+        },
+        {"code": "tehran", "name": "Tehran province", "provinces": ["تهران"]},
+    ],
+}
+_CITY_METHODS = {
+    "ir-main": [
+        {
+            "code": "standard",
+            "name": "Standard",
+            "price": "50000",
+            "currency": "IRR",
+            "min_days": 3,
+            "max_days": 5,
+            "zone_rates": {"tehran-city": "20000", "tehran": "40000"},
+        }
+    ],
+}
+
+
+class TestCityMatching:
+    @override_settings(SHIPPING_METHODS=_CITY_METHODS, SHIPPING_ZONES=_CITY_ZONES)
+    def test_a_city_scoped_zone_prices_only_its_city(self) -> None:
+        reader = SettingsShippingMethodReader()
+        in_city = reader.get("ir-main", "standard", Destination(province="تهران", city="تهران"))
+        elsewhere = reader.get("ir-main", "standard", Destination(province="تهران", city="کرج"))
+        assert in_city is not None and in_city.price.amount == Decimal("20000")
+        # A different city in the province falls through to the province-wide zone rate.
+        assert elsewhere is not None and elsewhere.price.amount == Decimal("40000")
+
+
+_ALIAS_ZONES = {
+    "ir-main": [{"code": "tehran", "name": "Tehran", "provinces": ["تهران"]}],
+}
+_ALIAS_METHODS = {
+    "ir-main": [
+        {
+            "code": "standard",
+            "name": "Standard",
+            "price": "50000",
+            "currency": "IRR",
+            "min_days": 3,
+            "max_days": 5,
+            "zone_rates": {"tehran": "30000"},
+        }
+    ],
+}
+
+
+class TestProvinceAliasing:
+    @override_settings(
+        SHIPPING_METHODS=_ALIAS_METHODS,
+        SHIPPING_ZONES=_ALIAS_ZONES,
+        SHIPPING_PROVINCE_ALIASES={"ir-main": {"Tehran": "تهران"}},
+    )
+    def test_a_latin_alias_resolves_to_the_persian_zone(self) -> None:
+        reader = SettingsShippingMethodReader()
+        # The Latin "Tehran" is aliased to the Persian province and gets the zone rate.
+        aliased = reader.get("ir-main", "standard", Destination(province="Tehran"))
+        assert aliased is not None and aliased.price.amount == Decimal("30000")
+
+    @override_settings(
+        SHIPPING_METHODS=_ALIAS_METHODS,
+        SHIPPING_ZONES=_ALIAS_ZONES,
+        SHIPPING_PROVINCE_ALIASES={"ir-main": {"Tehran": "تهران"}},
+    )
+    def test_an_unaliased_province_gets_the_default_rate(self) -> None:
+        reader = SettingsShippingMethodReader()
+        other = reader.get("ir-main", "standard", Destination(province="اصفهان"))
+        assert other is not None and other.price.amount == Decimal("50000")

@@ -83,6 +83,10 @@ function InfoCard({ variant }: { variant: Variant }) {
             <dt className="text-muted-foreground">{t("name")}</dt>
             <dd>{variant.name}</dd>
           </div>
+          <div className="flex gap-2">
+            <dt className="text-muted-foreground">{t("productDetail.weightGrams")}</dt>
+            <dd>{variant.weight_grams}</dd>
+          </div>
         </dl>
 
         <h3 className="mt-4 text-sm font-medium">{t("products.values")}</h3>

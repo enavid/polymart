@@ -13,7 +13,13 @@ import type { AddressInput } from "@/lib/api/addresses";
 import { apiGet, apiPost, toQuery } from "@/lib/api/client";
 
 /** The order lifecycle states, matching the backend state machine. */
-export type OrderStatus = "pending" | "paid" | "fulfilled" | "cancelled";
+export type OrderStatus =
+  | "pending"
+  | "paid"
+  | "fulfilled"
+  | "ready_for_pickup"
+  | "picked_up"
+  | "cancelled";
 
 /** One captured order line (prices are the snapshot taken at placement). */
 export interface OrderLine {
@@ -35,6 +41,14 @@ export interface OrderShippingAddress {
   line2: string | null;
 }
 
+/** The captured shipment of a delivery order (carrier + tracking), once shipped. */
+export interface OrderFulfillment {
+  carrier: string;
+  tracking_number: string;
+  /** An optional URL the shopper can follow to track the shipment. */
+  tracking_url: string | null;
+}
+
 /** A placed order. */
 export interface Order {
   number: string;
@@ -53,7 +67,12 @@ export interface Order {
   total: string;
   placed_at: string;
   items: OrderLine[];
-  shipping_address: OrderShippingAddress;
+  /** True for a pickup (BOPIS) order, which captures no shipping address. */
+  is_pickup: boolean;
+  /** The captured shipping address, or null for a pickup order. */
+  shipping_address: OrderShippingAddress | null;
+  /** The captured shipment, or null until a delivery order is shipped. */
+  fulfillment: OrderFulfillment | null;
 }
 
 /** One page of a shopper's orders. */
@@ -71,12 +90,15 @@ export interface OrderPage {
  */
 export type PlaceOrderShipping =
   | { addressId: string }
-  | { shippingAddress: AddressInput };
+  | { shippingAddress: AddressInput }
+  /** A pickup (BOPIS) order captures no address. */
+  | { pickup: true };
 
 /**
- * Place an order by checking out the given channel's cart, shipping to either a saved
- * address (`{ addressId }`) or a one-off inline address (`{ shippingAddress }`), by the
- * chosen `shippingMethod` (its cost is quoted server-side and captured onto the order).
+ * Place an order by checking out the given channel's cart by the chosen `shippingMethod`
+ * (its cost is quoted server-side and captured onto the order). A delivery order ships to
+ * either a saved address (`{ addressId }`) or a one-off inline address (`{ shippingAddress }`);
+ * a pickup order (`{ pickup: true }`) sends no address.
  */
 export function placeOrder(
   channel: string,
@@ -86,7 +108,9 @@ export function placeOrder(
   const base =
     "addressId" in shipping
       ? { channel, address_id: shipping.addressId }
-      : { channel, shipping_address: shipping.shippingAddress };
+      : "shippingAddress" in shipping
+        ? { channel, shipping_address: shipping.shippingAddress }
+        : { channel };
   return apiPost<Order>("/orders/", { ...base, shipping_method: shippingMethod });
 }
 
@@ -138,4 +162,29 @@ export function createManualOrder(input: ManualOrderInput): Promise<Order> {
 /** Read any order's pre-invoice by number (staff only, `manage_orders`). */
 export function getPreInvoice(number: string): Promise<PreInvoice> {
   return apiGet<PreInvoice>(`/orders/${number}/pre-invoice/`);
+}
+
+/** Fields staff supply when shipping a delivery order (carrier + tracking reference). */
+export interface ShipOrderInput {
+  carrier: string;
+  tracking_number: string;
+  tracking_url?: string;
+}
+
+/**
+ * Ship a paid delivery order: capture the carrier + tracking and move it to `fulfilled`.
+ * Staff only (`manage_orders`).
+ */
+export function shipOrder(number: string, input: ShipOrderInput): Promise<Order> {
+  return apiPost<Order>(`/orders/${number}/ship/`, input);
+}
+
+/** Mark a paid pickup (BOPIS) order ready for collection. Staff only (`manage_orders`). */
+export function markOrderReadyForPickup(number: string): Promise<Order> {
+  return apiPost<Order>(`/orders/${number}/ready-for-pickup/`);
+}
+
+/** Confirm a ready pickup order was collected (-> `picked_up`). Staff only (`manage_orders`). */
+export function confirmOrderPickup(number: string): Promise<Order> {
+  return apiPost<Order>(`/orders/${number}/confirm-pickup/`);
 }

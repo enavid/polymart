@@ -44,6 +44,8 @@ from src.domain.shipping.value_objects import (
     Money,
     ShippingMethodCode,
     ShippingZoneCode,
+    WeightBracket,
+    WeightTable,
     ZonedRate,
 )
 
@@ -80,10 +82,29 @@ class SettingsShippingMethodReader(ShippingMethodReader):
         return None
 
     def _zone_for(self, channel: str, destination: Destination | None) -> ShippingZone | None:
-        """Resolve which configured zone the destination falls into (``None`` if none)."""
+        """Resolve which configured zone the destination falls into (``None`` if none).
+
+        The destination's province is first mapped through the channel's alias table (so a
+        Latin "Tehran" resolves to the same zone as "تهران"), then matched against the zones
+        (province + optional city).
+        """
         if destination is None:
             return None
-        return resolve_zone(destination.province, self._zones(channel))
+        canonical = self._canonical_destination(channel, destination)
+        return resolve_zone(canonical, self._zones(channel))
+
+    def _canonical_destination(self, channel: str, destination: Destination) -> Destination:
+        """Apply the channel's province-alias table, returning a possibly-rewritten destination.
+
+        ``SHIPPING_PROVINCE_ALIASES[channel]`` maps an input province (any casing) to the
+        canonical province a zone is configured under. An unknown province is left unchanged.
+        """
+        aliases = getattr(settings, "SHIPPING_PROVINCE_ALIASES", {}).get(channel, {})
+        folded = {str(k).strip().casefold(): str(v) for k, v in aliases.items()}
+        canonical_province = folded.get(destination.province.casefold())
+        if canonical_province is None:
+            return destination
+        return Destination(province=canonical_province, city=destination.city)
 
     def _zones(self, channel: str) -> tuple[ShippingZone, ...]:
         configured = getattr(settings, "SHIPPING_ZONES", {}).get(channel, [])
@@ -96,12 +117,17 @@ class SettingsShippingMethodReader(ShippingMethodReader):
 
     @staticmethod
     def _to_zone(raw: dict[str, Any], channel: str) -> ShippingZone | None:
-        """Build a domain zone from a config entry, or ``None`` if it is malformed."""
+        """Build a domain zone from a config entry, or ``None`` if it is malformed.
+
+        A zone may narrow to specific ``cities`` (optional); an entry omitting them covers the
+        whole province.
+        """
         try:
             return ShippingZone(
                 code=ShippingZoneCode(raw["code"]),
                 name=raw["name"],
                 provinces=frozenset(raw["provinces"]),
+                cities=frozenset(raw.get("cities", [])),
             )
         except (KeyError, TypeError, ValueError, ShippingError):
             logger.warning("shipping_zone_misconfigured", channel=channel, code=raw.get("code"))
@@ -111,25 +137,60 @@ class SettingsShippingMethodReader(ShippingMethodReader):
     def _to_method(
         raw: dict[str, Any], channel: str, zone: ShippingZone | None
     ) -> ShippingMethod | None:
-        """Build a domain method with its zone-resolved price, or ``None`` if malformed."""
+        """Build a domain method with its zone-resolved price, or ``None`` if malformed.
+
+        A method is priced either by a flat/zoned rate (``price`` + optional ``zone_rates``) or
+        by a weight table (``weight_brackets``); configuring both on one method is a bug and is
+        rejected (skipped + logged). A weight method's displayed ``price`` is its lightest
+        bracket; its actual cost is resolved from the order weight at quote time.
+        """
         try:
             currency = raw["currency"]
-            rate = ZonedRate(
-                default=Money(Decimal(str(raw["price"])), currency),
-                by_zone={
-                    ShippingZoneCode(zone_code).value: Money(Decimal(str(amount)), currency)
-                    for zone_code, amount in raw.get("zone_rates", {}).items()
-                },
-            )
-            price = rate.for_zone(zone.code.value if zone is not None else None)
+            weight_brackets = raw.get("weight_brackets")
+            if weight_brackets is not None:
+                if raw.get("zone_rates"):
+                    raise ShippingError("a method cannot mix zone_rates and weight_brackets")
+                table = _to_weight_table(weight_brackets, currency)
+                price = table.from_price
+            else:
+                table = None
+                rate = ZonedRate(
+                    default=Money(Decimal(str(raw["price"])), currency),
+                    by_zone={
+                        ShippingZoneCode(zone_code).value: Money(Decimal(str(amount)), currency)
+                        for zone_code, amount in raw.get("zone_rates", {}).items()
+                    },
+                )
+                price = rate.for_zone(zone.code.value if zone is not None else None)
             return ShippingMethod(
                 code=ShippingMethodCode(raw["code"]),
                 name=raw["name"],
                 price=price,
                 min_days=int(raw["min_days"]),
                 max_days=int(raw["max_days"]),
+                # Optional; a method omitting the flag is a normal delivery method.
+                is_pickup=bool(raw.get("pickup", False)),
+                weight_table=table,
             )
         except (KeyError, TypeError, ValueError, InvalidOperation, ShippingError):
             # A misconfigured method must not take down the whole chooser; drop it and warn.
             logger.warning("shipping_method_misconfigured", channel=channel, code=raw.get("code"))
             return None
+
+
+def _to_weight_table(raw_brackets: object, currency: str) -> WeightTable:
+    """Build a WeightTable from a config list of ``{"up_to_grams": int|None, "price": str}``.
+
+    Ordering/overflow/currency validity is enforced by ``WeightTable`` at construction; a
+    malformed table raises (caught by the caller, which skips and logs the method).
+    """
+    if not isinstance(raw_brackets, list):
+        raise ShippingError("weight_brackets must be a list")
+    brackets = tuple(
+        WeightBracket(
+            up_to_grams=row.get("up_to_grams"),
+            price=Money(Decimal(str(row["price"])), currency),
+        )
+        for row in raw_brackets
+    )
+    return WeightTable(brackets=brackets)

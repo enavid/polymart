@@ -9,6 +9,7 @@ from src.domain.catalog.exceptions import (
     DuplicateAttributeValueError,
     DuplicateMediaAssetError,
     InvalidVariantNameError,
+    InvalidVariantWeightError,
 )
 from src.domain.catalog.value_objects import (
     AttributeCode,
@@ -42,6 +43,19 @@ class TestConstruction:
         assert variant.name == "250g Bag"
         assert variant.values == ()
         assert variant.id is None
+
+
+class TestWeight:
+    def test_defaults_to_zero(self) -> None:
+        assert _variant().weight_grams == 0
+
+    def test_accepts_a_positive_weight(self) -> None:
+        assert _variant(weight_grams=600).weight_grams == 600
+
+    @pytest.mark.parametrize("bad", [-1, True, 1.5, 2_147_483_648])
+    def test_rejects_an_invalid_weight(self, bad: object) -> None:
+        with pytest.raises(InvalidVariantWeightError):
+            _variant(weight_grams=bad)
 
 
 class TestOptionValues:

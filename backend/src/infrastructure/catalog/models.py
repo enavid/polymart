@@ -218,6 +218,9 @@ class ProductVariantModel(models.Model):
     # so it can address one physical item unambiguously.
     sku = models.CharField(max_length=_CODE_MAX_LENGTH, unique=True)
     name = models.CharField(max_length=_NAME_MAX_LENGTH)
+    # Shipping weight in grams (0 = unset). Feeds weight-based shipping rates; existing rows
+    # default to 0 (unweighed), which the rate table treats as the lightest bracket.
+    weight_grams = models.PositiveIntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -473,26 +476,3 @@ class VariantPriceModel(models.Model):
 
     def __str__(self) -> str:
         return f"{self.variant_id}:{self.channel_slug}:{self.amount} {self.currency_code}"
-
-
-class VariantStockModel(models.Model):
-    """A variant's on-hand stock quantity (one row per variant).
-
-    A single non-negative count of sellable units. Modelled as a one-to-one facet of
-    the variant rather than a column on the variant so it can later grow into the
-    multi-warehouse (MSI) model without reshaping the variant table. Reservation and
-    order-time deduction are a later phase; this stores only the on-hand quantity.
-    """
-
-    variant = models.OneToOneField(
-        ProductVariantModel, related_name="stock", on_delete=models.CASCADE
-    )
-    quantity = models.PositiveIntegerField(default=0)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        app_label = "catalog"
-        db_table = "catalog_variant_stock"
-
-    def __str__(self) -> str:
-        return f"{self.variant_id}:{self.quantity}"

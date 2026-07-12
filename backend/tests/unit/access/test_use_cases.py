@@ -14,13 +14,21 @@ import pytest
 from structlog.testing import capture_logs
 
 from src.application.access.ports import AccessControlGateway
-from src.application.access.use_cases import AssignRole, GrantChannelManagement
+from src.application.access.use_cases import (
+    AssignRole,
+    GrantChannelManagement,
+    GrantStockSourceManagement,
+)
 from src.application.audit.ports import AuditRecorder
 from src.application.channel.ports import ChannelRepository
+from src.application.inventory.ports import StockSourceRepository
 from src.domain.audit.entities import FieldChange
 from src.domain.channel.entities import Channel
 from src.domain.channel.exceptions import ChannelNotFoundError
 from src.domain.channel.value_objects import ChannelSlug, Currency
+from src.domain.inventory.entities import StockSource
+from src.domain.inventory.exceptions import StockSourceNotFoundError
+from src.domain.inventory.value_objects import StockSourceCode
 
 
 class RecordedAudit:
@@ -66,6 +74,8 @@ class FakeAccessControlGateway(AccessControlGateway):
         self.roles: list[tuple[int, str]] = []
         self.channel_grants: list[tuple[int, int]] = []
         self.manageable: set[tuple[int, int]] = set()
+        self.source_grants: list[tuple[int, int]] = []
+        self.manageable_sources: set[tuple[int, int]] = set()
 
     def assign_role(self, user_id: int, role_name: str) -> None:
         self.roles.append((user_id, role_name))
@@ -76,6 +86,13 @@ class FakeAccessControlGateway(AccessControlGateway):
 
     def can_manage_channel(self, user_id: int, channel_id: int) -> bool:
         return (user_id, channel_id) in self.manageable
+
+    def grant_stock_source_management(self, user_id: int, source_id: int) -> None:
+        self.source_grants.append((user_id, source_id))
+        self.manageable_sources.add((user_id, source_id))
+
+    def can_manage_stock_source(self, user_id: int, source_id: int) -> bool:
+        return (user_id, source_id) in self.manageable_sources
 
 
 class FakeChannelRepository(ChannelRepository):
@@ -108,6 +125,35 @@ class FakeChannelRepository(ChannelRepository):
         return channel
 
 
+class FakeStockSourceRepository(StockSourceRepository):
+    """Minimal source lookup for resolving a code to its identity."""
+
+    def __init__(self) -> None:
+        self._by_code: dict[str, StockSource] = {}
+        self._sequence = 0
+
+    def add(self, source: StockSource) -> StockSource:
+        self._sequence += 1
+        stored = StockSource(code=source.code, name=source.name, id=self._sequence)
+        self._by_code[source.code.value] = stored
+        return stored
+
+    def get(self, code: StockSourceCode) -> StockSource:
+        try:
+            return self._by_code[code.value]
+        except KeyError:
+            raise StockSourceNotFoundError(code.value) from None
+
+    def ensure_default(self) -> StockSourceCode:
+        raise NotImplementedError
+
+    def exists(self, code: StockSourceCode) -> bool:
+        return code.value in self._by_code
+
+    def list_all(self) -> list[StockSource]:
+        return list(self._by_code.values())
+
+
 @pytest.fixture
 def gateway() -> FakeAccessControlGateway:
     return FakeAccessControlGateway()
@@ -122,6 +168,13 @@ def audit() -> FakeAuditRecorder:
 def channels() -> FakeChannelRepository:
     repo = FakeChannelRepository()
     repo.add(Channel(slug=ChannelSlug("coffee"), name="Coffee", currency=Currency("IRR")))
+    return repo
+
+
+@pytest.fixture
+def sources() -> FakeStockSourceRepository:
+    repo = FakeStockSourceRepository()
+    repo.add(StockSource(code=StockSourceCode("north"), name="North Warehouse"))
     return repo
 
 
@@ -222,3 +275,52 @@ class TestGrantChannelManagement:
         assert call.resource_id == "7"
         assert call.actor == "root"
         assert call.changes == (FieldChange(field="managed_channel", after="coffee"),)
+
+
+class TestGrantStockSourceManagement:
+    def test_grants_object_scope_for_the_resolved_source(
+        self,
+        gateway: FakeAccessControlGateway,
+        sources: FakeStockSourceRepository,
+        audit: FakeAuditRecorder,
+    ) -> None:
+        GrantStockSourceManagement(gateway, sources, audit).execute(user_id=7, source_code="north")
+
+        north_id = sources.get(StockSourceCode("north")).id
+        assert north_id is not None
+        assert gateway.source_grants == [(7, north_id)]
+        assert gateway.can_manage_stock_source(7, north_id)
+
+    def test_raises_when_the_source_does_not_exist(
+        self,
+        gateway: FakeAccessControlGateway,
+        sources: FakeStockSourceRepository,
+        audit: FakeAuditRecorder,
+    ) -> None:
+        with pytest.raises(StockSourceNotFoundError):
+            GrantStockSourceManagement(gateway, sources, audit).execute(
+                user_id=7, source_code="ghost"
+            )
+
+        assert gateway.source_grants == []
+        assert audit.calls == []  # a rejected grant leaves nothing on the trail
+
+    def test_writes_a_durable_audit_entry(
+        self,
+        gateway: FakeAccessControlGateway,
+        sources: FakeStockSourceRepository,
+        audit: FakeAuditRecorder,
+    ) -> None:
+        with capture_logs() as logs:
+            GrantStockSourceManagement(gateway, sources, audit).execute(
+                user_id=7, source_code="north", actor="root"
+            )
+
+        events = [e for e in logs if e["event"] == "stock_source_management_granted"]
+        assert events and events[0]["actor"] == "root"
+        assert events[0]["source_code"] == "north"
+        assert len(audit.calls) == 1
+        call = audit.calls[0]
+        assert call.action == "access.stock_source_management_granted"
+        assert call.resource_id == "7"
+        assert call.changes == (FieldChange(field="managed_stock_source", after="north"),)

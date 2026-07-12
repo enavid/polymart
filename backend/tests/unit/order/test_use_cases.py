@@ -7,7 +7,7 @@ fakes stand in for the Django adapters wired at the composition root.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from decimal import ROUND_HALF_UP, Decimal
@@ -33,6 +33,7 @@ from src.application.order.ports import (
     TaxCalculator,
     TaxQuote,
     UnitOfWork,
+    VariantWeightReader,
 )
 from src.application.order.use_cases import (
     CancelMyOrder,
@@ -114,6 +115,16 @@ class FakePricing(PricingReader):
         return self._prices.get(sku)
 
 
+class FakeWeights(VariantWeightReader):
+    """Per-sku weight in grams; unset skus weigh 0 (the unweighed default)."""
+
+    def __init__(self, weights: dict[str, int] | None = None) -> None:
+        self._weights = weights or {}
+
+    def weight_of(self, skus: Sequence[str]) -> dict[str, int]:
+        return {sku: self._weights[sku] for sku in skus if sku in self._weights}
+
+
 class FakeChannels(ChannelReader):
     def __init__(self, currency: str | None) -> None:
         self._currency = currency
@@ -133,12 +144,21 @@ class FakeShipping(ShippingRateReader):
         self._costs = costs if costs is not None else {"standard": Money(Decimal("0"), "IRR")}
         self.seen_province: str | None = None
         self.seen_city: str | None = None
+        self.seen_weight: int | None = None
 
     def quote(
-        self, *, channel: str, method_code: str, currency: str, province: str, city: str
+        self,
+        *,
+        channel: str,
+        method_code: str,
+        currency: str,
+        province: str,
+        city: str,
+        weight_grams: int = 0,
     ) -> ShippingQuote | None:
         self.seen_province = province
         self.seen_city = city
+        self.seen_weight = weight_grams
         cost = self._costs.get(method_code)
         if cost is None or cost.currency != currency:
             return None
@@ -254,6 +274,9 @@ class FakeOrders(OrderRepository):
     def get_for_update(self, owner: str, number: str) -> Order:
         return self.get_for_owner(owner, number)
 
+    def get_for_update_any(self, number: str) -> Order:
+        return self.get(number)
+
     def list_for_owner(
         self, owner: str, *, limit: int, offset: int
     ) -> tuple[tuple[Order, ...], int]:
@@ -334,6 +357,7 @@ def _build_place_order(
     addresses: FakeAddresses | None = None,
     shipping: FakeShipping | None = None,
     tax: FakeTax | None = None,
+    weights: FakeWeights | None = None,
     audit: RecordingAudit | None = None,
     events: RecordingEventPublisher | None = None,
 ) -> PlaceOrder:
@@ -341,6 +365,7 @@ def _build_place_order(
         unit_of_work=uow or FakeUnitOfWork(),
         carts=FakeCart(cart_items),
         pricing=FakePricing(prices),
+        weights=weights or FakeWeights(),
         channels=FakeChannels(currency),
         addresses=addresses or FakeAddresses(),
         shipping=shipping or FakeShipping(),
@@ -458,6 +483,7 @@ class TestPlaceOrder:
             unit_of_work=FakeUnitOfWork(),
             carts=cart,
             pricing=FakePricing({"HB-250": _money("120000.00")}),
+            weights=FakeWeights(),
             channels=FakeChannels("IRR"),
             addresses=FakeAddresses(),
             shipping=FakeShipping(),
@@ -721,13 +747,19 @@ class TestPlaceOrderShipping:
         assert shipping.seen_province == "Tehran"
         assert shipping.seen_city == "Tehran"
 
-    def test_an_unknown_shipping_method_is_rejected_before_the_transaction(self) -> None:
+    def test_an_unknown_shipping_method_rolls_back_and_places_nothing(self) -> None:
+        # The method is quoted inside the unit of work (a weight-priced method needs the cart's
+        # total weight), so an unknown method rolls the transaction back rather than being
+        # refused before it. It is the first step, before any reservation, so nothing is
+        # committed and no stock moves -- the same observable outcome.
         uow = FakeUnitOfWork()
+        inventory = FakeInventory({"HB-250": 5})
         place = _build_place_order(
             cart_items=(CheckoutLine("HB-250", 1),),
             prices={"HB-250": _money("120000.00")},
             stock={"HB-250": 5},
             shipping=FakeShipping({"standard": _money("50000.00")}),
+            inventory=inventory,
             uow=uow,
         )
 
@@ -737,9 +769,8 @@ class TestPlaceOrderShipping:
                     owner="7", channel="ir-main", shipping_method="drone", address_id="ADDR-TEST01"
                 )
             )
-        # Refused before the unit of work is ever entered (like an unknown address).
         assert uow.committed is False
-        assert uow.rolled_back is False
+        assert inventory.deducted == []  # nothing reserved before the method was rejected
 
 
 class TestPlaceOrderTax:
@@ -877,6 +908,7 @@ class TestPlaceOrderInlineShipping:
             unit_of_work=FakeUnitOfWork(),
             carts=FakeCart((CheckoutLine("HB-250", 1),)),
             pricing=FakePricing({"HB-250": _money("120000.00")}),
+            weights=FakeWeights(),
             channels=FakeChannels("IRR"),
             addresses=ExplodingAddresses(),
             shipping=FakeShipping(),
@@ -968,6 +1000,7 @@ class TestListMyOrders:
                 unit_of_work=FakeUnitOfWork(),
                 carts=FakeCart((CheckoutLine("HB-250", 1),)),
                 pricing=FakePricing({"HB-250": _money("120000.00")}),
+                weights=FakeWeights(),
                 channels=FakeChannels("IRR"),
                 addresses=FakeAddresses(),
                 shipping=FakeShipping(),
@@ -1064,6 +1097,7 @@ class TestCancelMyOrder:
             unit_of_work=FakeUnitOfWork(),
             carts=FakeCart((CheckoutLine("HB-250", 2),)),
             pricing=FakePricing({"HB-250": _money("120000.00")}),
+            weights=FakeWeights(),
             channels=FakeChannels("IRR"),
             addresses=FakeAddresses(),
             shipping=FakeShipping(),

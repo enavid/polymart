@@ -6,11 +6,12 @@
  *
  *   cart:     empty -> add -> add again (accumulates) -> second line ->
  *             multi-line total -> update quantity -> remove one -> remove last.
- *   checkout: add -> choose the seeded address -> place order -> order confirmation
- *             (captured total + status + captured shipping address) -> appears in
- *             history -> cancel (restocks) -> IDOR (staff cannot see it).
- *   oversell: a priced-but-zero-stock line cannot be checked out (409 surfaced on the
- *             checkout review step).
+ *   checkout: add -> choose the seeded address -> place order (reserves stock) -> order
+ *             confirmation (captured total + status + captured shipping address) ->
+ *             appears in history -> cancel (releases the reservation) -> IDOR (staff
+ *             cannot see it).
+ *   oversell: a priced line with zero available stock cannot be checked out (409 surfaced
+ *             on the checkout review step).
  *
  * Every money value is asserted by reproducing the UI's own formatting, so we check
  * the *displayed server value* and never a client-side recomputation.
@@ -177,7 +178,7 @@ test.describe.serial("shopper cart & checkout", () => {
     expect(stolen.status()).toBe(404);
     await staffContext.close();
 
-    // Cancel the order via the inline confirmation; stock is returned.
+    // Cancel the order via the inline confirmation; the reservation is released.
     await page.goto(`/orders/${orderNumber}`);
     await page.getByRole("button", { name: orders.cancel }).click();
     await expect(page.getByText(orders.cancelConfirm)).toBeVisible();

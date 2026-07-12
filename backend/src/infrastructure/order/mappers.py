@@ -7,6 +7,7 @@ from src.domain.order.value_objects import (
     CapturedShipping,
     CapturedTax,
     ChannelRef,
+    Fulfillment,
     Money,
     OrderNumber,
     OrderQuantity,
@@ -51,6 +52,7 @@ def _captured_shipping_to_domain(model: OrderModel, currency: str) -> CapturedSh
         method_code=model.shipping_method_code,
         method_name=model.shipping_method_name,
         cost=Money(amount=model.shipping_cost, currency=currency),
+        is_pickup=model.shipping_is_pickup,
     )
 
 
@@ -70,7 +72,14 @@ def _captured_tax_to_domain(model: OrderModel, currency: str) -> CapturedTax | N
     )
 
 
-def _shipping_address_to_domain(model: OrderModel) -> ShippingAddress:
+def _shipping_address_to_domain(model: OrderModel) -> ShippingAddress | None:
+    """Rebuild the captured address, or ``None`` for a pickup order that captured none.
+
+    A blank recipient name means no address was captured (a pickup/BOPIS order), mirroring
+    how an empty shipping_method_code reads as no captured shipping.
+    """
+    if not model.shipping_recipient_name:
+        return None
     return ShippingAddress(
         recipient_name=model.shipping_recipient_name,
         phone_number=model.shipping_phone_number,
@@ -79,6 +88,21 @@ def _shipping_address_to_domain(model: OrderModel) -> ShippingAddress:
         postal_code=model.shipping_postal_code,
         line1=model.shipping_line1,
         line2=model.shipping_line2 or None,
+    )
+
+
+def _fulfillment_to_domain(model: OrderModel) -> Fulfillment | None:
+    """Rebuild the captured shipment (carrier + tracking), or ``None`` if not yet shipped.
+
+    A blank ``fulfillment_carrier`` means no shipment was captured -- an unshipped order, or a
+    pickup order (which never captures a shipment).
+    """
+    if not model.fulfillment_carrier:
+        return None
+    return Fulfillment(
+        carrier=model.fulfillment_carrier,
+        tracking_number=model.fulfillment_tracking_number,
+        tracking_url=model.fulfillment_tracking_url or None,
     )
 
 
@@ -102,5 +126,6 @@ def order_to_domain(model: OrderModel) -> Order:
         shipping_address=_shipping_address_to_domain(model),
         shipping=_captured_shipping_to_domain(model, currency),
         tax=_captured_tax_to_domain(model, currency),
+        fulfillment=_fulfillment_to_domain(model),
         id=model.pk,
     )

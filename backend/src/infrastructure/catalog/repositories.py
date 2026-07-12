@@ -44,6 +44,7 @@ from src.domain.catalog.exceptions import (
     CategoryNotFoundError,
     CollectionAlreadyExistsError,
     CollectionNotFoundError,
+    InsufficientStockError,
     ParentCategoryNotFoundError,
     ProductAlreadyExistsError,
     ProductNotFoundError,
@@ -55,7 +56,6 @@ from src.domain.catalog.exceptions import (
     VariantAlreadyExistsError,
     VariantNotFoundError,
 )
-from src.domain.catalog.services import adjust_stock
 from src.domain.catalog.value_objects import (
     AttributeCode,
     CategorySlug,
@@ -65,6 +65,9 @@ from src.domain.catalog.value_objects import (
     ProductCode,
     RuleCondition,
     StockQuantity,
+)
+from src.domain.inventory.exceptions import (
+    InsufficientStockError as InventoryInsufficientStockError,
 )
 from src.infrastructure.catalog.mappers import (
     apply_category_scalar_fields,
@@ -98,9 +101,13 @@ from src.infrastructure.catalog.models import (
     ProductVariantMediaModel,
     ProductVariantModel,
     VariantPriceModel,
-    VariantStockModel,
 )
 from src.infrastructure.channel.models import ChannelModel
+from src.infrastructure.inventory.repositories import (
+    DjangoStockLevelRepository,
+    DjangoStockPolicyRepository,
+    DjangoStockSourceRepository,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -351,14 +358,26 @@ class DjangoProductQueryRepository(ProductQueryRepository):
             )
             for row in priced
         }
-        # Buyable = some variant is priced in this channel AND has stock on hand.
-        available_codes = set(
+        # Buyable = some variant is priced in this channel AND either has stock available
+        # to promise (on-hand minus reserved across sources > 0) OR is backorderable (sold
+        # beyond physical stock by policy). A fully reserved, non-backorderable variant
+        # reads as out of stock.
+        priced_variants = list(
             ProductVariantModel.objects.filter(
                 product__code__in=codes,
                 prices__channel_slug=channel,
-                stock__quantity__gt=0,
-            ).values_list("product__code", flat=True)
+            )
+            .values_list("product__code", "sku")
+            .distinct()
         )
+        skus = [sku for _, sku in priced_variants]
+        available_by_sku = DjangoStockLevelRepository().available_for_skus(skus)
+        backorderable = DjangoStockPolicyRepository().backorderable_skus(skus)
+        available_codes = {
+            code
+            for code, sku in priced_variants
+            if available_by_sku.get(sku, 0) > 0 or sku in backorderable
+        }
         return {
             code: PriceSummary(
                 from_price=from_by_code.get(code),
@@ -864,38 +883,41 @@ class DjangoChannelReader(ChannelReader):
 
 
 class DjangoStockRepository(StockRepository):
-    """Persist a variant's on-hand stock quantity with the Django ORM."""
+    """Expose a variant's on-hand stock over the inventory context's default source.
+
+    On-hand stock is owned by the inventory context (multi-source, with reservations);
+    this catalog adapter keeps the simple single-count surface the admin stock endpoints
+    expose, operating on the default source. The variant must exist
+    (``VariantNotFoundError``); a lock on the variant row serializes a set against a
+    concurrent adjust, and the inventory adapter takes the stock-level row lock.
+    """
+
+    def __init__(self) -> None:
+        self._levels = DjangoStockLevelRepository()
+        self._sources = DjangoStockSourceRepository()
 
     def get_quantity(self, sku: str) -> StockQuantity:
-        quantity = (
-            VariantStockModel.objects.filter(variant__sku=sku)
-            .values_list("quantity", flat=True)
-            .first()
-        )
-        return StockQuantity(quantity if quantity is not None else 0)
+        return StockQuantity(self._levels.total_on_hand(sku))
 
     def set_quantity(self, sku: str, quantity: StockQuantity) -> StockQuantity:
-        # Lock the variant so a set and a concurrent adjust on the same variant
-        # serialize instead of racing; the single upsert is then trivially atomic.
         with transaction.atomic():
-            variant = self._lock_variant(sku)
-            VariantStockModel.objects.update_or_create(
-                variant=variant, defaults={"quantity": quantity.value}
-            )
+            self._lock_variant(sku)
+            source = self._sources.ensure_default()
+            self._levels.set_on_hand(sku, source, quantity.value)
         return quantity
 
     def adjust_quantity(self, sku: str, delta: int) -> StockQuantity:
-        # The whole read-modify-write runs under a lock on the variant row, so two
-        # concurrent adjustments cannot both read the same starting quantity and lose
-        # an update (or oversell). The no-below-zero rule itself is the domain's.
+        # The variant-row lock serializes concurrent set/adjust; the inventory adapter's
+        # own row lock serializes the physical read-modify-write. The no-below-zero rule
+        # is the inventory domain's, translated back to the catalog's error here.
         with transaction.atomic():
-            variant = self._lock_variant(sku)
-            current = self._current_quantity(variant)
-            new_quantity = adjust_stock(current, delta)
-            VariantStockModel.objects.update_or_create(
-                variant=variant, defaults={"quantity": new_quantity.value}
-            )
-            return new_quantity
+            self._lock_variant(sku)
+            source = self._sources.ensure_default()
+            try:
+                self._levels.adjust_on_hand(sku, source, delta)
+            except InventoryInsufficientStockError as exc:
+                raise InsufficientStockError(available=exc.available, delta=delta) from exc
+            return StockQuantity(self._levels.total_on_hand(sku))
 
     @staticmethod
     def _lock_variant(sku: str) -> ProductVariantModel:
@@ -903,12 +925,3 @@ class DjangoStockRepository(StockRepository):
             return ProductVariantModel.objects.select_for_update().get(sku=sku)
         except ProductVariantModel.DoesNotExist as exc:
             raise VariantNotFoundError(sku) from exc
-
-    @staticmethod
-    def _current_quantity(variant: ProductVariantModel) -> StockQuantity:
-        quantity = (
-            VariantStockModel.objects.filter(variant=variant)
-            .values_list("quantity", flat=True)
-            .first()
-        )
-        return StockQuantity(quantity if quantity is not None else 0)

@@ -18,6 +18,8 @@ export interface ShippingMethod {
   currency: string;
   min_days: number;
   max_days: number;
+  /** True for a pickup (BOPIS) method: an order using it captures no shipping address. */
+  is_pickup: boolean;
 }
 
 interface ShippingMethodsResponse {

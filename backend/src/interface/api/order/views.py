@@ -28,16 +28,20 @@ from src.application.order.use_cases import (
     DEFAULT_PAGE_LIMIT,
     CancelMyOrderCommand,
     CreateManualOrderCommand,
+    FulfillmentActionCommand,
     InvalidOrderPageError,
     ListMyOrdersQuery,
     ManualOrderItem,
     PlaceOrderCommand,
+    ShipOrderCommand,
 )
 from src.domain.order.entities import Order
 from src.domain.order.exceptions import (
     DuplicateOrderLineError,
     EmptyCartError,
     EmptyOrderError,
+    FulfillmentMethodMismatchError,
+    IllegalOrderTransitionError,
     OrderError,
     OrderNotCancellableError,
     OrderNotFoundError,
@@ -53,11 +57,14 @@ from src.interface.api.common import ErrorSerializer
 from src.interface.api.guest import resolve_owner, user_owner
 from src.interface.api.order.container import (
     build_cancel_my_order,
+    build_confirm_order_pickup,
     build_create_manual_order,
     build_get_my_order,
     build_get_order_for_invoice,
     build_list_my_orders,
+    build_mark_order_ready_for_pickup,
     build_place_order,
+    build_ship_order,
 )
 from src.interface.api.order.serializers import (
     ManualOrderSerializer,
@@ -66,6 +73,7 @@ from src.interface.api.order.serializers import (
     OrderSerializer,
     PlaceOrderSerializer,
     PreInvoiceSerializer,
+    ShipOrderSerializer,
 )
 
 logger = structlog.get_logger(__name__)
@@ -102,6 +110,8 @@ def _order_payload(order: Order) -> dict[str, object]:
     """Project an order to the response body (money as exact strings)."""
     shipping = order.shipping
     tax = order.tax
+    address = order.shipping_address
+    fulfillment = order.fulfillment
     return {
         "number": order.number.value,
         "channel": order.channel.value,
@@ -126,15 +136,31 @@ def _order_payload(order: Order) -> dict[str, object]:
             }
             for line in order.lines
         ],
-        "shipping_address": {
-            "recipient_name": order.shipping_address.recipient_name,
-            "phone_number": order.shipping_address.phone_number,
-            "province": order.shipping_address.province,
-            "city": order.shipping_address.city,
-            "postal_code": order.shipping_address.postal_code,
-            "line1": order.shipping_address.line1,
-            "line2": order.shipping_address.line2,
-        },
+        # A pickup (BOPIS) order captures no address; ``is_pickup`` drives which fulfilment
+        # controls the client shows.
+        "is_pickup": shipping.is_pickup if shipping is not None else False,
+        "shipping_address": (
+            {
+                "recipient_name": address.recipient_name,
+                "phone_number": address.phone_number,
+                "province": address.province,
+                "city": address.city,
+                "postal_code": address.postal_code,
+                "line1": address.line1,
+                "line2": address.line2,
+            }
+            if address is not None
+            else None
+        ),
+        "fulfillment": (
+            {
+                "carrier": fulfillment.carrier,
+                "tracking_number": fulfillment.tracking_number,
+                "tracking_url": fulfillment.tracking_url,
+            }
+            if fulfillment is not None
+            else None
+        ),
     }
 
 
@@ -216,6 +242,98 @@ class PreInvoiceView(APIView):
             # A malformed number can never match -- surface as 404, not a 400.
             return Response({"detail": "order not found"}, status=status.HTTP_404_NOT_FOUND)
         return Response(_pre_invoice_payload(order))
+
+
+class ShipOrderView(APIView):
+    """Ship a paid delivery order: capture carrier + tracking, move to fulfilled -- staff only."""
+
+    permission_classes: ClassVar = [OrderManagePermission]
+
+    @extend_schema(
+        operation_id="orders_ship",
+        request=ShipOrderSerializer,
+        responses={
+            200: OrderSerializer,
+            400: ErrorSerializer,
+            403: ErrorSerializer,
+            404: ErrorSerializer,
+            409: ErrorSerializer,
+        },
+    )
+    def post(self, request: Request, number: str) -> Response:
+        serializer = ShipOrderSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        command = ShipOrderCommand(
+            number=number,
+            carrier=data["carrier"],
+            tracking_number=data["tracking_number"],
+            tracking_url=data.get("tracking_url") or None,
+        )
+        try:
+            order = build_ship_order().execute(command, actor=user_owner(request.user.pk))
+        except OrderNotFoundError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_404_NOT_FOUND)
+        except (FulfillmentMethodMismatchError, IllegalOrderTransitionError) as exc:
+            # Wrong method for the action, or the order is not in a shippable state.
+            return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
+        except OrderError as exc:  # pragma: no cover - defensive (serializer + VO guard input)
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(_order_payload(order))
+
+
+class ReadyForPickupView(APIView):
+    """Mark a paid pickup (BOPIS) order ready for collection -- staff only."""
+
+    permission_classes: ClassVar = [OrderManagePermission]
+
+    @extend_schema(
+        operation_id="orders_ready_for_pickup",
+        request=None,
+        responses={
+            200: OrderSerializer,
+            403: ErrorSerializer,
+            404: ErrorSerializer,
+            409: ErrorSerializer,
+        },
+    )
+    def post(self, request: Request, number: str) -> Response:
+        try:
+            order = build_mark_order_ready_for_pickup().execute(
+                FulfillmentActionCommand(number=number), actor=user_owner(request.user.pk)
+            )
+        except OrderNotFoundError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_404_NOT_FOUND)
+        except (FulfillmentMethodMismatchError, IllegalOrderTransitionError) as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
+        return Response(_order_payload(order))
+
+
+class ConfirmPickupView(APIView):
+    """Confirm a ready pickup order was collected (-> picked up) -- staff only."""
+
+    permission_classes: ClassVar = [OrderManagePermission]
+
+    @extend_schema(
+        operation_id="orders_confirm_pickup",
+        request=None,
+        responses={
+            200: OrderSerializer,
+            403: ErrorSerializer,
+            404: ErrorSerializer,
+            409: ErrorSerializer,
+        },
+    )
+    def post(self, request: Request, number: str) -> Response:
+        try:
+            order = build_confirm_order_pickup().execute(
+                FulfillmentActionCommand(number=number), actor=user_owner(request.user.pk)
+            )
+        except OrderNotFoundError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_404_NOT_FOUND)
+        except IllegalOrderTransitionError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
+        return Response(_order_payload(order))
 
 
 class OrderCollectionView(APIView):

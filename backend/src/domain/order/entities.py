@@ -29,6 +29,7 @@ from src.domain.order.value_objects import (
     CapturedShipping,
     CapturedTax,
     ChannelRef,
+    Fulfillment,
     Money,
     OrderNumber,
     OrderQuantity,
@@ -42,8 +43,14 @@ from src.domain.order.value_objects import (
 # declared in one readable place.
 _ALLOWED_TRANSITIONS: dict[OrderStatus, frozenset[OrderStatus]] = {
     OrderStatus.PENDING: frozenset({OrderStatus.PAID, OrderStatus.CANCELLED}),
-    OrderStatus.PAID: frozenset({OrderStatus.FULFILLED, OrderStatus.CANCELLED}),
+    # A paid order forks by delivery kind: a shipped order goes to FULFILLED; a pickup
+    # (BOPIS) order goes to READY_FOR_PICKUP then PICKED_UP.
+    OrderStatus.PAID: frozenset(
+        {OrderStatus.FULFILLED, OrderStatus.READY_FOR_PICKUP, OrderStatus.CANCELLED}
+    ),
+    OrderStatus.READY_FOR_PICKUP: frozenset({OrderStatus.PICKED_UP, OrderStatus.CANCELLED}),
     OrderStatus.FULFILLED: frozenset(),
+    OrderStatus.PICKED_UP: frozenset(),
     OrderStatus.CANCELLED: frozenset(),
 }
 
@@ -100,9 +107,10 @@ class Order:
     total: Money
     status: OrderStatus
     placed_at: datetime
-    shipping_address: ShippingAddress
+    shipping_address: ShippingAddress | None = None
     shipping: CapturedShipping | None = None
     tax: CapturedTax | None = None
+    fulfillment: Fulfillment | None = None
     id: int | None = field(default=None)
 
     def __post_init__(self) -> None:
@@ -178,3 +186,20 @@ class Order:
     def cancel(self) -> Order:
         """Return a cancelled copy of the order (only legal from a non-terminal state)."""
         return self.transition_to(OrderStatus.CANCELLED)
+
+    def ship(self, fulfillment: Fulfillment) -> Order:
+        """Return a shipped copy: capture the carrier/tracking and move to ``FULFILLED``.
+
+        Legal only from ``PAID`` (the transition table enforces it). Shipping is for a
+        delivery order; a pickup order uses ``mark_ready_for_pickup``/``confirm_pickup``.
+        """
+        shipped = self.transition_to(OrderStatus.FULFILLED)
+        return replace(shipped, fulfillment=fulfillment)
+
+    def mark_ready_for_pickup(self) -> Order:
+        """Return a copy in ``READY_FOR_PICKUP`` (a paid pickup/BOPIS order, prepared)."""
+        return self.transition_to(OrderStatus.READY_FOR_PICKUP)
+
+    def confirm_pickup(self) -> Order:
+        """Return a copy in ``PICKED_UP`` (a prepared pickup order, collected)."""
+        return self.transition_to(OrderStatus.PICKED_UP)

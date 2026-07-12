@@ -21,7 +21,6 @@ from src.domain.order.entities import Order, OrderLine
 from src.domain.order.exceptions import (
     OrderNotFoundError,
     OutOfStockError,
-    VariantNotFoundError,
 )
 from src.domain.order.value_objects import (
     ChannelRef,
@@ -38,6 +37,7 @@ from src.infrastructure.catalog.repositories import (
     DjangoStockRepository,
     DjangoVariantRepository,
 )
+from src.infrastructure.inventory.repositories import DjangoStockLevelRepository
 from src.infrastructure.order.models import OrderLineModel, OrderModel
 from src.infrastructure.order.repositories import (
     DjangoCartForCheckout,
@@ -47,6 +47,11 @@ from src.infrastructure.order.repositories import (
 )
 
 pytestmark = [pytest.mark.django_db, pytest.mark.integration]
+
+
+def _available(sku: str) -> int:
+    """Available-to-promise for a SKU across sources (on_hand - reserved)."""
+    return DjangoStockLevelRepository().available_for_skus([sku]).get(sku, 0)
 
 
 def _user(phone: str = "09120000001"):
@@ -204,31 +209,38 @@ class TestOrderRepository:
 
 
 class TestInventoryAdapter:
-    def test_deduct_reduces_stock(self) -> None:
+    def test_deduct_reserves_against_available_leaving_on_hand(self) -> None:
+        # Placing an order reserves stock: the physical on-hand is untouched (fulfilment
+        # settles it later), but available-to-promise drops by the reserved quantity.
         _seed_variant("HB-250", 5)
 
         DjangoInventory().deduct("HB-250", 3)
 
-        assert DjangoStockRepository().get_quantity("HB-250").value == 2
+        assert DjangoStockRepository().get_quantity("HB-250").value == 5
+        assert _available("HB-250") == 2
 
-    def test_restock_returns_stock(self) -> None:
+    def test_restock_releases_the_reservation(self) -> None:
         _seed_variant("HB-250", 5)
         DjangoInventory().deduct("HB-250", 3)
 
         DjangoInventory().restock("HB-250", 3)
 
         assert DjangoStockRepository().get_quantity("HB-250").value == 5
+        assert _available("HB-250") == 5
 
-    def test_deduct_beyond_stock_raises_out_of_stock(self) -> None:
+    def test_deduct_beyond_available_raises_out_of_stock(self) -> None:
         _seed_variant("HB-250", 1)
 
         with pytest.raises(OutOfStockError) as exc:
             DjangoInventory().deduct("HB-250", 2)
         assert exc.value.available == 1
 
-    def test_deduct_unknown_variant_raises(self) -> None:
-        with pytest.raises(VariantNotFoundError):
+    def test_deduct_a_variant_with_no_stock_is_out_of_stock(self) -> None:
+        # The inventory context is keyed by SKU, not the catalog variant: a SKU with no
+        # stock level has zero available, which reads as out of stock (not a 404).
+        with pytest.raises(OutOfStockError) as exc:
             DjangoInventory().deduct("NOPE-1", 1)
+        assert exc.value.available == 0
 
 
 class TestCartForCheckoutBridge:

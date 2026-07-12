@@ -424,6 +424,7 @@ def _variant_payload(variant: ProductVariant) -> dict[str, object]:
         "product": variant.product.value,
         "sku": variant.sku.value,
         "name": variant.name,
+        "weight_grams": variant.weight_grams,
         "values": [
             {"attribute": value.attribute.value, "value": value.value} for value in variant.values
         ],
@@ -462,6 +463,7 @@ class ProductVariantListCreateView(APIView):
             product=code,
             sku=data["sku"],
             name=data["name"],
+            weight_grams=data["weight_grams"],
             values=tuple(
                 AttributeValueInput(attribute=item["attribute"], value=item["value"])
                 for item in data["values"]

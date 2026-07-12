@@ -68,21 +68,23 @@ export function PreInvoiceView({ number }: PreInvoiceViewProps) {
         </div>
       </div>
 
-      <section className="flex flex-col gap-2">
-        <h2 className="text-sm font-medium text-muted-foreground">{t("issuedFor")}</h2>
-        <div className="flex flex-col gap-1 rounded-xl border border-border p-4 text-sm">
-          <span className="font-medium">{address.recipient_name}</span>
-          <span dir="ltr" className="text-muted-foreground">
-            {address.phone_number}
-          </span>
-          <span>{`${address.province}، ${address.city}`}</span>
-          <span>{address.line1}</span>
-          {address.line2 ? <span>{address.line2}</span> : null}
-          <span dir="ltr" className="text-muted-foreground">
-            {address.postal_code}
-          </span>
-        </div>
-      </section>
+      {address ? (
+        <section className="flex flex-col gap-2">
+          <h2 className="text-sm font-medium text-muted-foreground">{t("issuedFor")}</h2>
+          <div className="flex flex-col gap-1 rounded-xl border border-border p-4 text-sm">
+            <span className="font-medium">{address.recipient_name}</span>
+            <span dir="ltr" className="text-muted-foreground">
+              {address.phone_number}
+            </span>
+            <span>{`${address.province}، ${address.city}`}</span>
+            <span>{address.line1}</span>
+            {address.line2 ? <span>{address.line2}</span> : null}
+            <span dir="ltr" className="text-muted-foreground">
+              {address.postal_code}
+            </span>
+          </div>
+        </section>
+      ) : null}
 
       <Table>
         <TableHeader>

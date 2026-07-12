@@ -94,6 +94,10 @@ class InvalidCapturedTaxError(OrderError):
     """Raised when a captured tax has an out-of-range rate or an invalid amount."""
 
 
+class InvalidFulfillmentError(OrderError):
+    """Raised when a fulfilment record is missing a carrier/tracking or is malformed."""
+
+
 class VariantNotFoundError(OrderError):
     """Raised when an ordered SKU has no matching catalog variant."""
 
@@ -138,3 +142,16 @@ class OrderNotCancellableError(OrderError):
         super().__init__(f"order {number} cannot be cancelled from status {status!r}")
         self.number = number
         self.status = status
+
+
+class FulfillmentMethodMismatchError(OrderError):
+    """Raised when a fulfilment action does not match the order's delivery method.
+
+    Shipping applies only to a delivery order; the ready-for-pickup / picked-up path applies
+    only to a pickup (BOPIS) order. Using the wrong action for the order's method is refused.
+    """
+
+    def __init__(self, number: str, *, expected: str) -> None:
+        super().__init__(f"order {number} requires a {expected} fulfilment action")
+        self.number = number
+        self.expected = expected

@@ -22,6 +22,7 @@ from src.application.order.ports import (
     AddressReader,
     CartForCheckout,
     ChannelReader,
+    CheckoutLine,
     Clock,
     InlineShippingAddress,
     Inventory,
@@ -34,6 +35,7 @@ from src.application.order.ports import (
     ShippingRateReader,
     TaxCalculator,
     UnitOfWork,
+    VariantWeightReader,
 )
 from src.application.shared.events import EventPublisher
 from src.application.shared.owner import safe_owner
@@ -42,6 +44,7 @@ from src.domain.order.entities import Order
 from src.domain.order.events import OrderPlaced
 from src.domain.order.exceptions import (
     EmptyCartError,
+    FulfillmentMethodMismatchError,
     OrderNotCancellableError,
     UnknownChannelError,
     UnknownShippingAddressError,
@@ -53,6 +56,7 @@ from src.domain.order.value_objects import (
     CapturedShipping,
     CapturedTax,
     ChannelRef,
+    Fulfillment,
     Money,
     OrderNumber,
     OrderQuantity,
@@ -72,6 +76,9 @@ _RESOURCE_ORDER = "order"
 _ACTION_ORDER_PLACED = "order.placed"
 _ACTION_ORDER_CANCELLED = "order.cancelled"
 _ACTION_ORDER_CREATED_MANUALLY = "order.created_manually"
+_ACTION_ORDER_SHIPPED = "order.shipped"
+_ACTION_ORDER_READY_FOR_PICKUP = "order.ready_for_pickup"
+_ACTION_ORDER_PICKED_UP = "order.picked_up"
 
 
 class InvalidOrderPageError(Exception):
@@ -190,6 +197,7 @@ class PlaceOrder:
         unit_of_work: UnitOfWork,
         carts: CartForCheckout,
         pricing: PricingReader,
+        weights: VariantWeightReader,
         channels: ChannelReader,
         addresses: AddressReader,
         shipping: ShippingRateReader,
@@ -204,6 +212,7 @@ class PlaceOrder:
         self._uow = unit_of_work
         self._carts = carts
         self._pricing = pricing
+        self._weights = weights
         self._channels = channels
         self._addresses = addresses
         self._shipping = shipping
@@ -218,18 +227,32 @@ class PlaceOrder:
     def execute(self, command: PlaceOrderCommand) -> Order:
         channel = ChannelRef(command.channel)
         currency = _resolve_currency(self._channels, channel.value)
-        shipping_address = self._resolve_shipping(command)
-        quote = self._resolve_shipping_quote(
-            channel.value, command.shipping_method, currency, shipping_address
-        )
-        captured_shipping = CapturedShipping(
-            method_code=quote.method_code, method_name=quote.method_name, cost=quote.cost
-        )
+        # Resolve the address if one was supplied (a pickup order supplies none). The method is
+        # quoted inside the transaction, once the cart is read, because a weight-priced method
+        # needs the order's total weight to pick its rate bracket.
+        shipping_address = self._resolve_shipping_optional(command)
 
         with self._uow.atomic():
             items = self._carts.line_items(command.owner, channel.value)
             if not items:
                 raise EmptyCartError(channel.value)
+
+            weight = self._order_weight(items)
+            quote = self._resolve_shipping_quote(
+                channel.value, command.shipping_method, currency, shipping_address, weight
+            )
+            if quote.is_pickup:
+                # A pickup (BOPIS) order is collected in store: it captures no shipping address.
+                shipping_address = None
+            elif shipping_address is None:
+                # A delivery method must ship somewhere; refused like an unknown address.
+                raise UnknownShippingAddressError("")
+            captured_shipping = CapturedShipping(
+                method_code=quote.method_code,
+                method_name=quote.method_name,
+                cost=quote.cost,
+                is_pickup=quote.is_pickup,
+            )
 
             priced_items = _capture_and_deduct(
                 [(item.sku, item.quantity) for item in items],
@@ -300,35 +323,51 @@ class PlaceOrder:
         )
         return saved
 
-    def _resolve_shipping(self, command: PlaceOrderCommand) -> ShippingAddress:
-        """Resolve the order's captured shipping address from whichever source was given.
+    def _resolve_shipping_optional(self, command: PlaceOrderCommand) -> ShippingAddress | None:
+        """Resolve the captured shipping address if one was supplied, else ``None``.
 
-        An inline address (a guest's one-off form) is captured directly; otherwise the
-        saved ``address_id`` is resolved from the owner's book. Supplying neither cannot
-        ship anywhere, so it is refused exactly like an unknown saved address.
+        An inline address (a guest's one-off form) is captured directly; otherwise a saved
+        ``address_id`` is resolved from the owner's book. Supplying neither yields ``None`` --
+        legal for a pickup (BOPIS) order; a delivery order without an address is refused by
+        the caller once the method's kind is known.
         """
         if command.shipping_address is not None:
             return _to_shipping_address(command.shipping_address)
         if command.address_id is not None:
             return _resolve_shipping_address(self._addresses, command.owner, command.address_id)
-        raise UnknownShippingAddressError("")
+        return None
+
+    def _order_weight(self, items: Sequence[CheckoutLine]) -> int:
+        """Total shipping weight (grams) of the cart: each variant's weight times its quantity.
+
+        Looked up from the catalog through a narrow port; an unweighed variant contributes 0,
+        so a catalog with no weights behaves exactly as the flat-rate case.
+        """
+        by_sku = self._weights.weight_of([item.sku for item in items])
+        return sum(by_sku.get(item.sku, 0) * item.quantity for item in items)
 
     def _resolve_shipping_quote(
-        self, channel: str, method_code: str, currency: str, address: ShippingAddress
+        self,
+        channel: str,
+        method_code: str,
+        currency: str,
+        address: ShippingAddress | None,
+        weight_grams: int,
     ) -> ShippingQuote:
         """Quote the chosen shipping method, or refuse a method the channel does not offer.
 
-        Resolved before the transaction (a pure config read, like the address) and priced for
-        the captured destination, so the rate re-resolves server-side from the address rather
-        than trusting whatever the client was shown. An unknown or currency-mismatched method
-        never enters the unit of work.
+        Priced server-side for the captured destination *and* the order's weight, so the rate
+        re-resolves from the address and the real cart rather than trusting whatever the client
+        was shown. A pickup order has no address, so the destination is blank (no zoning -- the
+        method's default rate). An unknown or currency-mismatched method never commits.
         """
         quote = self._shipping.quote(
             channel=channel,
             method_code=method_code,
             currency=currency,
-            province=address.province,
-            city=address.city,
+            province=address.province if address is not None else "",
+            city=address.city if address is not None else "",
+            weight_grams=weight_grams,
         )
         if quote is None:
             raise UnknownShippingMethodError(channel, method_code)
@@ -577,4 +616,149 @@ class CancelMyOrder:
                 ),
             )
         logger.info("order_cancelled", owner=safe_owner(command.owner), order_number=canonical)
+        return saved
+
+
+@dataclass(frozen=True)
+class ShipOrderCommand:
+    """Input for staff shipping a paid delivery order (capture carrier + tracking)."""
+
+    number: str
+    carrier: str
+    tracking_number: str
+    tracking_url: str | None = None
+
+
+class ShipOrder:
+    """Ship a paid delivery order: capture the carrier/tracking and move to ``FULFILLED``.
+
+    A staff (``manage_orders``) action, by order number, not owner-scoped. Row-locked so two
+    concurrent transitions serialise. Refuses a pickup order (which uses the pickup path) and
+    -- via the state machine -- any order not in ``PAID``. The captured shipment is audited.
+    """
+
+    def __init__(
+        self, *, unit_of_work: UnitOfWork, orders: OrderRepository, audit: AuditRecorder
+    ) -> None:
+        self._uow = unit_of_work
+        self._orders = orders
+        self._audit = audit
+
+    def execute(self, command: ShipOrderCommand, *, actor: str | None = None) -> Order:
+        canonical = OrderNumber(command.number).value
+        # Build the Fulfillment first so a malformed carrier/tracking fails before any lock.
+        fulfillment = Fulfillment(
+            carrier=command.carrier,
+            tracking_number=command.tracking_number,
+            tracking_url=command.tracking_url,
+        )
+        with self._uow.atomic():
+            order = self._orders.get_for_update_any(canonical)
+            if order.shipping is not None and order.shipping.is_pickup:
+                raise FulfillmentMethodMismatchError(canonical, expected="pickup")
+            shipped = order.ship(fulfillment)  # PAID -> FULFILLED (state machine guards it)
+            saved = self._orders.set_status(shipped, OrderStatus.FULFILLED)
+            self._audit.record(
+                action=_ACTION_ORDER_SHIPPED,
+                resource_type=_RESOURCE_ORDER,
+                resource_id=canonical,
+                actor=actor,
+                changes=(
+                    FieldChange(
+                        field="status",
+                        before=OrderStatus.PAID.value,
+                        after=OrderStatus.FULFILLED.value,
+                    ),
+                    FieldChange(field="carrier", after=fulfillment.carrier),
+                    FieldChange(field="tracking_number", after=fulfillment.tracking_number),
+                ),
+            )
+        logger.info(
+            "order_shipped",
+            order_number=canonical,
+            carrier=fulfillment.carrier,
+            actor=actor,
+        )
+        return saved
+
+
+@dataclass(frozen=True)
+class FulfillmentActionCommand:
+    """Input for a staff pickup transition (ready-for-pickup / confirm-pickup) by number."""
+
+    number: str
+
+
+class MarkOrderReadyForPickup:
+    """Move a paid pickup (BOPIS) order to ``READY_FOR_PICKUP`` (staff, ``manage_orders``).
+
+    Row-locked; refuses a delivery order (which ships instead) and -- via the state machine --
+    any order not in ``PAID``. Audited.
+    """
+
+    def __init__(
+        self, *, unit_of_work: UnitOfWork, orders: OrderRepository, audit: AuditRecorder
+    ) -> None:
+        self._uow = unit_of_work
+        self._orders = orders
+        self._audit = audit
+
+    def execute(self, command: FulfillmentActionCommand, *, actor: str | None = None) -> Order:
+        canonical = OrderNumber(command.number).value
+        with self._uow.atomic():
+            order = self._orders.get_for_update_any(canonical)
+            if order.shipping is None or not order.shipping.is_pickup:
+                raise FulfillmentMethodMismatchError(canonical, expected="delivery")
+            ready = order.mark_ready_for_pickup()
+            saved = self._orders.set_status(ready, OrderStatus.READY_FOR_PICKUP)
+            self._audit.record(
+                action=_ACTION_ORDER_READY_FOR_PICKUP,
+                resource_type=_RESOURCE_ORDER,
+                resource_id=canonical,
+                actor=actor,
+                changes=(
+                    FieldChange(
+                        field="status",
+                        before=OrderStatus.PAID.value,
+                        after=OrderStatus.READY_FOR_PICKUP.value,
+                    ),
+                ),
+            )
+        logger.info("order_ready_for_pickup", order_number=canonical, actor=actor)
+        return saved
+
+
+class ConfirmOrderPickup:
+    """Move a ready pickup order to ``PICKED_UP`` (staff, ``manage_orders``).
+
+    Row-locked; the state machine allows this only from ``READY_FOR_PICKUP``. Audited.
+    """
+
+    def __init__(
+        self, *, unit_of_work: UnitOfWork, orders: OrderRepository, audit: AuditRecorder
+    ) -> None:
+        self._uow = unit_of_work
+        self._orders = orders
+        self._audit = audit
+
+    def execute(self, command: FulfillmentActionCommand, *, actor: str | None = None) -> Order:
+        canonical = OrderNumber(command.number).value
+        with self._uow.atomic():
+            order = self._orders.get_for_update_any(canonical)
+            picked_up = order.confirm_pickup()
+            saved = self._orders.set_status(picked_up, OrderStatus.PICKED_UP)
+            self._audit.record(
+                action=_ACTION_ORDER_PICKED_UP,
+                resource_type=_RESOURCE_ORDER,
+                resource_id=canonical,
+                actor=actor,
+                changes=(
+                    FieldChange(
+                        field="status",
+                        before=OrderStatus.READY_FOR_PICKUP.value,
+                        after=OrderStatus.PICKED_UP.value,
+                    ),
+                ),
+            )
+        logger.info("order_picked_up", order_number=canonical, actor=actor)
         return saved

@@ -8,11 +8,14 @@ from __future__ import annotations
 
 from src.application.order.use_cases import (
     CancelMyOrder,
+    ConfirmOrderPickup,
     CreateManualOrder,
     GetMyOrder,
     GetOrderForInvoice,
     ListMyOrders,
+    MarkOrderReadyForPickup,
     PlaceOrder,
+    ShipOrder,
 )
 from src.infrastructure.order.clock import SystemClock
 from src.infrastructure.order.number_generator import SecureOrderNumberGenerator
@@ -26,6 +29,7 @@ from src.infrastructure.order.repositories import (
     DjangoOrderRepository,
     DjangoPricingReader,
     DjangoUnitOfWork,
+    DjangoVariantWeightReader,
 )
 from src.interface.api.audit.container import build_audit_recorder
 from src.interface.api.events.container import build_event_publisher
@@ -36,6 +40,7 @@ def build_place_order() -> PlaceOrder:
         unit_of_work=DjangoUnitOfWork(),
         carts=DjangoCartForCheckout(),
         pricing=DjangoPricingReader(),
+        weights=DjangoVariantWeightReader(),
         channels=DjangoChannelReader(),
         addresses=DjangoAddressReader(),
         shipping=ConfiguredShippingRateReader(),
@@ -83,3 +88,27 @@ def build_create_manual_order() -> CreateManualOrder:
 
 def build_get_order_for_invoice() -> GetOrderForInvoice:
     return GetOrderForInvoice(DjangoOrderRepository())
+
+
+def build_ship_order() -> ShipOrder:
+    return ShipOrder(
+        unit_of_work=DjangoUnitOfWork(),
+        orders=DjangoOrderRepository(),
+        audit=build_audit_recorder(),
+    )
+
+
+def build_mark_order_ready_for_pickup() -> MarkOrderReadyForPickup:
+    return MarkOrderReadyForPickup(
+        unit_of_work=DjangoUnitOfWork(),
+        orders=DjangoOrderRepository(),
+        audit=build_audit_recorder(),
+    )
+
+
+def build_confirm_order_pickup() -> ConfirmOrderPickup:
+    return ConfirmOrderPickup(
+        unit_of_work=DjangoUnitOfWork(),
+        orders=DjangoOrderRepository(),
+        audit=build_audit_recorder(),
+    )

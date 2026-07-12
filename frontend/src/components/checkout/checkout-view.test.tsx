@@ -99,8 +99,8 @@ const savedAddress = {
 // The channel's offered shipping methods. "standard" is first, so it is preselected and its
 // cost (50000) is added to the 240000 goods subtotal for a 290000 preview total.
 const shippingMethods = [
-  { code: "standard", name: "پست پیشتاز", price: "50000.0000", currency: "IRR", min_days: 3, max_days: 5 },
-  { code: "express", name: "پیک اکسپرس", price: "120000.0000", currency: "IRR", min_days: 1, max_days: 2 },
+  { code: "standard", name: "پست پیشتاز", price: "50000.0000", currency: "IRR", min_days: 3, max_days: 5, is_pickup: false },
+  { code: "express", name: "پیک اکسپرس", price: "120000.0000", currency: "IRR", min_days: 1, max_days: 2, is_pickup: false },
 ];
 
 function shippingHandler() {
@@ -281,6 +281,67 @@ describe("CheckoutView", () => {
       shipping_method: "standard",
       address_id: "ADDR-HOME000001",
     });
+  });
+
+  it("places a pickup order with no shipping address when a pickup method is chosen", async () => {
+    // A pickup (BOPIS) method captures no address: even a signed-in shopper's order is
+    // placed with just the channel + method, never an address_id.
+    authed();
+    let placedBody: unknown;
+    server.use(
+      taxHandler(),
+      http.get("*/cart/", () => HttpResponse.json(cartWithLine)),
+      http.get("*/addresses/", () => HttpResponse.json([savedAddress])),
+      http.get("*/shipping/methods/", () =>
+        HttpResponse.json({
+          channel: "ir-main",
+          methods: [
+            ...shippingMethods,
+            {
+              code: "pickup",
+              name: "تحویل حضوری",
+              price: "0.0000",
+              currency: "IRR",
+              min_days: 0,
+              max_days: 1,
+              is_pickup: true,
+            },
+          ],
+        }),
+      ),
+      http.post("*/orders/", async ({ request }) => {
+        placedBody = await request.json();
+        return HttpResponse.json(
+          {
+            number: "ORD-PICKUP0001",
+            channel: "ir-main",
+            currency: "IRR",
+            status: "pending",
+            total: "240000.0000",
+            placed_at: "2026-07-02T12:00:00Z",
+            items: [],
+            is_pickup: true,
+            shipping_address: null,
+          },
+          { status: 201 },
+        );
+      }),
+      http.post("*/payments/", () => codInitiation("ORD-PICKUP0001")),
+    );
+
+    renderWithProviders(<CheckoutView />);
+
+    await screen.findByText("Sara Ahmadi");
+    await userEvent.click(screen.getByRole("button", { name: checkout.continue }));
+
+    // Choose the pickup method, then place.
+    const pickup = await screen.findByRole("radio", { name: /تحویل حضوری/ });
+    await userEvent.click(pickup);
+    await placeOrderNow();
+
+    await waitFor(() => expect(push).toHaveBeenCalledWith("/orders/ORD-PICKUP0001"));
+    // No address of any kind is submitted for a pickup order.
+    expect(placedBody).toEqual({ channel: "ir-main", shipping_method: "pickup" });
   });
 
   it("initiates a COD payment for the placed order and shows the method choices", async () => {
@@ -557,7 +618,7 @@ describe("CheckoutView", () => {
         return HttpResponse.json({
           channel: "ir-main",
           methods: [
-            { code: "standard", name: "پست پیشتاز", price, currency: "IRR", min_days: 3, max_days: 5 },
+            { code: "standard", name: "پست پیشتاز", price, currency: "IRR", min_days: 3, max_days: 5, is_pickup: false },
           ],
         });
       }),

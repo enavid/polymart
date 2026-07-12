@@ -11,6 +11,7 @@ from src.domain.shipping.exceptions import (
     InvalidMoneyError,
     InvalidShippingMethodCodeError,
     InvalidShippingZoneCodeError,
+    InvalidWeightTableError,
     InvalidZonedRateError,
 )
 from src.domain.shipping.value_objects import (
@@ -18,6 +19,8 @@ from src.domain.shipping.value_objects import (
     Money,
     ShippingMethodCode,
     ShippingZoneCode,
+    WeightBracket,
+    WeightTable,
     ZonedRate,
 )
 
@@ -143,3 +146,69 @@ class TestZonedRate:
         # Every rate in a table settles in the same currency; a mixed table is a config bug.
         with pytest.raises(InvalidZonedRateError):
             ZonedRate(default=self._money("50000"), by_zone={"tehran": Money(Decimal("10"), "USD")})
+
+
+class TestWeightTable:
+    @staticmethod
+    def _money(amount: str, currency: str = "IRR") -> Money:
+        return Money(Decimal(amount), currency)
+
+    def _table(self) -> WeightTable:
+        return WeightTable(
+            brackets=(
+                WeightBracket(up_to_grams=1000, price=self._money("30000")),
+                WeightBracket(up_to_grams=5000, price=self._money("60000")),
+                WeightBracket(up_to_grams=None, price=self._money("100000")),
+            )
+        )
+
+    def test_price_for_picks_the_first_covering_bracket(self) -> None:
+        table = self._table()
+        assert table.price_for(500).amount == Decimal("30000")  # <= 1000
+        assert table.price_for(1000).amount == Decimal("30000")  # inclusive bound
+        assert table.price_for(1001).amount == Decimal("60000")  # next bracket
+        assert table.price_for(5000).amount == Decimal("60000")
+        assert table.price_for(9000).amount == Decimal("100000")  # overflow
+
+    def test_from_price_is_the_lightest_bracket(self) -> None:
+        assert self._table().from_price.amount == Decimal("30000")
+
+    def test_rejects_an_empty_table(self) -> None:
+        with pytest.raises(InvalidWeightTableError):
+            WeightTable(brackets=())
+
+    def test_rejects_a_table_without_an_overflow_bracket(self) -> None:
+        with pytest.raises(InvalidWeightTableError):
+            WeightTable(brackets=(WeightBracket(up_to_grams=1000, price=self._money("30000")),))
+
+    def test_rejects_an_overflow_that_is_not_last(self) -> None:
+        with pytest.raises(InvalidWeightTableError):
+            WeightTable(
+                brackets=(
+                    WeightBracket(up_to_grams=None, price=self._money("100000")),
+                    WeightBracket(up_to_grams=1000, price=self._money("30000")),
+                )
+            )
+
+    def test_rejects_non_increasing_bounds(self) -> None:
+        with pytest.raises(InvalidWeightTableError):
+            WeightTable(
+                brackets=(
+                    WeightBracket(up_to_grams=1000, price=self._money("30000")),
+                    WeightBracket(up_to_grams=1000, price=self._money("60000")),
+                    WeightBracket(up_to_grams=None, price=self._money("100000")),
+                )
+            )
+
+    def test_rejects_a_mixed_currency_table(self) -> None:
+        with pytest.raises(InvalidWeightTableError):
+            WeightTable(
+                brackets=(
+                    WeightBracket(up_to_grams=1000, price=self._money("30000", "IRR")),
+                    WeightBracket(up_to_grams=None, price=self._money("100", "USD")),
+                )
+            )
+
+    def test_rejects_a_non_positive_bound(self) -> None:
+        with pytest.raises(InvalidWeightTableError):
+            WeightBracket(up_to_grams=0, price=self._money("30000"))

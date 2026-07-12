@@ -11,9 +11,10 @@ import pytest
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import AbstractBaseUser
 
-from src.domain.access.registry import CHANNEL_ADMIN_ROLE
+from src.domain.access.registry import CHANNEL_ADMIN_ROLE, INVENTORY_ADMIN_ROLE
 from src.infrastructure.access.gateway import GuardianAccessControl
 from src.infrastructure.channel.models import ChannelModel
+from src.infrastructure.inventory.models import StockSourceModel
 
 pytestmark = [pytest.mark.django_db, pytest.mark.integration]
 
@@ -31,6 +32,11 @@ def user() -> AbstractBaseUser:
 @pytest.fixture
 def channel() -> ChannelModel:
     return ChannelModel.objects.create(slug="coffee", name="Coffee", currency_code="IRR")
+
+
+@pytest.fixture
+def source() -> StockSourceModel:
+    return StockSourceModel.objects.create(code="north", name="North Warehouse")
 
 
 class TestRoleLayer:
@@ -62,3 +68,32 @@ class TestObjectScopeLayer:
         self, gateway: GuardianAccessControl, user: AbstractBaseUser, channel: ChannelModel
     ) -> None:
         assert gateway.can_manage_channel(user.pk, channel.pk) is False
+
+
+class TestStockSourceRoleLayer:
+    def test_inventory_admin_role_grants_global_source_management(
+        self, gateway: GuardianAccessControl, user: AbstractBaseUser, source: StockSourceModel
+    ) -> None:
+        gateway.assign_role(user.pk, INVENTORY_ADMIN_ROLE)
+
+        other = StockSourceModel.objects.create(code="south", name="South")
+        assert gateway.can_manage_stock_source(user.pk, source.pk)
+        assert gateway.can_manage_stock_source(user.pk, other.pk)  # global => any source
+
+
+class TestStockSourceObjectScopeLayer:
+    def test_grant_scopes_management_to_a_single_source(
+        self, gateway: GuardianAccessControl, user: AbstractBaseUser, source: StockSourceModel
+    ) -> None:
+        other = StockSourceModel.objects.create(code="south", name="South")
+
+        gateway.grant_stock_source_management(user.pk, source.pk)
+
+        assert gateway.can_manage_stock_source(user.pk, source.pk) is True
+        # The grant does not leak to other sources.
+        assert gateway.can_manage_stock_source(user.pk, other.pk) is False
+
+    def test_user_without_any_grant_cannot_manage_a_source(
+        self, gateway: GuardianAccessControl, user: AbstractBaseUser, source: StockSourceModel
+    ) -> None:
+        assert gateway.can_manage_stock_source(user.pk, source.pk) is False

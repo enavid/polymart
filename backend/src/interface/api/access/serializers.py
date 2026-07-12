@@ -23,6 +23,13 @@ class GrantChannelManagementSerializer(serializers.Serializer):
     channel_slug = serializers.CharField()
 
 
+class GrantStockSourceManagementSerializer(serializers.Serializer):
+    """Request body for granting a user object-scoped stock-source management."""
+
+    user_id = serializers.IntegerField(min_value=1)
+    source_code = serializers.CharField()
+
+
 class UserAccountSerializer(serializers.Serializer):
     """Response projection of a user account for the access-admin picker."""
 

@@ -21,6 +21,7 @@ from src.domain.order.exceptions import (
     InvalidCapturedShippingError,
     InvalidCapturedTaxError,
     InvalidChannelReferenceError,
+    InvalidFulfillmentError,
     InvalidMoneyError,
     InvalidOrderNumberError,
     InvalidOrderQuantityError,
@@ -67,6 +68,10 @@ _SHIPPING_METHOD_NAME_MAX_LENGTH = 120
 # method it is a snapshot, so the order context checks only that it is a sane percentage
 # (0..100), not the tax context's own precision rules.
 _TAX_RATE_MAX = Decimal("100")
+# The captured fulfilment carrier/tracking bounds; a snapshot of what staff entered.
+_CARRIER_MAX_LENGTH = 120
+_TRACKING_NUMBER_MAX_LENGTH = 128
+_TRACKING_URL_MAX_LENGTH = 500
 
 
 @dataclass(frozen=True)
@@ -205,14 +210,19 @@ class OrderStatus(StrEnum):
     """The lifecycle states of an order (a ``str`` enum so it serialises directly).
 
     * ``PENDING`` -- placed, stock captured, awaiting payment.
-    * ``PAID`` -- payment captured (a later phase drives this transition).
-    * ``FULFILLED`` -- shipped/handed over (the operations phase drives this).
+    * ``PAID`` -- payment captured.
+    * ``FULFILLED`` -- shipped (a carrier + tracking captured); terminal for a delivery
+      order.
+    * ``READY_FOR_PICKUP`` -- a pickup (BOPIS) order prepared and awaiting collection.
+    * ``PICKED_UP`` -- a pickup order collected by the shopper; terminal.
     * ``CANCELLED`` -- terminated before fulfilment; captured stock is returned.
     """
 
     PENDING = "pending"
     PAID = "paid"
     FULFILLED = "fulfilled"
+    READY_FOR_PICKUP = "ready_for_pickup"
+    PICKED_UP = "picked_up"
     CANCELLED = "cancelled"
 
 
@@ -269,6 +279,7 @@ class CapturedShipping:
     method_code: str
     method_name: str
     cost: Money
+    is_pickup: bool = False
 
     def __post_init__(self) -> None:
         code = self.method_code.strip()
@@ -301,3 +312,34 @@ class CapturedTax:
             raise InvalidCapturedTaxError(f"rate must be a finite Decimal: {self.rate!r}")
         if self.rate < 0 or self.rate > _TAX_RATE_MAX:
             raise InvalidCapturedTaxError(f"rate out of range [0, 100]: {self.rate!r}")
+
+
+@dataclass(frozen=True)
+class Fulfillment:
+    """The delivery record captured when staff fulfil a shipped order.
+
+    For a delivery order this is the carrier and its tracking reference (an optional URL the
+    shopper can follow); it is captured when the order moves to ``FULFILLED``. A pickup
+    (BOPIS) order carries no shipment -- its collection is the ``READY_FOR_PICKUP`` ->
+    ``PICKED_UP`` lifecycle -- so this is set only on a shipped order. This is a snapshot:
+    the carrier/tracking staff entered at fulfilment, not a live carrier-API reference.
+    """
+
+    carrier: str
+    tracking_number: str
+    tracking_url: str | None = None
+
+    def __post_init__(self) -> None:
+        carrier = self.carrier.strip()
+        if not carrier or len(carrier) > _CARRIER_MAX_LENGTH:
+            raise InvalidFulfillmentError(f"carrier: {self.carrier!r}")
+        tracking = self.tracking_number.strip()
+        if not tracking or len(tracking) > _TRACKING_NUMBER_MAX_LENGTH:
+            raise InvalidFulfillmentError(f"tracking_number: {self.tracking_number!r}")
+        object.__setattr__(self, "carrier", carrier)
+        object.__setattr__(self, "tracking_number", tracking)
+        if self.tracking_url is not None:
+            url = self.tracking_url.strip()
+            if not url or len(url) > _TRACKING_URL_MAX_LENGTH:
+                raise InvalidFulfillmentError(f"tracking_url: {self.tracking_url!r}")
+            object.__setattr__(self, "tracking_url", url)

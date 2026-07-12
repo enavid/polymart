@@ -1,4 +1,9 @@
-"""Integration tests for the Django variant-stock repository (real DB)."""
+"""Integration tests for the catalog stock bridge onto the inventory context (real DB).
+
+``DjangoStockRepository`` keeps the catalog's simple single-count surface but stores the
+count as an on-hand level on the inventory context's default source, so these tests assert
+the round-trip behaviour and the backing ``inventory_stock_level`` row.
+"""
 
 from __future__ import annotations
 
@@ -12,13 +17,13 @@ from src.domain.catalog.value_objects import (
     Sku,
     StockQuantity,
 )
-from src.infrastructure.catalog.models import VariantStockModel
 from src.infrastructure.catalog.repositories import (
     DjangoProductRepository,
     DjangoProductTypeRepository,
     DjangoStockRepository,
     DjangoVariantRepository,
 )
+from src.infrastructure.inventory.models import StockLevelModel
 
 pytestmark = [pytest.mark.django_db, pytest.mark.integration]
 
@@ -45,7 +50,8 @@ class TestSetQuantity:
         result = repo.set_quantity("HB-250", StockQuantity(12))
 
         assert result == StockQuantity(12)
-        assert VariantStockModel.objects.get(variant__sku="HB-250").quantity == 12
+        level = StockLevelModel.objects.get(sku="HB-250", source__code="main")
+        assert level.on_hand == 12
 
     def test_setting_again_overwrites_without_a_second_row(self) -> None:
         _seed_variant()
@@ -54,7 +60,7 @@ class TestSetQuantity:
 
         repo.set_quantity("HB-250", StockQuantity(3))
 
-        assert VariantStockModel.objects.filter(variant__sku="HB-250").count() == 1
+        assert StockLevelModel.objects.filter(sku="HB-250").count() == 1
         assert repo.get_quantity("HB-250") == StockQuantity(3)
 
     def test_raises_for_an_unknown_variant(self) -> None:
@@ -102,11 +108,3 @@ class TestGetQuantity:
         _seed_variant()
 
         assert DjangoStockRepository().get_quantity("HB-250") == StockQuantity(0)
-
-
-def test_variant_stock_model_str_is_informative() -> None:
-    _seed_variant()
-    DjangoStockRepository().set_quantity("HB-250", StockQuantity(7))
-
-    stock = VariantStockModel.objects.get(variant__sku="HB-250")
-    assert str(stock) == f"{stock.variant_id}:7"

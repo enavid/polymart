@@ -312,7 +312,8 @@
       "mediaUrl": "نشانی تصویر",
       "mediaAlt": "متن جایگزین",
       "addMedia": "افزودن رسانه",
-      "backToProducts": "بازگشت به محصولات"
+      "backToProducts": "بازگشت به محصولات",
+      "weightGrams": "وزن (گرم)"
     },
     "variantDetail": {
       "title": "تنوع",
@@ -464,7 +465,8 @@
     "unavailableBlocked": "یک کالای ناموجود در سبد شماست؛ ابتدا آن را حذف کنید.",
     "backToCart": "بازگشت به سبد",
     "addressError": "ذخیرهٔ آدرس ممکن نشد. اطلاعات واردشده را بررسی کنید.",
-    "placeError": "ثبت سفارش ممکن نشد. موجودی، قیمت یا آدرس تغییر کرده است."
+    "placeError": "ثبت سفارش ممکن نشد. موجودی، قیمت یا آدرس تغییر کرده است.",
+    "pickupSelectedNote": "برای تحویل حضوری آدرس ارسال لازم نیست."
   },
   "orders": {
     "title": "سفارش‌های من",
@@ -495,7 +497,23 @@
     "statusPending": "در انتظار پرداخت",
     "statusPaid": "پرداخت‌شده",
     "statusFulfilled": "ارسال‌شده",
-    "statusCancelled": "لغوشده"
+    "statusCancelled": "لغوشده",
+    "statusReadyForPickup": "آمادهٔ تحویل",
+    "statusPickedUp": "تحویل‌گرفته‌شده",
+    "fulfillmentTitle": "تحویل سفارش",
+    "pickupNote": "این سفارش به‌صورت حضوری از فروشگاه تحویل داده می‌شود.",
+    "carrier": "شرکت حمل",
+    "trackingNumber": "کد رهگیری",
+    "trackingUrl": "لینک رهگیری (اختیاری)",
+    "shipHint": "شرکت حمل و کد رهگیری را وارد کنید تا سفارش ارسال‌شده ثبت شود.",
+    "markShipped": "ثبت ارسال",
+    "shippingInProgress": "در حال ثبت...",
+    "marking": "در حال ثبت...",
+    "markReadyForPickup": "اعلام آماده‌بودن برای تحویل",
+    "confirmPickup": "تأیید تحویل حضوری",
+    "printLabel": "چاپ برچسب ارسال",
+    "fulfillError": "انجام عملیات ممکن نشد.",
+    "confirming": "در حال تأیید..."
   },
   "payment": {
     "sectionTitle": "پرداخت",
@@ -609,5 +627,15 @@
     "validationError": "لطفاً اطلاعات واردشده را بررسی کنید.",
     "limitExceeded": "به سقفِ تعداد آدرس‌های ذخیره‌شده رسیده‌اید.",
     "notFound": "این آدرس یافت نشد."
+  },
+  "shippingLabel": {
+    "title": "برچسب ارسال",
+    "print": "چاپ",
+    "loadError": "بارگذاری برچسب ارسال ممکن نشد.",
+    "shipTo": "گیرنده",
+    "shipment": "مرسوله",
+    "packingList": "اقلام سفارش",
+    "pickupNote": "این سفارش تحویل حضوری است و آدرس ارسالی ندارد.",
+    "note": "این برگه برای بسته‌بندی و ارسال سفارش است."
   }
 }

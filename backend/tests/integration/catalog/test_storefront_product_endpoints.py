@@ -261,6 +261,36 @@ class TestChannelPricing:
         assert "from_price" not in item
         assert "available" not in item
 
+    def test_a_zero_stock_variant_reads_as_out_of_stock(self) -> None:
+        from src.domain.catalog.value_objects import StockQuantity
+        from src.infrastructure.catalog.repositories import DjangoStockRepository
+
+        self._seed_priced()
+        DjangoStockRepository().set_quantity("HB-250", StockQuantity(0))
+
+        response = APIClient().get(_LIST_URL, {"channel": "ir-main"})
+
+        item = next(p for p in response.data["results"] if p["code"] == "house-blend")
+        assert item["available"] is False
+
+    def test_a_backorderable_variant_reads_as_available_even_at_zero_stock(self) -> None:
+        # Backorder is buyability past physical stock: a flagged variant stays available
+        # even when available-to-promise is 0.
+        from src.domain.catalog.value_objects import StockQuantity
+        from src.infrastructure.catalog.repositories import DjangoStockRepository
+        from src.infrastructure.inventory.repositories import DjangoStockPolicyRepository
+
+        self._seed_priced()
+        DjangoStockRepository().set_quantity("HB-250", StockQuantity(0))
+        DjangoStockPolicyRepository().set_policy(
+            "HB-250", backorderable=True, low_stock_threshold=0
+        )
+
+        response = APIClient().get(_LIST_URL, {"channel": "ir-main"})
+
+        item = next(p for p in response.data["results"] if p["code"] == "house-blend")
+        assert item["available"] is True
+
 
 class TestImages:
     """The storefront read surfaces a product's primary image (promoted from a variant)."""

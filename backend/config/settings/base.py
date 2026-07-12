@@ -38,6 +38,7 @@ INSTALLED_APPS = [
     "src.infrastructure.access.apps.AccessConfig",
     "src.infrastructure.audit.apps.AuditConfig",
     "src.infrastructure.catalog.apps.CatalogConfig",
+    "src.infrastructure.inventory.apps.InventoryConfig",
     "src.infrastructure.cart.apps.CartConfig",
     "src.infrastructure.order.apps.OrderConfig",
     "src.infrastructure.address.apps.AddressConfig",

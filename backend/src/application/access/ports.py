@@ -29,3 +29,12 @@ class AccessControlGateway(ABC):
     def can_manage_channel(self, user_id: int, channel_id: int) -> bool:
         """Return whether the user may manage this channel, by either layer
         (a global role/permission or a per-object grant)."""
+
+    @abstractmethod
+    def grant_stock_source_management(self, user_id: int, source_id: int) -> None:
+        """Grant the user object-scoped management of one stock source (warehouse)."""
+
+    @abstractmethod
+    def can_manage_stock_source(self, user_id: int, source_id: int) -> bool:
+        """Return whether the user may manage this stock source, by either layer
+        (a global role/permission or a per-object grant)."""

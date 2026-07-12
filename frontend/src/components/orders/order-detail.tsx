@@ -16,7 +16,15 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { ApiError } from "@/lib/api/client";
-import { cancelOrder, getMyOrder, type Order } from "@/lib/api/orders";
+import {
+  cancelOrder,
+  confirmOrderPickup,
+  getMyOrder,
+  markOrderReadyForPickup,
+  type Order,
+  type OrderStatus,
+  shipOrder,
+} from "@/lib/api/orders";
 import {
   confirmCardToCardPayment,
   getCardToCardInstructions,
@@ -31,12 +39,16 @@ import { useCurrentUser } from "@/lib/hooks/use-auth";
 import { orderStatusKey } from "@/lib/orders/status";
 import { paymentMethodKey, paymentStatusKey } from "@/lib/payments/labels";
 
-// The happy-path lifecycle, in order, for the status stepper. Cancellation is a
-// terminal branch shown separately rather than a step.
-const TIMELINE: ReadonlyArray<"pending" | "paid" | "fulfilled"> = [
+// The happy-path lifecycle, in order, for the status stepper. It forks after `paid` by
+// delivery kind: a delivery order is shipped (`fulfilled`); a pickup order is prepared
+// (`ready_for_pickup`) then collected (`picked_up`). Cancellation is a terminal branch
+// shown separately rather than a step.
+const DELIVERY_TIMELINE: readonly OrderStatus[] = ["pending", "paid", "fulfilled"];
+const PICKUP_TIMELINE: readonly OrderStatus[] = [
   "pending",
   "paid",
-  "fulfilled",
+  "ready_for_pickup",
+  "picked_up",
 ];
 
 const ORDER_KEY = (number: string) => ["order", number] as const;
@@ -128,21 +140,30 @@ export function OrderDetail({ number }: { number: string }) {
 
       {isCancelled ? <Alert variant="destructive">{t("cancelledNote")}</Alert> : null}
 
-      <section className="flex flex-col gap-2">
-        <h2 className="text-sm font-medium text-muted-foreground">{t("shippingAddress")}</h2>
-        <div className="flex flex-col gap-1 rounded-xl border border-border p-4 text-sm">
-          <span className="font-medium">{order.shipping_address.recipient_name}</span>
-          <span dir="ltr" className="text-muted-foreground">
-            {order.shipping_address.phone_number}
-          </span>
-          <span>{`${order.shipping_address.province}، ${order.shipping_address.city}`}</span>
-          <span>{order.shipping_address.line1}</span>
-          {order.shipping_address.line2 ? <span>{order.shipping_address.line2}</span> : null}
-          <span dir="ltr" className="text-muted-foreground">
-            {order.shipping_address.postal_code}
-          </span>
-        </div>
-      </section>
+      {order.shipping_address ? (
+        <section className="flex flex-col gap-2">
+          <h2 className="text-sm font-medium text-muted-foreground">{t("shippingAddress")}</h2>
+          <div className="flex flex-col gap-1 rounded-xl border border-border p-4 text-sm">
+            <span className="font-medium">{order.shipping_address.recipient_name}</span>
+            <span dir="ltr" className="text-muted-foreground">
+              {order.shipping_address.phone_number}
+            </span>
+            <span>{`${order.shipping_address.province}، ${order.shipping_address.city}`}</span>
+            <span>{order.shipping_address.line1}</span>
+            {order.shipping_address.line2 ? <span>{order.shipping_address.line2}</span> : null}
+            <span dir="ltr" className="text-muted-foreground">
+              {order.shipping_address.postal_code}
+            </span>
+          </div>
+        </section>
+      ) : order.is_pickup ? (
+        <section className="flex flex-col gap-2">
+          <h2 className="text-sm font-medium text-muted-foreground">{t("fulfillmentTitle")}</h2>
+          <div className="rounded-xl border border-border p-4 text-sm">{t("pickupNote")}</div>
+        </section>
+      ) : null}
+
+      <FulfillmentSection order={order} />
 
       <PaymentSection number={order.number} />
 
@@ -580,13 +601,15 @@ function StaffRefundControl({ payment, number }: { payment: Payment; number: str
 /** A linear stepper over the happy-path statuses, marking the reached ones. */
 function StatusTimeline({ order }: { order: Order }) {
   const t = useTranslations("orders");
-  const reachedIndex = TIMELINE.indexOf(order.status as (typeof TIMELINE)[number]);
+  // A pickup order follows the ready-for-pickup -> picked-up path; a delivery order ships.
+  const timeline = order.is_pickup ? PICKUP_TIMELINE : DELIVERY_TIMELINE;
+  const reachedIndex = timeline.indexOf(order.status);
 
   return (
     <div>
       <p className="mb-2 text-sm font-medium">{t("timeline")}</p>
       <ol className="flex flex-wrap gap-2" aria-label={t("timeline")}>
-        {TIMELINE.map((step, index) => {
+        {timeline.map((step, index) => {
           const reached = reachedIndex >= index && order.status !== "cancelled";
           return (
             <li
@@ -610,4 +633,193 @@ function StatusTimeline({ order }: { order: Order }) {
       </ol>
     </div>
   );
+}
+
+
+/**
+ * The order's fulfilment block: the captured shipment for a shipped delivery order (carrier +
+ * an optional tracking link), plus staff-only controls to advance an unfulfilled paid order
+ * (ship a delivery order with a carrier + tracking; mark a pickup order ready, then collected).
+ * Nothing but the staff controls is shown to a shopper until the order is shipped.
+ */
+function FulfillmentSection({ order }: { order: Order }) {
+  const t = useTranslations("orders");
+  const { data: user } = useCurrentUser();
+  const shipped = order.fulfillment !== null;
+
+  if (!shipped && !user?.is_staff) {
+    return null;
+  }
+
+  return (
+    <section className="flex flex-col gap-2">
+      <h2 className="text-sm font-medium text-muted-foreground">{t("fulfillmentTitle")}</h2>
+      <div className="flex flex-col gap-3 rounded-xl border border-border p-4 text-sm">
+        {order.fulfillment ? (
+          <dl className="flex flex-col gap-1">
+            <div className="flex items-center justify-between">
+              <dt className="text-muted-foreground">{t("carrier")}</dt>
+              <dd className="font-medium">{order.fulfillment.carrier}</dd>
+            </div>
+            <div className="flex items-center justify-between">
+              <dt className="text-muted-foreground">{t("trackingNumber")}</dt>
+              <dd dir="ltr" className="font-mono">
+                {order.fulfillment.tracking_url ? (
+                  <a
+                    href={order.fulfillment.tracking_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-primary hover:underline"
+                  >
+                    {order.fulfillment.tracking_number}
+                  </a>
+                ) : (
+                  order.fulfillment.tracking_number
+                )}
+              </dd>
+            </div>
+          </dl>
+        ) : null}
+        {user?.is_staff ? <StaffFulfillmentControl order={order} /> : null}
+      </div>
+    </section>
+  );
+}
+
+/**
+ * Staff-only controls to fulfil a paid order. A delivery order shows a carrier + tracking form
+ * that ships it (-> fulfilled) plus a link to print a shipping label; a pickup order shows a
+ * "mark ready for collection" button, then (once ready) a "confirm collected" button. Only
+ * rendered while the order is at a stage the action is legal for, and guards a double submit.
+ */
+function StaffFulfillmentControl({ order }: { order: Order }) {
+  const t = useTranslations("orders");
+  const queryClient = useQueryClient();
+  const [carrier, setCarrier] = useState("");
+  const [trackingNumber, setTrackingNumber] = useState("");
+  const [trackingUrl, setTrackingUrl] = useState("");
+
+  const invalidate = (updated: Order) => {
+    queryClient.setQueryData(ORDER_KEY(order.number), updated);
+    void queryClient.invalidateQueries({ queryKey: ORDERS_LIST_KEY });
+  };
+
+  const ship = useMutation({
+    mutationFn: () =>
+      shipOrder(order.number, {
+        carrier: carrier.trim(),
+        tracking_number: trackingNumber.trim(),
+        ...(trackingUrl.trim() ? { tracking_url: trackingUrl.trim() } : {}),
+      }),
+    onSuccess: invalidate,
+  });
+  const ready = useMutation({
+    mutationFn: () => markOrderReadyForPickup(order.number),
+    onSuccess: invalidate,
+  });
+  const collected = useMutation({
+    mutationFn: () => confirmOrderPickup(order.number),
+    onSuccess: invalidate,
+  });
+
+  const error = ship.error ?? ready.error ?? collected.error;
+  const errorAlert =
+    ship.isError || ready.isError || collected.isError ? (
+      <Alert variant="destructive">
+        {error instanceof ApiError ? error.detail : t("fulfillError")}
+      </Alert>
+    ) : null;
+
+  // A delivery order, still paid: staff ship it (capture carrier + tracking) and can print a label.
+  if (!order.is_pickup && order.status === "paid") {
+    return (
+      <div className="flex flex-col gap-3 border-t border-border pt-3">
+        <p className="text-xs text-muted-foreground">{t("shipHint")}</p>
+        <form
+          className="flex flex-col gap-2"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (carrier.trim() && trackingNumber.trim() && !ship.isPending) {
+              ship.mutate();
+            }
+          }}
+        >
+          <label htmlFor="ship_carrier" className="text-muted-foreground">
+            {t("carrier")}
+          </label>
+          <input
+            id="ship_carrier"
+            value={carrier}
+            onChange={(e) => setCarrier(e.target.value)}
+            maxLength={120}
+            required
+            className="rounded-lg border border-border bg-background px-3 py-2 text-sm"
+          />
+          <label htmlFor="ship_tracking" className="text-muted-foreground">
+            {t("trackingNumber")}
+          </label>
+          <input
+            id="ship_tracking"
+            dir="ltr"
+            value={trackingNumber}
+            onChange={(e) => setTrackingNumber(e.target.value)}
+            maxLength={128}
+            required
+            className="rounded-lg border border-border bg-background px-3 py-2 text-sm"
+          />
+          <label htmlFor="ship_tracking_url" className="text-muted-foreground">
+            {t("trackingUrl")}
+          </label>
+          <input
+            id="ship_tracking_url"
+            dir="ltr"
+            type="url"
+            value={trackingUrl}
+            onChange={(e) => setTrackingUrl(e.target.value)}
+            maxLength={500}
+            className="rounded-lg border border-border bg-background px-3 py-2 text-sm"
+          />
+          <div className="flex items-center gap-3">
+            <Button
+              type="submit"
+              size="sm"
+              disabled={!carrier.trim() || !trackingNumber.trim() || ship.isPending}
+            >
+              {ship.isPending ? t("shippingInProgress") : t("markShipped")}
+            </Button>
+            <Link
+              href={`/manage/orders/${order.number}/label`}
+              className="text-sm text-primary hover:underline"
+            >
+              {t("printLabel")}
+            </Link>
+          </div>
+        </form>
+        {errorAlert}
+      </div>
+    );
+  }
+
+  // A pickup order: prepare it for collection, then confirm it was collected.
+  if (order.is_pickup && order.status === "paid") {
+    return (
+      <div className="flex flex-col gap-2 border-t border-border pt-3">
+        <Button size="sm" onClick={() => ready.mutate()} disabled={ready.isPending}>
+          {ready.isPending ? t("marking") : t("markReadyForPickup")}
+        </Button>
+        {errorAlert}
+      </div>
+    );
+  }
+  if (order.is_pickup && order.status === "ready_for_pickup") {
+    return (
+      <div className="flex flex-col gap-2 border-t border-border pt-3">
+        <Button size="sm" onClick={() => collected.mutate()} disabled={collected.isPending}>
+          {collected.isPending ? t("confirming") : t("confirmPickup")}
+        </Button>
+        {errorAlert}
+      </div>
+    );
+  }
+  return null;
 }

@@ -3,7 +3,8 @@
 Cover both a signed-in user's checkout (saved address) and a guest's (inline address),
 the owner-scoping that makes IDOR impossible for either, the money/stock conflict paths
 (empty cart, oversell, unpurchasable line) as 409s, order history paging, and
-cancel/restock.
+cancel (which releases the checkout reservation). Placing an order reserves stock, so the
+assertions check available-to-promise (on_hand - reserved), the buyable count.
 """
 
 from __future__ import annotations
@@ -28,6 +29,7 @@ from src.domain.catalog.value_objects import Money as CatalogMoney
 from src.domain.catalog.value_objects import Sku as CatalogSku
 from src.domain.channel.entities import Channel
 from src.domain.channel.value_objects import ChannelSlug, Currency
+from src.domain.order.value_objects import OrderStatus
 from src.infrastructure.cart.repositories import DjangoCartRepository
 from src.infrastructure.catalog.repositories import (
     DjangoProductRepository,
@@ -37,9 +39,24 @@ from src.infrastructure.catalog.repositories import (
     DjangoVariantRepository,
 )
 from src.infrastructure.channel.repositories import DjangoChannelRepository
+from src.infrastructure.inventory.repositories import DjangoStockLevelRepository
+from src.infrastructure.order.repositories import DjangoOrderRepository
 from tests.integration.order.factories import seed_address
 
 pytestmark = [pytest.mark.django_db, pytest.mark.integration]
+
+
+def _available(sku: str) -> int:
+    """Available-to-promise for a SKU (on_hand - reserved); the buyable count."""
+    return DjangoStockLevelRepository().available_for_skus([sku]).get(sku, 0)
+
+
+def _mark_paid(number: str) -> None:
+    """Advance an order to PAID directly (the fulfilment tests start from a paid order)."""
+    repo = DjangoOrderRepository()
+    order = repo.get(number)
+    repo.set_status(order, OrderStatus.PAID)
+
 
 _CHANNEL = "ir-main"
 _ORDERS_URL = "/api/v1/orders/"
@@ -168,7 +185,7 @@ class TestGuestCheckout:
         assert response.data["shipping_address"]["recipient_name"] == "Guest Buyer"
         assert response.data["shipping_address"]["city"] == "Isfahan"
         # Stock was captured for the guest's order exactly as for a user's.
-        assert DjangoStockRepository().get_quantity("HB-250").value == 3
+        assert _available("HB-250") == 3
 
     def test_a_guest_can_read_and_list_only_their_own_order(self) -> None:
         _seed_catalog()
@@ -197,13 +214,13 @@ class TestGuestCheckout:
         client = APIClient()
         _guest_add_to_cart(client, "HB-250", 2)
         number = _guest_checkout(client).data["number"]
-        assert DjangoStockRepository().get_quantity("HB-250").value == 3
+        assert _available("HB-250") == 3
 
         response = client.post(f"{_ORDERS_URL}{number}/cancel/")
 
         assert response.status_code == 200
         assert response.data["status"] == "cancelled"
-        assert DjangoStockRepository().get_quantity("HB-250").value == 5
+        assert _available("HB-250") == 5
 
     def test_a_cookieless_guest_with_an_empty_cart_is_a_409(self) -> None:
         # No cart write happened, so there is no cookie and no cart -> checkout conflicts.
@@ -340,7 +357,7 @@ class TestPlaceOrder:
 
         assert response.status_code == 409
         # Stock untouched by the failed checkout.
-        assert DjangoStockRepository().get_quantity("DR-250").value == 1
+        assert _available("DR-250") == 1
 
     def test_an_unknown_channel_is_a_400(self) -> None:
         _seed_catalog()
@@ -422,13 +439,13 @@ class TestCancel:
         _add_to_cart(user.pk, "HB-250", 2)
         client = _client(user)
         number = self._place(user)
-        assert DjangoStockRepository().get_quantity("HB-250").value == 3
+        assert _available("HB-250") == 3
 
         response = client.post(f"{_ORDERS_URL}{number}/cancel/")
 
         assert response.status_code == 200
         assert response.data["status"] == "cancelled"
-        assert DjangoStockRepository().get_quantity("HB-250").value == 5
+        assert _available("HB-250") == 5
 
     def test_cancelling_twice_is_a_409(self) -> None:
         _seed_catalog()
@@ -442,7 +459,7 @@ class TestCancel:
         # The order is now cancelled; a repeat cancel is a conflict, and does not
         # restock a second time.
         assert client.post(f"{_ORDERS_URL}{number}/cancel/").status_code == 409
-        assert DjangoStockRepository().get_quantity("HB-250").value == 5
+        assert _available("HB-250") == 5
 
     def test_cancelling_a_malformed_number_is_a_404(self) -> None:
         _seed_catalog()
@@ -460,7 +477,7 @@ class TestCancel:
         response = _client(intruder).post(f"{_ORDERS_URL}{number}/cancel/")
         assert response.status_code == 404
         # Owner's stock deduction stands.
-        assert DjangoStockRepository().get_quantity("HB-250").value == 4
+        assert _available("HB-250") == 4
 
 
 _MANUAL_URL = "/api/v1/orders/manual/"
@@ -503,8 +520,8 @@ class TestManualOrder:
         assert response.data["total"] == "390000.0000"
         assert response.data["shipping_address"]["recipient_name"] == "Guest Buyer"
         # Stock captured exactly as a checkout would.
-        assert DjangoStockRepository().get_quantity("HB-250").value == 3
-        assert DjangoStockRepository().get_quantity("DR-250").value == 0
+        assert _available("HB-250") == 3
+        assert _available("DR-250") == 0
         # The manual order is owned by the creating staff, who can read it back.
         number = response.data["number"]
         assert client.get(f"{_ORDERS_URL}{number}/").status_code == 200
@@ -515,7 +532,7 @@ class TestManualOrder:
 
         assert client.post(_MANUAL_URL, _manual_body(), format="json").status_code == 403
         # Nothing was created / no stock moved.
-        assert DjangoStockRepository().get_quantity("HB-250").value == 5
+        assert _available("HB-250") == 5
 
     def test_an_anonymous_request_is_unauthorized(self) -> None:
         # Unauthenticated (no cookie) -> 401; an authenticated user lacking the perm -> 403.
@@ -549,7 +566,7 @@ class TestManualOrder:
         )
 
         assert response.status_code == 409
-        assert DjangoStockRepository().get_quantity("DR-250").value == 1
+        assert _available("DR-250") == 1
 
     def test_an_unknown_channel_is_a_400(self) -> None:
         _seed_catalog()
@@ -642,3 +659,189 @@ class TestPreInvoice:
 
         plain = _client(_user("09120000001"))
         assert plain.get(f"{_ORDERS_URL}{number}/pre-invoice/").status_code == 403
+
+
+def _pickup_checkout(client, *, channel=_CHANNEL):
+    """POST a pickup (BOPIS) checkout: a pickup method with NO shipping address."""
+    return client.post(
+        _ORDERS_URL, {"channel": channel, "shipping_method": "pickup"}, format="json"
+    )
+
+
+class TestPickupCheckout:
+    """A shopper checks out with the pickup (BOPIS) method: no shipping address captured."""
+
+    def test_a_pickup_order_captures_no_address(self) -> None:
+        _seed_catalog()
+        user = _user("09120000001")
+        _add_to_cart(user.pk, "HB-250", 1)
+        client = _client(user)
+
+        response = _pickup_checkout(client)
+
+        assert response.status_code == 201
+        assert response.data["is_pickup"] is True
+        assert response.data["shipping_address"] is None
+        assert response.data["shipping_method"] == "pickup"
+        # Pickup is free: total is the goods subtotal (no shipping, untaxed test channel).
+        assert response.data["shipping_cost"] == "0.0000"
+        assert response.data["total"] == "120000.0000"
+
+    def test_a_delivery_method_without_an_address_is_refused(self) -> None:
+        # Sending no address with a *delivery* method is a 400 (a delivery order must ship
+        # somewhere); only a pickup method may omit the address.
+        _seed_catalog()
+        user = _user("09120000001")
+        _add_to_cart(user.pk, "HB-250", 1)
+
+        response = _client(user).post(
+            _ORDERS_URL, {"channel": _CHANNEL, "shipping_method": "standard"}, format="json"
+        )
+
+        assert response.status_code == 400
+
+
+class TestFulfillment:
+    """Staff (manage_orders) fulfil a paid order: ship a delivery order, or the pickup path."""
+
+    def _place_paid_delivery(self, user) -> str:
+        seed_address(user.pk)
+        _add_to_cart(user.pk, "HB-250", 1)
+        number = _checkout(_client(user)).data["number"]
+        _mark_paid(number)
+        return number
+
+    def _place_paid_pickup(self, user) -> str:
+        _add_to_cart(user.pk, "HB-250", 1)
+        number = _pickup_checkout(_client(user)).data["number"]
+        _mark_paid(number)
+        return number
+
+    def test_staff_ships_a_paid_order_capturing_carrier_and_tracking(self) -> None:
+        _seed_catalog()
+        number = self._place_paid_delivery(_user("09120000001"))
+        staff = _client(_staff_with_order_perm())
+
+        response = staff.post(
+            f"{_ORDERS_URL}{number}/ship/",
+            {"carrier": "Post", "tracking_number": "TRK-123", "tracking_url": "https://t/TRK-123"},
+            format="json",
+        )
+
+        assert response.status_code == 200
+        assert response.data["status"] == "fulfilled"
+        assert response.data["fulfillment"]["carrier"] == "Post"
+        assert response.data["fulfillment"]["tracking_number"] == "TRK-123"
+        assert response.data["fulfillment"]["tracking_url"] == "https://t/TRK-123"
+
+    def test_shipping_requires_the_manage_orders_permission(self) -> None:
+        _seed_catalog()
+        number = self._place_paid_delivery(_user("09120000001"))
+
+        plain = _client(_user("09120000002"))
+        response = plain.post(
+            f"{_ORDERS_URL}{number}/ship/",
+            {"carrier": "Post", "tracking_number": "TRK-1"},
+            format="json",
+        )
+        assert response.status_code == 403
+
+    def test_shipping_a_pickup_order_is_a_conflict(self) -> None:
+        _seed_catalog()
+        number = self._place_paid_pickup(_user("09120000001"))
+        staff = _client(_staff_with_order_perm())
+
+        response = staff.post(
+            f"{_ORDERS_URL}{number}/ship/",
+            {"carrier": "Post", "tracking_number": "TRK-1"},
+            format="json",
+        )
+        assert response.status_code == 409
+
+    def test_shipping_a_pending_order_is_a_conflict(self) -> None:
+        # Not yet paid: the state machine forbids PENDING -> FULFILLED.
+        _seed_catalog()
+        user = _user("09120000001")
+        seed_address(user.pk)
+        _add_to_cart(user.pk, "HB-250", 1)
+        number = _checkout(_client(user)).data["number"]  # left PENDING
+        staff = _client(_staff_with_order_perm())
+
+        response = staff.post(
+            f"{_ORDERS_URL}{number}/ship/",
+            {"carrier": "Post", "tracking_number": "TRK-1"},
+            format="json",
+        )
+        assert response.status_code == 409
+
+    def test_shipping_an_unknown_order_is_a_404(self) -> None:
+        _seed_catalog()
+        staff = _client(_staff_with_order_perm())
+
+        response = staff.post(
+            f"{_ORDERS_URL}ORD-MISSING0000/ship/",
+            {"carrier": "Post", "tracking_number": "TRK-1"},
+            format="json",
+        )
+        assert response.status_code == 404
+
+    def test_staff_runs_the_pickup_lifecycle(self) -> None:
+        _seed_catalog()
+        number = self._place_paid_pickup(_user("09120000001"))
+        staff = _client(_staff_with_order_perm())
+
+        ready = staff.post(f"{_ORDERS_URL}{number}/ready-for-pickup/", format="json")
+        assert ready.status_code == 200
+        assert ready.data["status"] == "ready_for_pickup"
+
+        picked = staff.post(f"{_ORDERS_URL}{number}/confirm-pickup/", format="json")
+        assert picked.status_code == 200
+        assert picked.data["status"] == "picked_up"
+
+    def test_ready_for_pickup_on_a_delivery_order_is_a_conflict(self) -> None:
+        _seed_catalog()
+        number = self._place_paid_delivery(_user("09120000001"))
+        staff = _client(_staff_with_order_perm())
+
+        response = staff.post(f"{_ORDERS_URL}{number}/ready-for-pickup/", format="json")
+        assert response.status_code == 409
+
+    def test_confirm_pickup_before_ready_is_a_conflict(self) -> None:
+        # PAID -> PICKED_UP is not a legal transition; the order must be marked ready first.
+        _seed_catalog()
+        number = self._place_paid_pickup(_user("09120000001"))
+        staff = _client(_staff_with_order_perm())
+
+        response = staff.post(f"{_ORDERS_URL}{number}/confirm-pickup/", format="json")
+        assert response.status_code == 409
+
+    def test_ready_for_pickup_on_an_unknown_order_is_a_404(self) -> None:
+        _seed_catalog()
+        staff = _client(_staff_with_order_perm())
+        response = staff.post(f"{_ORDERS_URL}ORD-MISSING0000/ready-for-pickup/", format="json")
+        assert response.status_code == 404
+
+    def test_confirm_pickup_on_an_unknown_order_is_a_404(self) -> None:
+        _seed_catalog()
+        staff = _client(_staff_with_order_perm())
+        response = staff.post(f"{_ORDERS_URL}ORD-MISSING0000/confirm-pickup/", format="json")
+        assert response.status_code == 404
+
+    def test_sending_both_address_sources_is_rejected(self) -> None:
+        # A delivery method may take an address_id OR an inline shipping_address, never both.
+        _seed_catalog()
+        user = _user("09120000001")
+        seed_address(user.pk)
+        _add_to_cart(user.pk, "HB-250", 1)
+
+        response = _client(user).post(
+            _ORDERS_URL,
+            {
+                "channel": _CHANNEL,
+                "shipping_method": "standard",
+                "address_id": _ADDRESS_ID,
+                "shipping_address": _INLINE_ADDRESS,
+            },
+            format="json",
+        )
+        assert response.status_code == 400

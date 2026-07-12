@@ -20,6 +20,7 @@ from src.domain.shipping.exceptions import (
     InvalidMoneyError,
     InvalidShippingMethodCodeError,
     InvalidShippingZoneCodeError,
+    InvalidWeightTableError,
     InvalidZonedRateError,
 )
 
@@ -163,3 +164,71 @@ class ZonedRate:
             if override is not None:
                 return override
         return self.default
+
+
+@dataclass(frozen=True)
+class WeightBracket:
+    """One row of a weight-rate table: everything up to ``up_to_grams`` costs ``price``.
+
+    ``up_to_grams`` is the inclusive upper bound of the bracket (an order weight at or below
+    it falls in this bracket); ``None`` marks the open-ended overflow bracket that catches any
+    heavier order. The bound, when present, is a positive integer.
+    """
+
+    up_to_grams: int | None
+    price: Money
+
+    def __post_init__(self) -> None:
+        bound = self.up_to_grams
+        if bound is not None and (
+            isinstance(bound, bool) or not isinstance(bound, int) or bound <= 0
+        ):
+            raise InvalidWeightTableError(f"up_to_grams must be a positive int or None: {bound!r}")
+
+
+@dataclass(frozen=True)
+class WeightTable:
+    """A weight-based rate: ordered brackets priced by an order's total weight.
+
+    Brackets are sorted by their upper bound with the single open-ended overflow bracket
+    (``up_to_grams=None``) last; ``price_for`` returns the price of the first bracket whose
+    bound covers the weight (falling through to the overflow). A table must be non-empty, end
+    in exactly one overflow bracket, have strictly increasing bounds, and settle every bracket
+    in one currency -- a malformed table is a configuration bug rejected at construction.
+    """
+
+    brackets: tuple[WeightBracket, ...]
+
+    def __post_init__(self) -> None:
+        if not self.brackets:
+            raise InvalidWeightTableError("a weight table must have at least one bracket")
+        currency = self.brackets[0].price.currency
+        last = len(self.brackets) - 1
+        previous: int | None = None
+        for index, bracket in enumerate(self.brackets):
+            if bracket.price.currency != currency:
+                raise InvalidWeightTableError(
+                    f"bracket {index} currency {bracket.price.currency} != {currency}"
+                )
+            is_overflow = bracket.up_to_grams is None
+            if is_overflow and index != last:
+                raise InvalidWeightTableError("the overflow bracket must be last")
+            if not is_overflow and index == last:
+                raise InvalidWeightTableError("the last bracket must be the open-ended overflow")
+            if bracket.up_to_grams is not None:
+                if previous is not None and bracket.up_to_grams <= previous:
+                    raise InvalidWeightTableError("bracket bounds must strictly increase")
+                previous = bracket.up_to_grams
+
+    @property
+    def from_price(self) -> Money:
+        """The lightest bracket's price -- the indicative 'from' price shown when browsing."""
+        return self.brackets[0].price
+
+    def price_for(self, weight_grams: int) -> Money:
+        """The price of the first bracket whose bound covers ``weight_grams``."""
+        for bracket in self.brackets:
+            if bracket.up_to_grams is None or weight_grams <= bracket.up_to_grams:
+                return bracket.price
+        # Unreachable: construction guarantees a trailing overflow bracket.
+        return self.brackets[-1].price  # pragma: no cover

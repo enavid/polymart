@@ -29,9 +29,9 @@ class TestCalculateTax:
 
     def test_rounds_half_up_at_the_stored_precision(self) -> None:
         # 12345 * 9% = 1111.05 exactly -- representable, no rounding needed.
-        assert calculate_tax(
-            Money(Decimal("12345"), "IRR"), TaxRate(Decimal("9"))
-        ) == Money(Decimal("1111.05"), "IRR")
+        assert calculate_tax(Money(Decimal("12345"), "IRR"), TaxRate(Decimal("9"))) == Money(
+            Decimal("1111.05"), "IRR"
+        )
 
     def test_rounds_half_up_when_the_fifth_decimal_forces_it(self) -> None:
         # 1.23455 * 10% = 0.123455 -> quantized half-up to 4 dp = 0.1235.
@@ -52,7 +52,5 @@ class TestCalculateTax:
             (Decimal("33333"), Decimal("9"), Decimal("2999.97")),
         ],
     )
-    def test_table_of_known_values(
-        self, base: Decimal, rate: Decimal, expected: Decimal
-    ) -> None:
+    def test_table_of_known_values(self, base: Decimal, rate: Decimal, expected: Decimal) -> None:
         assert calculate_tax(Money(base, "IRR"), TaxRate(rate)).amount == expected

@@ -12,6 +12,8 @@ const STATUS_KEYS: Record<OrderStatus, string> = {
   pending: "statusPending",
   paid: "statusPaid",
   fulfilled: "statusFulfilled",
+  ready_for_pickup: "statusReadyForPickup",
+  picked_up: "statusPickedUp",
   cancelled: "statusCancelled",
 };
 

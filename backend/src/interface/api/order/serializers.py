@@ -38,9 +38,11 @@ class InlineShippingAddressSerializer(serializers.Serializer):
 class PlaceOrderSerializer(serializers.Serializer):
     """Request body for placing an order (checking out the channel's cart).
 
-    Exactly one shipping source is required: a signed-in shopper sends ``address_id`` (one
-    of their saved addresses, resolved and snapshotted by the use case), while a guest
-    sends a one-off ``shipping_address`` inline. Sending both or neither is rejected.
+    A delivery order supplies exactly one shipping source: a signed-in shopper sends
+    ``address_id`` (one of their saved addresses, resolved and snapshotted by the use case),
+    while a guest sends a one-off ``shipping_address`` inline. A pickup (BOPIS) order sends
+    neither (it captures no address). Sending *both* is always rejected; the use case rejects
+    a delivery method with no address.
     """
 
     channel = serializers.CharField()
@@ -51,9 +53,9 @@ class PlaceOrderSerializer(serializers.Serializer):
     def validate(self, attrs: dict[str, object]) -> dict[str, object]:
         has_id = attrs.get("address_id") is not None
         has_inline = attrs.get("shipping_address") is not None
-        if has_id == has_inline:
+        if has_id and has_inline:
             raise serializers.ValidationError(
-                "provide exactly one of 'address_id' or 'shipping_address'."
+                "provide at most one of 'address_id' or 'shipping_address'."
             )
         return attrs
 
@@ -96,6 +98,22 @@ class ShippingAddressSerializer(serializers.Serializer):
     line2 = serializers.CharField(allow_null=True)
 
 
+class FulfillmentSerializer(serializers.Serializer):
+    """Response projection of a shipped order's captured carrier + tracking."""
+
+    carrier = serializers.CharField()
+    tracking_number = serializers.CharField()
+    tracking_url = serializers.CharField(allow_null=True)
+
+
+class ShipOrderSerializer(serializers.Serializer):
+    """Request body for staff shipping an order (carrier + tracking reference)."""
+
+    carrier = serializers.CharField(max_length=120)
+    tracking_number = serializers.CharField(max_length=128)
+    tracking_url = serializers.CharField(max_length=500, required=False, allow_blank=True)
+
+
 class OrderListQuerySerializer(serializers.Serializer):
     """Query parameters for paging a shopper's order history."""
 
@@ -134,7 +152,11 @@ class OrderSerializer(serializers.Serializer):
     total = serializers.CharField()
     placed_at = serializers.DateTimeField()
     items = OrderLineSerializer(many=True)
-    shipping_address = ShippingAddressSerializer()
+    # A pickup (BOPIS) order captures no shipping address; ``is_pickup`` marks it.
+    shipping_address = ShippingAddressSerializer(allow_null=True)
+    is_pickup = serializers.BooleanField()
+    # Present once a delivery order is shipped (carrier + tracking); null otherwise.
+    fulfillment = FulfillmentSerializer(allow_null=True)
 
 
 class OrderPageSerializer(serializers.Serializer):

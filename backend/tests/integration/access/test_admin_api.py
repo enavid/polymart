@@ -16,12 +16,14 @@ from src.domain.access.registry import ACCESS_ADMIN_ROLE, CHANNEL_ADMIN_ROLE
 from src.infrastructure.access.gateway import GuardianAccessControl
 from src.infrastructure.audit.models import AuditLogModel
 from src.infrastructure.channel.models import ChannelModel
+from src.infrastructure.inventory.models import StockSourceModel
 from src.interface.api.access.container import build_assign_role
 
 pytestmark = [pytest.mark.django_db, pytest.mark.integration]
 
 _ROLES_URL = "/api/v1/access/role-assignments/"
 _GRANTS_URL = "/api/v1/access/channel-grants/"
+_SOURCE_GRANTS_URL = "/api/v1/access/stock-source-grants/"
 _USERS_URL = "/api/v1/access/users/"
 
 
@@ -114,6 +116,41 @@ class TestChannelGrant:
 
         response = admin_client.post(
             _GRANTS_URL, {"user_id": 999999, "channel_slug": "coffee"}, format="json"
+        )
+        assert response.status_code == 404
+
+
+class TestStockSourceGrant:
+    def test_admin_grants_source_scope_and_it_is_audited(self, admin_client: APIClient) -> None:
+        target = _user("09120000008")
+        source = StockSourceModel.objects.create(code="north", name="North")
+
+        response = admin_client.post(
+            _SOURCE_GRANTS_URL, {"user_id": target.pk, "source_code": "north"}, format="json"
+        )
+
+        assert response.status_code == 200
+        assert GuardianAccessControl().can_manage_stock_source(target.pk, source.pk)
+        entry = AuditLogModel.objects.get(
+            action="access.stock_source_management_granted", resource_id=str(target.pk)
+        )
+        assert entry.changes == {"managed_stock_source": {"before": None, "after": "north"}}
+
+    def test_a_non_admin_is_forbidden(self) -> None:
+        StockSourceModel.objects.create(code="north", name="North")
+        client = APIClient()
+        client.force_authenticate(user=_user("09120000009"))
+
+        response = client.post(
+            _SOURCE_GRANTS_URL, {"user_id": 1, "source_code": "north"}, format="json"
+        )
+        assert response.status_code == 403
+
+    def test_an_unknown_source_is_a_404(self, admin_client: APIClient) -> None:
+        target = _user("09120000010")
+
+        response = admin_client.post(
+            _SOURCE_GRANTS_URL, {"user_id": target.pk, "source_code": "ghost"}, format="json"
         )
         assert response.status_code == 404
 

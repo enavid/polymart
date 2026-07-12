@@ -28,7 +28,6 @@ from src.infrastructure.catalog.models import (
     ProductModel,
     ProductVariantModel,
     VariantPriceModel,
-    VariantStockModel,
 )
 from src.infrastructure.channel.models import ChannelModel
 from src.infrastructure.devtools.management.commands.seed_e2e import (
@@ -38,6 +37,7 @@ from src.infrastructure.devtools.management.commands.seed_e2e import (
     SHOPPER_PHONE,
     STAFF_PHONE,
 )
+from src.infrastructure.inventory.models import StockLevelModel
 
 pytestmark = [pytest.mark.django_db, pytest.mark.integration]
 
@@ -93,7 +93,7 @@ class TestSeedCatalog:
         variant_count = sum(len(product.variants) for product in PRODUCTS)
         assert ProductVariantModel.objects.count() == variant_count
         assert VariantPriceModel.objects.count() == variant_count
-        assert VariantStockModel.objects.count() == variant_count
+        assert StockLevelModel.objects.filter(source__code="main").count() == variant_count
 
         hb_250 = VariantPriceModel.objects.get(variant__sku="HB-250")
         assert hb_250.amount == Decimal("120000.00")
@@ -151,3 +151,14 @@ class TestSeedIsIdempotent:
         _seed()
 
         assert CartModel.objects.filter(owner_id=shopper.pk).count() == 0
+
+    def test_resets_stale_reservations_so_stock_starts_fully_available(self) -> None:
+        # A prior run's order reserves stock; deleting the order never releases it, so the
+        # seed must zero reservations to restore deterministic available-to-promise.
+        _seed()
+        StockLevelModel.objects.filter(sku="HB-250").update(reserved=3)
+
+        _seed()
+
+        level = StockLevelModel.objects.get(sku="HB-250", source__code="main")
+        assert level.reserved == 0

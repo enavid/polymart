@@ -30,10 +30,12 @@ from src.domain.identity.exceptions import (
     InvalidPhoneNumberError,
     UserAlreadyExistsError,
 )
+from src.domain.inventory.exceptions import StockSourceNotFoundError
 from src.interface.api.access.container import (
     build_admin_create_user,
     build_assign_role,
     build_grant_channel_management,
+    build_grant_stock_source_management,
     build_list_user_accounts,
 )
 from src.interface.api.access.permissions import AccessAdminPermission
@@ -41,6 +43,7 @@ from src.interface.api.access.serializers import (
     AssignRoleSerializer,
     CreateUserSerializer,
     GrantChannelManagementSerializer,
+    GrantStockSourceManagementSerializer,
     UserAccountPageSerializer,
     UserAccountSerializer,
     UserListQuerySerializer,
@@ -108,6 +111,35 @@ class ChannelGrantView(APIView):
                 actor=_actor(request),
             )
         except (SubjectNotFoundError, ChannelNotFoundError) as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_404_NOT_FOUND)
+        return Response(status=status.HTTP_200_OK)
+
+
+class StockSourceGrantView(APIView):
+    """Grant a user object-scoped management of a single stock source (warehouse)."""
+
+    permission_classes: ClassVar = [AccessAdminPermission]
+
+    @extend_schema(
+        request=GrantStockSourceManagementSerializer,
+        responses={
+            200: OpenApiResponse(description="The stock-source grant was recorded."),
+            400: ErrorSerializer,
+            403: ErrorSerializer,
+            404: ErrorSerializer,
+        },
+    )
+    def post(self, request: Request) -> Response:
+        serializer = GrantStockSourceManagementSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        try:
+            build_grant_stock_source_management().execute(
+                user_id=data["user_id"],
+                source_code=data["source_code"],
+                actor=_actor(request),
+            )
+        except (SubjectNotFoundError, StockSourceNotFoundError) as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_404_NOT_FOUND)
         return Response(status=status.HTTP_200_OK)
 

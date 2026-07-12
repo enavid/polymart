@@ -138,6 +138,7 @@ def variant_to_domain(model: ProductVariantModel) -> ProductVariant:
         product=ProductCode(model.product.code),
         sku=Sku(model.sku),
         name=model.name,
+        weight_grams=model.weight_grams,
         values=tuple(
             AttributeValue(attribute=AttributeCode(value.attribute.code), value=value.value)
             for value in model.attribute_values.all()
@@ -158,6 +159,7 @@ def apply_variant_scalar_fields(
     """
     model.sku = variant.sku.value
     model.name = variant.name
+    model.weight_grams = variant.weight_grams
     return model
 
 

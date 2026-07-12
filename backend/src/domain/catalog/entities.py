@@ -28,6 +28,7 @@ from src.domain.catalog.exceptions import (
     InvalidProductNameError,
     InvalidProductTypeNameError,
     InvalidVariantNameError,
+    InvalidVariantWeightError,
     SelfParentingCategoryError,
 )
 from src.domain.catalog.value_objects import (
@@ -43,6 +44,8 @@ from src.domain.catalog.value_objects import (
 )
 
 _NAME_MAX_LENGTH = 255
+# A variant weight is a non-negative gram count bounded to the stored 32-bit int column.
+_WEIGHT_GRAMS_MAX = 2_147_483_647
 _METADATA_KEY_MAX_LENGTH = 64
 _METADATA_VALUE_MAX_LENGTH = 1024
 
@@ -223,12 +226,16 @@ class ProductVariant:
     name: str
     values: tuple[AttributeValue, ...] = ()
     media: tuple[MediaAsset, ...] = ()
+    # Shipping weight in grams (0 = unweighed/unset). Used by weight-based shipping rates;
+    # a non-negative integer bounded to the stored column's range.
+    weight_grams: int = 0
     id: int | None = field(default=None)
 
     def __post_init__(self) -> None:
         self.name = self._validated_name(self.name)
         self.values = self._validated_values(self.values)
         self.media = self._validated_media(self.media)
+        self.weight_grams = self._validated_weight(self.weight_grams)
 
     @staticmethod
     def _validated_name(raw: str) -> str:
@@ -236,6 +243,16 @@ class ProductVariant:
         if not name or len(name) > _NAME_MAX_LENGTH:
             raise InvalidVariantNameError(raw)
         return name
+
+    @staticmethod
+    def _validated_weight(raw: int) -> int:
+        # bool is an int subclass; reject it so True/False never become a weight. Bounded to
+        # a signed 32-bit int (the stored column), matching how stock quantities are bounded.
+        if isinstance(raw, bool) or not isinstance(raw, int):
+            raise InvalidVariantWeightError(raw)
+        if raw < 0 or raw > _WEIGHT_GRAMS_MAX:
+            raise InvalidVariantWeightError(raw)
+        return raw
 
     @staticmethod
     def _validated_values(

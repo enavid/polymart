@@ -8,11 +8,16 @@ never on the infrastructure layer directly.
 from __future__ import annotations
 
 from src.application.access.ports import AccessControlGateway
-from src.application.access.use_cases import AssignRole, GrantChannelManagement
+from src.application.access.use_cases import (
+    AssignRole,
+    GrantChannelManagement,
+    GrantStockSourceManagement,
+)
 from src.application.identity.admin_use_cases import AdminCreateUser, ListUserAccounts
 from src.infrastructure.access.gateway import GuardianAccessControl
 from src.infrastructure.channel.repositories import DjangoChannelRepository
 from src.infrastructure.identity.user_directory import DjangoUserDirectory
+from src.infrastructure.inventory.repositories import DjangoStockSourceRepository
 from src.interface.api.audit.container import build_audit_recorder
 
 
@@ -35,4 +40,10 @@ def build_assign_role() -> AssignRole:
 def build_grant_channel_management() -> GrantChannelManagement:
     return GrantChannelManagement(
         build_access_gateway(), DjangoChannelRepository(), build_audit_recorder()
+    )
+
+
+def build_grant_stock_source_management() -> GrantStockSourceManagement:
+    return GrantStockSourceManagement(
+        build_access_gateway(), DjangoStockSourceRepository(), build_audit_recorder()
     )

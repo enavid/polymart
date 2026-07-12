@@ -70,6 +70,8 @@ function order(overrides: Record<string, unknown> = {}) {
     items: [
       { sku: "HB-250", quantity: 2, unit_price: "120000.0000", line_total: "240000.0000" },
     ],
+    is_pickup: false,
+    fulfillment: null,
     shipping_address: {
       recipient_name: "Sara Ahmadi",
       phone_number: "+989123456789",
@@ -81,6 +83,23 @@ function order(overrides: Record<string, unknown> = {}) {
     },
     ...overrides,
   };
+}
+
+/** Sign in as a staff user (with the COD payment handler), for the fulfilment controls. */
+function authedStaff() {
+  markSignedIn();
+  server.use(
+    http.get("*/auth/me/", () =>
+      HttpResponse.json({
+        id: 9,
+        phone_number: "+989120000009",
+        email: "",
+        full_name: "Staff",
+        is_staff: true,
+      }),
+    ),
+    http.get(`*/payments/for-order/${NUMBER}/`, () => HttpResponse.json(codPayment())),
+  );
 }
 
 describe("OrderDetail", () => {
@@ -525,5 +544,123 @@ describe("OrderDetail", () => {
 
     await screen.findByText(messages.payment.methodCod);
     expect(screen.queryByTestId("online-awaiting")).not.toBeInTheDocument();
+  });
+
+  it("shows the captured carrier and tracking link once shipped", async () => {
+    authed();
+    server.use(
+      http.get(`*/orders/${NUMBER}/`, () =>
+        HttpResponse.json(
+          order({
+            status: "fulfilled",
+            fulfillment: {
+              carrier: "Post",
+              tracking_number: "TRK-123",
+              tracking_url: "https://track/TRK-123",
+            },
+          }),
+        ),
+      ),
+    );
+
+    renderWithProviders(<OrderDetail number={NUMBER} />);
+
+    await screen.findByText("Post");
+    const link = screen.getByRole("link", { name: "TRK-123" });
+    expect(link).toHaveAttribute("href", "https://track/TRK-123");
+  });
+
+  it("shows the pickup note and no shipping address for a pickup order", async () => {
+    authed();
+    server.use(
+      http.get(`*/orders/${NUMBER}/`, () =>
+        HttpResponse.json(
+          order({
+            is_pickup: true,
+            shipping_method: "pickup",
+            shipping_method_name: "تحویل حضوری",
+            shipping_cost: "0.0000",
+            total: "240000.0000",
+            shipping_address: null,
+          }),
+        ),
+      ),
+    );
+
+    renderWithProviders(<OrderDetail number={NUMBER} />);
+
+    await screen.findByText(messages.orders.pickupNote);
+    expect(screen.queryByText("Sara Ahmadi")).not.toBeInTheDocument();
+    // The pickup timeline exposes the pickup-specific steps.
+    expect(screen.getAllByText(messages.orders.statusReadyForPickup).length).toBeGreaterThan(0);
+  });
+
+  it("lets staff ship a paid delivery order, capturing carrier and tracking", async () => {
+    authedStaff();
+    let shipBody: Record<string, unknown> | null = null;
+    server.use(
+      http.get(`*/orders/${NUMBER}/`, () => HttpResponse.json(order({ status: "paid" }))),
+      http.post(`*/orders/${NUMBER}/ship/`, async ({ request }) => {
+        shipBody = (await request.json()) as Record<string, unknown>;
+        return HttpResponse.json(
+          order({
+            status: "fulfilled",
+            fulfillment: {
+              carrier: "Post",
+              tracking_number: "TRK-9",
+              tracking_url: null,
+            },
+          }),
+        );
+      }),
+    );
+
+    renderWithProviders(<OrderDetail number={NUMBER} />);
+
+    const user = userEvent.setup();
+    await user.type(await screen.findByLabelText(messages.orders.carrier), "Post");
+    await user.type(screen.getByLabelText(messages.orders.trackingNumber), "TRK-9");
+    await user.click(screen.getByRole("button", { name: messages.orders.markShipped }));
+
+    await screen.findByText("Post");
+    await waitFor(() => expect(shipBody).toEqual({ carrier: "Post", tracking_number: "TRK-9" }));
+  });
+
+  it("lets staff run the pickup lifecycle (ready then collected)", async () => {
+    authedStaff();
+    let readyCalled = false;
+    let confirmCalled = false;
+    server.use(
+      http.get(`*/orders/${NUMBER}/`, () =>
+        HttpResponse.json(
+          order({ status: "paid", is_pickup: true, shipping_address: null }),
+        ),
+      ),
+      http.post(`*/orders/${NUMBER}/ready-for-pickup/`, () => {
+        readyCalled = true;
+        return HttpResponse.json(
+          order({ status: "ready_for_pickup", is_pickup: true, shipping_address: null }),
+        );
+      }),
+      http.post(`*/orders/${NUMBER}/confirm-pickup/`, () => {
+        confirmCalled = true;
+        return HttpResponse.json(
+          order({ status: "picked_up", is_pickup: true, shipping_address: null }),
+        );
+      }),
+    );
+
+    renderWithProviders(<OrderDetail number={NUMBER} />);
+    const user = userEvent.setup();
+
+    await user.click(
+      await screen.findByRole("button", { name: messages.orders.markReadyForPickup }),
+    );
+    await waitFor(() => expect(readyCalled).toBe(true));
+
+    await user.click(
+      await screen.findByRole("button", { name: messages.orders.confirmPickup }),
+    );
+    await waitFor(() => expect(confirmCalled).toBe(true));
   });
 });

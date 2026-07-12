@@ -56,6 +56,7 @@ def _method_payload(method: ShippingMethod) -> dict[str, object]:
         "currency": method.price.currency,
         "min_days": method.min_days,
         "max_days": method.max_days,
+        "is_pickup": method.is_pickup,
     }
 
 

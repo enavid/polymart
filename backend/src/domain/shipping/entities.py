@@ -16,7 +16,13 @@ from src.domain.shipping.exceptions import (
     InvalidShippingMethodError,
     InvalidShippingZoneError,
 )
-from src.domain.shipping.value_objects import Money, ShippingMethodCode, ShippingZoneCode
+from src.domain.shipping.value_objects import (
+    Destination,
+    Money,
+    ShippingMethodCode,
+    ShippingZoneCode,
+    WeightTable,
+)
 
 _NAME_MAX_LENGTH = 120
 # A sane upper bound so a mis-configured window (e.g. 99999 days) fails at the domain edge.
@@ -29,7 +35,9 @@ class ShippingMethod:
 
     ``min_days``/``max_days`` describe the estimated delivery window shown to the shopper;
     they are non-negative and ordered (``min_days <= max_days``). ``price`` is the flat cost
-    added to the order total when this method is chosen.
+    added to the order total when this method is chosen. ``is_pickup`` marks a BOPIS
+    (in-store/local pickup) option: it captures no shipping address and follows the
+    ready-for-pickup -> picked-up fulfilment path instead of shipping.
     """
 
     code: ShippingMethodCode
@@ -37,6 +45,11 @@ class ShippingMethod:
     price: Money
     min_days: int
     max_days: int
+    is_pickup: bool = False
+    # When set, the method is weight-priced: ``price`` is the indicative "from" price (the
+    # lightest bracket) for browsing, and ``quote`` resolves the actual cost by order weight.
+    # ``None`` is a flat/zoned method whose cost is always ``price``.
+    weight_table: WeightTable | None = None
 
     def __post_init__(self) -> None:
         name = self.name.strip()
@@ -44,6 +57,12 @@ class ShippingMethod:
             raise InvalidShippingMethodError(f"name: {self.name!r}")
         object.__setattr__(self, "name", name)
         self._validate_window()
+
+    def quote(self, weight_grams: int) -> Money:
+        """The cost for an order of this weight: the weight table's bracket, or the flat price."""
+        if self.weight_table is not None:
+            return self.weight_table.price_for(weight_grams)
+        return self.price
 
     def _validate_window(self) -> None:
         for label, value in (("min_days", self.min_days), ("max_days", self.max_days)):
@@ -60,17 +79,21 @@ class ShippingMethod:
 
 @dataclass(frozen=True)
 class ShippingZone:
-    """A named set of provinces that share a shipping rate.
+    """A named set of provinces (optionally narrowed to cities) that share a shipping rate.
 
     A method's per-zone override is keyed by this zone's ``code``; ``covers`` matches a
     destination's province case- and whitespace-insensitively (so "  Tehran " and "tehran"
-    are the same place). A zone must cover at least one non-blank province -- a zone that
-    matches nothing is a misconfiguration.
+    are the same place). When ``cities`` is non-empty the zone is *city-scoped*: it covers a
+    destination only if its province matches **and** its city is one of the listed cities --
+    letting a fine city zone (e.g. the capital) be ordered before a broad province zone. An
+    empty ``cities`` covers the whole province. A zone must cover at least one non-blank
+    province -- a zone that matches nothing is a misconfiguration.
     """
 
     code: ShippingZoneCode
     name: str
     provinces: frozenset[str]
+    cities: frozenset[str] = frozenset()
 
     def __post_init__(self) -> None:
         name = self.name.strip()
@@ -83,6 +106,16 @@ class ShippingZone:
             raise InvalidShippingZoneError(f"provinces: {self.provinces!r}")
         object.__setattr__(self, "provinces", trimmed)
 
-    def covers(self, province: str) -> bool:
-        key = province.strip().casefold()
-        return any(configured.casefold() == key for configured in self.provinces)
+        cities = frozenset(city.strip() for city in self.cities)
+        if "" in cities:
+            raise InvalidShippingZoneError(f"cities: {self.cities!r}")
+        object.__setattr__(self, "cities", cities)
+
+    def covers(self, destination: Destination) -> bool:
+        province_key = destination.province.casefold()
+        if not any(configured.casefold() == province_key for configured in self.provinces):
+            return False
+        if not self.cities:
+            return True  # a province-wide zone covers any city in the province
+        city_key = destination.city.casefold()
+        return any(configured.casefold() == city_key for configured in self.cities)

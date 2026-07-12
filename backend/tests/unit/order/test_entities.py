@@ -12,6 +12,7 @@ from src.domain.order.exceptions import (
     DuplicateOrderLineError,
     EmptyOrderError,
     IllegalOrderTransitionError,
+    InvalidFulfillmentError,
     OrderCurrencyMismatchError,
     OrderTotalMismatchError,
 )
@@ -19,6 +20,7 @@ from src.domain.order.value_objects import (
     CapturedShipping,
     CapturedTax,
     ChannelRef,
+    Fulfillment,
     Money,
     OrderNumber,
     OrderQuantity,
@@ -350,3 +352,88 @@ class TestStateMachine:
         order = _order((_line("HB-250", 1, "120000.00"),), status=OrderStatus.FULFILLED)
         with pytest.raises(IllegalOrderTransitionError):
             order.cancel()
+
+
+def _pickup_shipping() -> CapturedShipping:
+    return CapturedShipping(
+        method_code="pickup", method_name="In-store pickup", cost=_money("0"), is_pickup=True
+    )
+
+
+class TestFulfillmentValueObject:
+    def test_accepts_a_carrier_and_tracking(self) -> None:
+        f = Fulfillment(carrier="  Post ", tracking_number=" TRK-1 ", tracking_url=" http://t ")
+        # Whitespace is trimmed at the edge.
+        assert f.carrier == "Post"
+        assert f.tracking_number == "TRK-1"
+        assert f.tracking_url == "http://t"
+
+    def test_tracking_url_is_optional(self) -> None:
+        assert Fulfillment(carrier="Post", tracking_number="TRK-1").tracking_url is None
+
+    @pytest.mark.parametrize("bad", ["", "   "])
+    def test_rejects_a_blank_carrier(self, bad: str) -> None:
+        with pytest.raises(InvalidFulfillmentError):
+            Fulfillment(carrier=bad, tracking_number="TRK-1")
+
+    @pytest.mark.parametrize("bad", ["", "   "])
+    def test_rejects_a_blank_tracking_number(self, bad: str) -> None:
+        with pytest.raises(InvalidFulfillmentError):
+            Fulfillment(carrier="Post", tracking_number=bad)
+
+
+class TestShipOrder:
+    def test_ship_captures_fulfillment_and_moves_to_fulfilled(self) -> None:
+        order = _order((_line("HB-250", 1, "120000.00"),), status=OrderStatus.PAID)
+        shipped = order.ship(Fulfillment(carrier="Post", tracking_number="TRK-1"))
+        assert shipped.status is OrderStatus.FULFILLED
+        assert shipped.fulfillment is not None
+        assert shipped.fulfillment.carrier == "Post"
+        # Immutable: the original is untouched.
+        assert order.status is OrderStatus.PAID
+        assert order.fulfillment is None
+
+    def test_ship_is_illegal_from_pending(self) -> None:
+        order = _order((_line("HB-250", 1, "120000.00"),), status=OrderStatus.PENDING)
+        with pytest.raises(IllegalOrderTransitionError):
+            order.ship(Fulfillment(carrier="Post", tracking_number="TRK-1"))
+
+
+class TestPickupLifecycle:
+    def test_paid_to_ready_to_picked_up(self) -> None:
+        order = _order(
+            (_line("HB-250", 1, "120000.00"),),
+            status=OrderStatus.PAID,
+            shipping=_pickup_shipping(),
+        )
+        ready = order.mark_ready_for_pickup()
+        assert ready.status is OrderStatus.READY_FOR_PICKUP
+        picked = ready.confirm_pickup()
+        assert picked.status is OrderStatus.PICKED_UP
+
+    def test_confirm_pickup_before_ready_is_illegal(self) -> None:
+        order = _order(
+            (_line("HB-250", 1, "120000.00"),),
+            status=OrderStatus.PAID,
+            shipping=_pickup_shipping(),
+        )
+        with pytest.raises(IllegalOrderTransitionError):
+            order.confirm_pickup()
+
+    def test_a_pickup_order_needs_no_shipping_address(self) -> None:
+        # A pickup order captures no address; the aggregate accepts shipping_address=None.
+        line = _line("HB-250", 1, "120000.00")
+        order = Order(
+            number=OrderNumber("ORD-PICKUP1"),
+            owner="7",
+            channel=ChannelRef("ir-main"),
+            currency="IRR",
+            lines=(line,),
+            total=line.line_total,
+            status=OrderStatus.PENDING,
+            placed_at=datetime(2026, 7, 2, tzinfo=UTC),
+            shipping_address=None,
+            shipping=_pickup_shipping(),
+        )
+        assert order.shipping_address is None
+        assert order.shipping is not None and order.shipping.is_pickup

@@ -20,6 +20,7 @@ and the audit entry never records a purchase that did not commit.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from datetime import datetime
@@ -77,6 +78,15 @@ class OrderRepository(ABC):
         """
 
     @abstractmethod
+    def get_for_update_any(self, number: str) -> Order:
+        """Return any order by number under a row lock (not owner-scoped).
+
+        The staff-fulfilment counterpart of ``get_for_update``: used only behind the
+        ``manage_orders`` permission (shipping/pickup transitions on any order), so it locks
+        the row without owner scoping. Raises ``OrderNotFoundError`` if none exists.
+        """
+
+    @abstractmethod
     def list_for_owner(
         self, owner: str, *, limit: int, offset: int
     ) -> tuple[tuple[Order, ...], int]:
@@ -107,6 +117,19 @@ class PricingReader(ABC):
         """Return the variant's current unit price in the channel, or ``None``."""
 
 
+class VariantWeightReader(ABC):
+    """Narrow read boundary onto the catalog for a variant's shipping weight (grams).
+
+    Used to compute an order's total weight for weight-based shipping rates; an unknown SKU
+    (or one with no weight set) weighs 0, so a fully-unweighed catalog behaves exactly as the
+    flat-rate case (weight never affects the quote).
+    """
+
+    @abstractmethod
+    def weight_of(self, skus: Sequence[str]) -> dict[str, int]:
+        """Return the per-sku weight in grams, batched (missing/unset skus omitted or 0)."""
+
+
 class ChannelReader(ABC):
     """Narrow read boundary onto the channel context for the order currency."""
 
@@ -127,6 +150,7 @@ class ShippingQuote:
     method_code: str
     method_name: str
     cost: Money
+    is_pickup: bool = False
 
 
 class ShippingRateReader(ABC):
@@ -139,14 +163,23 @@ class ShippingRateReader(ABC):
 
     @abstractmethod
     def quote(
-        self, *, channel: str, method_code: str, currency: str, province: str, city: str
+        self,
+        *,
+        channel: str,
+        method_code: str,
+        currency: str,
+        province: str,
+        city: str,
+        weight_grams: int = 0,
     ) -> ShippingQuote | None:
-        """Quote the method for the channel and destination, or ``None`` if not offered there.
+        """Quote the method for the channel, destination, and order weight, or ``None``.
 
         The ``province``/``city`` are the captured shipping destination; the rate is resolved
         for the zone the province falls into (falling back to the method's default rate). The
-        ``currency`` is the resolved order currency; an adapter returns ``None`` (rather than a
-        mismatched quote) if a configured method's currency does not match it.
+        ``weight_grams`` is the order's total shipping weight, used by a weight-priced method to
+        pick the applicable bracket (ignored by a flat/zoned method). The ``currency`` is the
+        resolved order currency; an adapter returns ``None`` (rather than a mismatched quote) if
+        a configured method's currency does not match it.
         """
 
 

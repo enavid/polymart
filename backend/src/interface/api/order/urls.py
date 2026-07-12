@@ -10,11 +10,14 @@ from __future__ import annotations
 from django.urls import path
 
 from src.interface.api.order.views import (
+    ConfirmPickupView,
     ManualOrderView,
     OrderCancelView,
     OrderCollectionView,
     OrderDetailView,
     PreInvoiceView,
+    ReadyForPickupView,
+    ShipOrderView,
 )
 
 urlpatterns = [
@@ -27,5 +30,17 @@ urlpatterns = [
         "orders/<str:number>/pre-invoice/",
         PreInvoiceView.as_view(),
         name="order-pre-invoice",
+    ),
+    # Staff fulfilment (manage_orders): ship a delivery order, or the pickup lifecycle.
+    path("orders/<str:number>/ship/", ShipOrderView.as_view(), name="order-ship"),
+    path(
+        "orders/<str:number>/ready-for-pickup/",
+        ReadyForPickupView.as_view(),
+        name="order-ready-for-pickup",
+    ),
+    path(
+        "orders/<str:number>/confirm-pickup/",
+        ConfirmPickupView.as_view(),
+        name="order-confirm-pickup",
     ),
 ]

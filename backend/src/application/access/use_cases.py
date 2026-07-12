@@ -12,8 +12,11 @@ import structlog
 from src.application.access.ports import AccessControlGateway
 from src.application.audit.ports import AuditRecorder
 from src.application.channel.ports import ChannelRepository
+from src.application.inventory.ports import StockSourceRepository
 from src.domain.audit.entities import FieldChange
 from src.domain.channel.exceptions import ChannelNotFoundError
+from src.domain.inventory.exceptions import StockSourceNotFoundError
+from src.domain.inventory.value_objects import StockSourceCode
 
 logger = structlog.get_logger(__name__)
 
@@ -22,6 +25,7 @@ logger = structlog.get_logger(__name__)
 _RESOURCE_USER = "user"
 _ACTION_ROLE_ASSIGNED = "access.role_assigned"
 _ACTION_CHANNEL_MANAGEMENT_GRANTED = "access.channel_management_granted"
+_ACTION_STOCK_SOURCE_MANAGEMENT_GRANTED = "access.stock_source_management_granted"
 
 
 class AssignRole:
@@ -77,4 +81,41 @@ class GrantChannelManagement:
             resource_id=str(user_id),
             actor=actor,
             changes=(FieldChange(field="managed_channel", after=channel_slug),),
+        )
+
+
+class GrantStockSourceManagement:
+    """Grant a user object-scoped management of a single stock source (warehouse)."""
+
+    def __init__(
+        self,
+        gateway: AccessControlGateway,
+        sources: StockSourceRepository,
+        audit: AuditRecorder,
+    ) -> None:
+        self._gateway = gateway
+        self._sources = sources
+        self._audit = audit
+
+    def execute(self, *, user_id: int, source_code: str, actor: str | None = None) -> None:
+        # Resolve the code to the source's identity first; a missing source raises
+        # StockSourceNotFoundError before any grant is recorded.
+        source = self._sources.get(StockSourceCode(source_code))
+        source_id = source.id
+        if source_id is None:  # pragma: no cover - persisted sources always carry an id
+            raise StockSourceNotFoundError(source_code)
+        self._gateway.grant_stock_source_management(user_id, source_id)
+        logger.info(
+            "stock_source_management_granted",
+            user_id=user_id,
+            source_id=source_id,
+            source_code=source_code,
+            actor=actor,
+        )
+        self._audit.record(
+            action=_ACTION_STOCK_SOURCE_MANAGEMENT_GRANTED,
+            resource_type=_RESOURCE_USER,
+            resource_id=str(user_id),
+            actor=actor,
+            changes=(FieldChange(field="managed_stock_source", after=source_code),),
         )

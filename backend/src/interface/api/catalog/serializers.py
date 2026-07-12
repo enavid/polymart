@@ -180,6 +180,7 @@ class VariantSerializer(serializers.Serializer):
     product = serializers.CharField()
     sku = serializers.CharField()
     name = serializers.CharField()
+    weight_grams = serializers.IntegerField()
     values = AttributeValueSerializer(many=True)
     media = VariantMediaSerializer(many=True)
 
@@ -244,6 +245,8 @@ class CreateVariantSerializer(serializers.Serializer):
 
     sku = serializers.CharField()
     name = serializers.CharField()
+    # Shipping weight in grams (optional; 0 = unset). Feeds weight-based shipping rates.
+    weight_grams = serializers.IntegerField(min_value=0, required=False, default=0)
     values = AttributeValueSerializer(many=True, required=False, default=list)
     media = VariantMediaSerializer(many=True, required=False, default=list)
 

@@ -22,7 +22,12 @@ _CHANNEL_SLUG_MAX_LENGTH = 64
 _GUEST_TOKEN_MAX_LENGTH = 64
 _CURRENCY_CODE_MAX_LENGTH = 3
 _SKU_MAX_LENGTH = 64
-_STATUS_MAX_LENGTH = 16
+# Widened from 16 to fit the longest status token ("ready_for_pickup") with headroom.
+_STATUS_MAX_LENGTH = 24
+# Captured fulfilment (carrier + tracking) lengths mirror the order domain's Fulfillment VO.
+_CARRIER_MAX_LENGTH = 120
+_TRACKING_NUMBER_MAX_LENGTH = 128
+_TRACKING_URL_MAX_LENGTH = 500
 # Money precision mirrors the catalog's stored precision, so a captured price/total is
 # persisted losslessly (18 total digits, 4 decimal places).
 _AMOUNT_MAX_DIGITS = 18
@@ -85,6 +90,10 @@ class OrderModel(models.Model):
     shipping_method_name = models.CharField(
         max_length=_SHIPPING_METHOD_NAME_MAX_LENGTH, blank=True, default=""
     )
+    # A pickup (BOPIS) method captures no shipping address and follows the
+    # ready-for-pickup -> picked-up lifecycle; a delivery method ships to the captured
+    # address and follows fulfilled. Existing/legacy rows are deliveries (False).
+    shipping_is_pickup = models.BooleanField(default=False)
     # Captured tax, at placement like a line's price: a later change to the channel's rate never
     # rewrites a placed order. ``tax_rate`` is NULL (never 0) for an order in an untaxed channel
     # and for orders that predate tax; the mapper reads NULL as "no captured tax" (total
@@ -106,18 +115,35 @@ class OrderModel(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    # Captured fulfilment for a shipped (delivery) order: the carrier and its tracking
+    # reference staff entered when moving the order to FULFILLED (an optional tracking URL
+    # the shopper can follow). "" means no shipment captured yet -- the mapper reads an
+    # empty carrier as "no fulfillment". A pickup order never sets these.
+    fulfillment_carrier = models.CharField(max_length=_CARRIER_MAX_LENGTH, blank=True, default="")
+    fulfillment_tracking_number = models.CharField(
+        max_length=_TRACKING_NUMBER_MAX_LENGTH, blank=True, default=""
+    )
+    fulfillment_tracking_url = models.CharField(
+        max_length=_TRACKING_URL_MAX_LENGTH, blank=True, default=""
+    )
+
     # Shipping address, captured at placement (copied from the address book, not a
     # foreign key -- a later edit/deletion of the saved address must never rewrite a
-    # placed order's history). ``shipping_line2`` is the only optional field. Every new
-    # order supplies a real captured address (enforced by the domain aggregate and the
-    # repository), so these are NOT NULL with no model-level default; the initial
-    # migration backfills any pre-existing rows with "" one-off (preserve_default=False).
-    shipping_recipient_name = models.CharField(max_length=_RECIPIENT_NAME_MAX_LENGTH)
-    shipping_phone_number = models.CharField(max_length=_PHONE_NUMBER_MAX_LENGTH)
-    shipping_province = models.CharField(max_length=_PROVINCE_MAX_LENGTH)
-    shipping_city = models.CharField(max_length=_CITY_MAX_LENGTH)
-    shipping_postal_code = models.CharField(max_length=_POSTAL_CODE_MAX_LENGTH)
-    shipping_line1 = models.CharField(max_length=_ADDRESS_LINE_MAX_LENGTH)
+    # placed order's history). ``shipping_line2`` is optional. A pickup (BOPIS) order
+    # captures no address, so an all-blank recipient reads as "no captured address"
+    # (mirroring how an empty shipping_method_code reads as "no captured shipping").
+    shipping_recipient_name = models.CharField(
+        max_length=_RECIPIENT_NAME_MAX_LENGTH, blank=True, default=""
+    )
+    shipping_phone_number = models.CharField(
+        max_length=_PHONE_NUMBER_MAX_LENGTH, blank=True, default=""
+    )
+    shipping_province = models.CharField(max_length=_PROVINCE_MAX_LENGTH, blank=True, default="")
+    shipping_city = models.CharField(max_length=_CITY_MAX_LENGTH, blank=True, default="")
+    shipping_postal_code = models.CharField(
+        max_length=_POSTAL_CODE_MAX_LENGTH, blank=True, default=""
+    )
+    shipping_line1 = models.CharField(max_length=_ADDRESS_LINE_MAX_LENGTH, blank=True, default="")
     shipping_line2 = models.CharField(max_length=_ADDRESS_LINE_MAX_LENGTH, blank=True, default="")
 
     class Meta:

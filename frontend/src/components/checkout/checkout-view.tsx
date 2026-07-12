@@ -281,8 +281,13 @@ function UserCheckout({ cart, channel }: FlowProps) {
           channel={channel}
           wallet={walletQuery.data ?? null}
           onBack={() => setStep("address")}
-          onPlace={(method, shippingMethod) =>
-            place.mutate({ shipping: { addressId: selected.id }, method, shippingMethod })
+          onPlace={(method, shippingMethod, isPickup) =>
+            place.mutate({
+              // A pickup (BOPIS) order captures no address, even for a signed-in shopper.
+              shipping: isPickup ? { pickup: true } : { addressId: selected.id },
+              method,
+              shippingMethod,
+            })
           }
           placing={place.isPending}
           placeError={place.isError ? t("placeError") : null}
@@ -341,8 +346,12 @@ function GuestCheckout({ cart, channel }: FlowProps) {
           // A guest has no account and therefore no wallet -- pay-with-wallet is never offered.
           wallet={null}
           onBack={() => setStep("address")}
-          onPlace={(method, shippingMethod) =>
-            place.mutate({ shipping: { shippingAddress: shipping }, method, shippingMethod })
+          onPlace={(method, shippingMethod, isPickup) =>
+            place.mutate({
+              shipping: isPickup ? { pickup: true } : { shippingAddress: shipping },
+              method,
+              shippingMethod,
+            })
           }
           placing={place.isPending}
           placeError={place.isError ? t("placeError") : null}
@@ -489,7 +498,7 @@ interface ReviewStepProps {
   /** The signed-in shopper's wallet (for the pay-with-wallet option), or null for a guest. */
   wallet: Wallet | null;
   onBack: () => void;
-  onPlace: (method: PaymentMethod, shippingMethod: string) => void;
+  onPlace: (method: PaymentMethod, shippingMethod: string, isPickup: boolean) => void;
   placing: boolean;
   placeError: string | null;
   blocked: boolean;
@@ -642,7 +651,9 @@ function ReviewStep({
         </Button>
         <Button
           type="button"
-          onClick={() => shippingCode && onPlace(method, shippingCode)}
+          onClick={() =>
+            shippingCode && onPlace(method, shippingCode, selectedMethod?.is_pickup ?? false)
+          }
           disabled={placing || blocked || shippingCode === null}
         >
           {placing ? t("placing") : t("placeOrder")}

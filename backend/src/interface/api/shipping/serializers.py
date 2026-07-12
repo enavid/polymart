@@ -31,6 +31,8 @@ class ShippingMethodSerializer(serializers.Serializer):
     currency = serializers.CharField()
     min_days = serializers.IntegerField()
     max_days = serializers.IntegerField()
+    # True for a pickup (BOPIS) method: the storefront places such an order with no address.
+    is_pickup = serializers.BooleanField()
 
 
 class ShippingMethodsSerializer(serializers.Serializer):

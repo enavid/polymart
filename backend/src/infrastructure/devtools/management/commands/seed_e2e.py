@@ -74,6 +74,7 @@ from src.infrastructure.catalog.repositories import (
 from src.infrastructure.channel.models import ChannelModel
 from src.infrastructure.channel.repositories import DjangoChannelRepository
 from src.infrastructure.identity.models import User
+from src.infrastructure.inventory.models import StockLevelModel
 from src.infrastructure.order.models import OrderModel
 from src.infrastructure.wallet.models import WalletModel
 from src.interface.api.access.container import build_assign_role
@@ -211,9 +212,9 @@ class Command(BaseCommand):
         # Start every E2E run from an empty shopper cart, no prior orders, and an
         # address book reset to exactly one known default address (the checkout
         # target), so the cart/checkout/address specs assert against a known state
-        # regardless of what a previous run left behind. Stock is re-set to the
-        # fixture values below in _seed_products, so deleting orders (which never
-        # restores stock) is safe.
+        # regardless of what a previous run left behind. Deleting orders never
+        # releases the stock they reserved, so _seed_catalog resets both the on-hand
+        # counts (fixture values) and the reservations to zero afterwards.
         CartModel.objects.filter(owner_id=shopper.pk).delete()
         OrderModel.objects.filter(owner_id=shopper.pk).delete()
         AddressModel.objects.filter(owner_id=shopper.pk).delete()
@@ -268,6 +269,10 @@ class Command(BaseCommand):
     def _seed_catalog(self) -> None:
         self._seed_product_type()
         self._seed_categories()
+        # Clear reservations left by deleted orders so available-to-promise starts from the
+        # full fixture stock (_seed_products then resets on-hand). The E2E dataset is a
+        # throwaway fixture, so a blanket reset is deterministic and safe.
+        StockLevelModel.objects.update(reserved=0)
         self._seed_products()
         self._seed_collection()
         self._hide_foreign_products()

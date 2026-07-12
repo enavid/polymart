@@ -11,15 +11,18 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from src.domain.shipping.entities import ShippingZone
+from src.domain.shipping.value_objects import Destination
 
 
-def resolve_zone(province: str, zones: Sequence[ShippingZone]) -> ShippingZone | None:
-    """Return the first zone that covers ``province``, or ``None`` if none does.
+def resolve_zone(destination: Destination, zones: Sequence[ShippingZone]) -> ShippingZone | None:
+    """Return the first zone that covers ``destination``, or ``None`` if none does.
 
-    Zones are expected to be disjoint; if two overlap, the first configured one wins, so the
-    result is deterministic regardless of the input data.
+    Matching considers the destination's province and (for a city-scoped zone) its city. Order
+    matters: a fine city zone listed before a broad province zone wins, so the caller can layer
+    specific rates over general ones. Overlapping zones resolve to the first configured one, so
+    the result is deterministic regardless of the input data.
     """
     for zone in zones:
-        if zone.covers(province):
+        if zone.covers(destination):
             return zone
     return None

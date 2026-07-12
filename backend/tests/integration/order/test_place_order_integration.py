@@ -2,9 +2,11 @@
 
 This is the money/inventory-critical path, so it is tested with the real Django
 adapters wired together (no fakes): the Unit of Work, the locked stock repository, the
-order repository, the cart bridge, and the durable audit trail. The decisive test is
-that an oversell on one line rolls back the stock deduction already made on an earlier
-line -- the multi-aggregate atomicity guarantee.
+order repository, the cart bridge, and the durable audit trail. Placing an order
+*reserves* stock (available-to-promise drops; physical on-hand is untouched until
+fulfilment); cancelling releases the reservation. The decisive test is that an oversell
+on one line rolls back the reservation already made on an earlier line -- the
+multi-aggregate atomicity guarantee.
 """
 
 from __future__ import annotations
@@ -46,6 +48,7 @@ from src.infrastructure.catalog.repositories import (
     DjangoVariantRepository,
 )
 from src.infrastructure.channel.repositories import DjangoChannelRepository
+from src.infrastructure.inventory.repositories import DjangoStockLevelRepository
 from src.infrastructure.order.clock import SystemClock
 from src.infrastructure.order.repositories import (
     ConfiguredShippingRateReader,
@@ -57,6 +60,7 @@ from src.infrastructure.order.repositories import (
     DjangoOrderRepository,
     DjangoPricingReader,
     DjangoUnitOfWork,
+    DjangoVariantWeightReader,
 )
 from src.interface.api.audit.container import build_audit_recorder
 from src.interface.api.events.container import build_event_publisher
@@ -116,6 +120,11 @@ def _owner(user: object) -> str:
     return f"u:{user.pk}"
 
 
+def _available(sku: str) -> int:
+    """Available-to-promise for a SKU (on_hand - reserved); the buyable count."""
+    return DjangoStockLevelRepository().available_for_skus([sku]).get(sku, 0)
+
+
 def _add_to_cart(owner: str, sku: str, quantity: int) -> None:
     # Seed the cart exactly as the cart endpoints store it: keyed by the prefixed owner
     # id (``u:<pk>`` for a user, ``g:<token>`` for a guest). The order checkout reads it
@@ -130,6 +139,7 @@ def _place_order(numbers: OrderNumberGenerator | None = None) -> PlaceOrder:
         unit_of_work=DjangoUnitOfWork(),
         carts=DjangoCartForCheckout(),
         pricing=DjangoPricingReader(),
+        weights=DjangoVariantWeightReader(),
         channels=DjangoChannelReader(),
         addresses=DjangoAddressReader(),
         shipping=ConfiguredShippingRateReader(),
@@ -149,8 +159,83 @@ def _checkout_command(owner: str) -> PlaceOrderCommand:
     )
 
 
+class TestCheckoutWeightRates:
+    def test_captures_the_weight_bracket_cost_from_the_order_weight(self, settings) -> None:  # type: ignore[no-untyped-def]
+        # A weight-priced method: the captured shipping cost is the bracket the order's total
+        # weight falls into, resolved server-side from the catalog weights (not the client).
+        from src.infrastructure.catalog.models import ProductVariantModel
+
+        settings.SHIPPING_METHODS = {
+            _CHANNEL: [
+                {
+                    "code": "table",
+                    "name": "Weight table",
+                    "currency": "IRR",
+                    "min_days": 2,
+                    "max_days": 4,
+                    "weight_brackets": [
+                        {"up_to_grams": 1000, "price": "30000"},
+                        {"up_to_grams": None, "price": "90000"},
+                    ],
+                }
+            ]
+        }
+        _seed_catalog()
+        # HB-250 weighs 600g; ordering 2 = 1200g, which lands in the overflow bracket (90000).
+        ProductVariantModel.objects.filter(sku="HB-250").update(weight_grams=600)
+        user = get_user_model().objects.create_user(phone_number="09120000001", password="pw")
+        owner = _owner(user)
+        seed_address(user.pk)
+        _add_to_cart(owner, "HB-250", 2)
+
+        order = _place_order().execute(
+            PlaceOrderCommand(
+                owner=owner, channel=_CHANNEL, shipping_method="table", address_id=_ADDRESS_ID
+            )
+        )
+
+        assert order.shipping is not None
+        assert order.shipping.cost.amount == Decimal("90000")
+        # Goods 240000 + shipping 90000 = 330000 grand total (untaxed test channel).
+        assert order.total.amount == Decimal("330000")
+
+    def test_a_light_order_gets_the_lighter_bracket(self, settings) -> None:  # type: ignore[no-untyped-def]
+        from src.infrastructure.catalog.models import ProductVariantModel
+
+        settings.SHIPPING_METHODS = {
+            _CHANNEL: [
+                {
+                    "code": "table",
+                    "name": "Weight table",
+                    "currency": "IRR",
+                    "min_days": 2,
+                    "max_days": 4,
+                    "weight_brackets": [
+                        {"up_to_grams": 1000, "price": "30000"},
+                        {"up_to_grams": None, "price": "90000"},
+                    ],
+                }
+            ]
+        }
+        _seed_catalog()
+        ProductVariantModel.objects.filter(sku="HB-250").update(weight_grams=400)
+        user = get_user_model().objects.create_user(phone_number="09120000001", password="pw")
+        owner = _owner(user)
+        seed_address(user.pk)
+        _add_to_cart(owner, "HB-250", 1)  # 400g -> the <=1000 bracket (30000)
+
+        order = _place_order().execute(
+            PlaceOrderCommand(
+                owner=owner, channel=_CHANNEL, shipping_method="table", address_id=_ADDRESS_ID
+            )
+        )
+
+        assert order.shipping is not None
+        assert order.shipping.cost.amount == Decimal("30000")
+
+
 class TestCheckoutHappyPath:
-    def test_places_an_order_deducts_stock_clears_cart_and_audits(self) -> None:
+    def test_places_an_order_reserves_stock_clears_cart_and_audits(self) -> None:
         _seed_catalog()
         user = get_user_model().objects.create_user(phone_number="09120000001", password="pw")
         owner = _owner(user)
@@ -173,9 +258,11 @@ class TestCheckoutHappyPath:
         assert reloaded.total.amount == order.total.amount
         # The shipping address was captured from the shopper's address book.
         assert order.shipping_address.recipient_name == "Sara Ahmadi"
-        # Stock deducted for both lines.
-        assert DjangoStockRepository().get_quantity("HB-250").value == 3
-        assert DjangoStockRepository().get_quantity("DR-250").value == 0
+        # Stock reserved for both lines: available drops, physical on-hand untouched.
+        assert _available("HB-250") == 3
+        assert _available("DR-250") == 0
+        assert DjangoStockRepository().get_quantity("HB-250").value == 5
+        assert DjangoStockRepository().get_quantity("DR-250").value == 1
         # Cart cleared.
         assert DjangoCartForCheckout().line_items(owner, _CHANNEL) == ()
         # Placement audited durably.
@@ -253,7 +340,7 @@ class TestGuestCheckoutIntegration:
         assert order.shipping is not None and order.shipping.method_code == "standard"
         assert order.shipping_address.recipient_name == "Guest Buyer"
         assert DjangoOrderRepository().get_for_owner(owner, order.number.value).id == order.id
-        assert DjangoStockRepository().get_quantity("HB-250").value == 3
+        assert _available("HB-250") == 3
         assert DjangoCartForCheckout().line_items(owner, _CHANNEL) == ()
 
 
@@ -273,9 +360,9 @@ class TestCheckoutShippingRejection:
                     owner=owner, channel=_CHANNEL, shipping_method="drone", address_id=_ADDRESS_ID
                 )
             )
-        # Refused before the transaction: no order, stock and cart intact.
+        # Refused before the transaction: no order, nothing reserved, cart intact.
         assert DjangoOrderRepository().list_for_owner(owner, limit=10, offset=0) == ((), 0)
-        assert DjangoStockRepository().get_quantity("HB-250").value == 5
+        assert _available("HB-250") == 5
         assert len(DjangoCartForCheckout().line_items(owner, _CHANNEL)) == 1
 
 
@@ -285,17 +372,17 @@ class TestCheckoutAtomicity:
         user = get_user_model().objects.create_user(phone_number="09120000001", password="pw")
         owner = _owner(user)
         seed_address(user.pk)
-        # First line deducts fine; the second oversells DR-250 (only 1 in stock).
+        # First line reserves fine; the second oversells DR-250 (only 1 in stock).
         _add_to_cart(owner, "HB-250", 2)
         _add_to_cart(owner, "DR-250", 5)
 
         with pytest.raises(OutOfStockError):
             _place_order().execute(_checkout_command(owner))
 
-        # Nothing committed: no order, the earlier deduction reverted, cart intact.
+        # Nothing committed: no order, the earlier reservation reverted, cart intact.
         assert DjangoOrderRepository().list_for_owner(owner, limit=10, offset=0) == ((), 0)
-        assert DjangoStockRepository().get_quantity("HB-250").value == 5
-        assert DjangoStockRepository().get_quantity("DR-250").value == 1
+        assert _available("HB-250") == 5
+        assert _available("DR-250") == 1
         assert len(DjangoCartForCheckout().line_items(owner, _CHANNEL)) == 2
         assert not AuditLogModel.objects.filter(action="order.placed").exists()
 
@@ -310,15 +397,38 @@ class TestCheckoutAtomicity:
         assert DjangoOrderRepository().list_for_owner(owner, limit=10, offset=0) == ((), 0)
 
 
+class TestCheckoutBackorder:
+    def test_a_backorderable_variant_places_past_available_stock(self) -> None:
+        # DR-250 has 1 in stock but is backorderable: ordering 3 places the order and
+        # tracks the 2-unit shortfall as backorder (physical on-hand untouched).
+        from src.infrastructure.inventory.repositories import DjangoStockPolicyRepository
+
+        _seed_catalog()
+        DjangoStockPolicyRepository().set_policy(
+            "DR-250", backorderable=True, low_stock_threshold=0
+        )
+        user = get_user_model().objects.create_user(phone_number="09120000001", password="pw")
+        owner = _owner(user)
+        seed_address(user.pk)
+        _add_to_cart(owner, "DR-250", 3)
+
+        order = _place_order().execute(_checkout_command(owner))
+
+        assert order.status is OrderStatus.PENDING
+        # All physical stock is reserved and the overflow is backordered; available is 0.
+        assert _available("DR-250") == 0
+        assert DjangoStockPolicyRepository().get("DR-250").backordered.value == 2
+
+
 class TestCancelIntegration:
-    def test_cancel_restocks_and_is_audited(self) -> None:
+    def test_cancel_releases_the_reservation_and_is_audited(self) -> None:
         _seed_catalog()
         user = get_user_model().objects.create_user(phone_number="09120000001", password="pw")
         owner = _owner(user)
         seed_address(user.pk)
         _add_to_cart(owner, "HB-250", 2)
         order = _place_order().execute(_checkout_command(owner))
-        assert DjangoStockRepository().get_quantity("HB-250").value == 3
+        assert _available("HB-250") == 3
 
         cancel = CancelMyOrder(
             unit_of_work=DjangoUnitOfWork(),
@@ -329,7 +439,7 @@ class TestCancelIntegration:
         result = cancel.execute(CancelMyOrderCommand(owner=owner, number=order.number.value))
 
         assert result.status is OrderStatus.CANCELLED
-        assert DjangoStockRepository().get_quantity("HB-250").value == 5  # restored
+        assert _available("HB-250") == 5  # reservation released
         assert AuditLogModel.objects.filter(
             action="order.cancelled", resource_id=order.number.value
         ).exists()
@@ -350,5 +460,5 @@ class TestCancelIntegration:
         )
         with pytest.raises(OrderNotFoundError):
             cancel.execute(CancelMyOrderCommand(owner=_owner(intruder), number=order.number.value))
-        # The order is untouched and stock stays deducted.
-        assert DjangoStockRepository().get_quantity("HB-250").value == 4
+        # The order is untouched and the reservation stays held.
+        assert _available("HB-250") == 4

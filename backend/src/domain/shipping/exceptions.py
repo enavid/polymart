@@ -35,6 +35,10 @@ class InvalidZonedRateError(ShippingError):
     """Raised when a rate table mixes currencies (a per-zone override must match the default)."""
 
 
+class InvalidWeightTableError(ShippingError):
+    """Raised for a weight table that is empty, mis-ordered, mixed-currency, or has no overflow."""
+
+
 class InvalidShippingZoneError(ShippingError):
     """Raised when a shipping zone's name or province set is invalid."""
 

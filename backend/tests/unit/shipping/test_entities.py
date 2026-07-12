@@ -57,7 +57,7 @@ class TestShippingMethod:
 
 from src.domain.shipping.entities import ShippingZone  # noqa: E402
 from src.domain.shipping.exceptions import InvalidShippingZoneError  # noqa: E402
-from src.domain.shipping.value_objects import ShippingZoneCode  # noqa: E402
+from src.domain.shipping.value_objects import Destination, ShippingZoneCode  # noqa: E402
 
 
 def _zone(**overrides: object) -> ShippingZone:
@@ -77,14 +77,23 @@ class TestShippingZone:
         assert zone.name == "Tehran"
 
     def test_covers_a_configured_province(self) -> None:
-        assert _zone().covers("تهران") is True
+        assert _zone().covers(Destination(province="تهران")) is True
 
     def test_covers_is_case_and_whitespace_insensitive(self) -> None:
         zone = _zone(provinces=frozenset({"Tehran"}))
-        assert zone.covers("  tehran ") is True
+        assert zone.covers(Destination(province="  tehran ")) is True
 
     def test_does_not_cover_an_unlisted_province(self) -> None:
-        assert _zone().covers("اصفهان") is False
+        assert _zone().covers(Destination(province="اصفهان")) is False
+
+    def test_a_city_scoped_zone_covers_only_the_listed_cities(self) -> None:
+        # cities narrows the zone: the province must match AND the city be listed.
+        zone = _zone(cities=frozenset({"تهران"}))
+        assert zone.covers(Destination(province="تهران", city="تهران")) is True
+        assert zone.covers(Destination(province="تهران", city="کرج")) is False
+
+    def test_a_province_wide_zone_covers_any_city(self) -> None:
+        assert _zone().covers(Destination(province="تهران", city="anywhere")) is True
 
     def test_trims_the_name(self) -> None:
         assert _zone(name="  Tehran  ").name == "Tehran"
@@ -101,3 +110,7 @@ class TestShippingZone:
     def test_rejects_a_blank_province_entry(self) -> None:
         with pytest.raises(InvalidShippingZoneError):
             _zone(provinces=frozenset({"تهران", "   "}))
+
+    def test_rejects_a_blank_city_entry(self) -> None:
+        with pytest.raises(InvalidShippingZoneError):
+            _zone(cities=frozenset({"تهران", "   "}))

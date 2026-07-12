@@ -24,6 +24,8 @@ from src.domain.catalog.permissions import MANAGE_CATALOG
 from src.domain.channel.entities import Channel
 from src.domain.channel.permissions import MANAGE_CHANNEL
 from src.domain.identity.permissions import MANAGE_ACCESS
+from src.domain.inventory.entities import StockSource
+from src.domain.inventory.permissions import MANAGE_STOCK_SOURCE
 from src.domain.order.permissions import MANAGE_ORDERS
 from src.interface.api.access.container import build_access_gateway
 
@@ -106,3 +108,37 @@ class ScopedChannelManagePermission(BasePermission):
         if channel_id is None:  # pragma: no cover - persisted channels always carry an id
             return False
         return build_access_gateway().can_manage_channel(request.user.pk, channel_id)
+
+
+class GlobalStockSourceManagePermission(BasePermission):
+    """List/create gate for stock sources: reads need auth; create needs the global perm.
+
+    Creating a source has no object to scope to, so it requires the permission globally.
+    """
+
+    def has_permission(self, request: Request, view: Any) -> bool:
+        if not _is_authenticated(request):
+            return False
+        if request.method in SAFE_METHODS:
+            return True
+        return bool(request.user.has_perm(MANAGE_STOCK_SOURCE.full_name))
+
+
+class ScopedStockSourceManagePermission(BasePermission):
+    """Detail gate: reads need auth; writes need global *or* per-source scope.
+
+    ``has_permission`` only verifies authentication so an object-scoped manager is not
+    rejected before the object check; the precise decision happens in
+    ``has_object_permission`` once the view supplies the target stock source.
+    """
+
+    def has_permission(self, request: Request, view: Any) -> bool:
+        return _is_authenticated(request)
+
+    def has_object_permission(self, request: Request, view: Any, obj: StockSource) -> bool:
+        if request.method in SAFE_METHODS:
+            return True
+        source_id = obj.id
+        if source_id is None:  # pragma: no cover - persisted sources always carry an id
+            return False
+        return build_access_gateway().can_manage_stock_source(request.user.pk, source_id)

@@ -23,7 +23,6 @@ from src.infrastructure.catalog.models import (
     ProductVariantMediaModel,
     ProductVariantModel,
     VariantPriceModel,
-    VariantStockModel,
 )
 from src.infrastructure.channel.models import ChannelModel
 from src.infrastructure.devtools.management.commands.seed_demo import (
@@ -31,6 +30,7 @@ from src.infrastructure.devtools.management.commands.seed_demo import (
     NICHES,
     build_products,
 )
+from src.infrastructure.inventory.models import StockLevelModel
 
 pytestmark = [pytest.mark.django_db, pytest.mark.integration]
 
@@ -86,7 +86,8 @@ class TestSeedCatalog:
         total_variants = _total_variants()
         assert ProductVariantModel.objects.count() == total_variants
         assert VariantPriceModel.objects.count() == total_variants
-        assert VariantStockModel.objects.count() == total_variants
+        # Every variant gets an on-hand level on the default inventory source.
+        assert StockLevelModel.objects.filter(source__code="main").count() == total_variants
 
         # Each product gets exactly one primary photo, attached to its first variant.
         assert ProductVariantMediaModel.objects.count() == len(build_products())
@@ -94,7 +95,7 @@ class TestSeedCatalog:
     def test_seeds_varied_data_to_exercise_the_ui(self) -> None:
         _seed()
         # At least one out-of-stock line (empty-state UI) ...
-        assert VariantStockModel.objects.filter(quantity=0).exists()
+        assert StockLevelModel.objects.filter(on_hand=0).exists()
         # ... and at least one multi-variant product (variant picker UI).
         multi = [p for p in build_products() if len(p.variants) > 1]
         assert multi

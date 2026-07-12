@@ -220,6 +220,14 @@ class InvalidVariantNameError(CatalogError):
         self.value = value
 
 
+class InvalidVariantWeightError(CatalogError):
+    """Raised when a variant weight is not a non-negative integer within bounds."""
+
+    def __init__(self, value: object) -> None:
+        super().__init__(f"invalid variant weight: {value!r}")
+        self.value = value
+
+
 class VariantNotFoundError(CatalogError):
     """Raised when a variant cannot be located by its SKU."""
 

@@ -156,6 +156,8 @@ export interface Variant {
   product: string;
   sku: string;
   name: string;
+  /** Shipping weight in grams (0 = unset); feeds weight-based shipping rates. */
+  weight_grams: number;
   values: AttributeValue[];
   media: VariantMedia[];
 }
@@ -163,6 +165,8 @@ export interface Variant {
 export interface CreateVariantInput {
   sku: string;
   name: string;
+  /** Optional shipping weight in grams (defaults to 0/unset server-side). */
+  weight_grams?: number;
   values?: AttributeValue[];
   media?: VariantMedia[];
 }
