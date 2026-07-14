@@ -9,6 +9,7 @@ from src.domain.catalog.exceptions import (
     DuplicateAttributeValueError,
     InvalidProductMetadataError,
     InvalidProductNameError,
+    InvalidTaxClassError,
 )
 from src.domain.catalog.value_objects import (
     AttributeCode,
@@ -26,6 +27,19 @@ def _product(**overrides: object) -> Product:
     }
     defaults.update(overrides)
     return Product(**defaults)  # type: ignore[arg-type]
+
+
+class TestTaxClass:
+    def test_defaults_to_standard(self) -> None:
+        assert _product().tax_class == "standard"
+
+    def test_normalises_casing_and_whitespace(self) -> None:
+        assert _product(tax_class="  Reduced ").tax_class == "reduced"
+
+    @pytest.mark.parametrize("bad", ["", "   ", "has space", "under_score", "a" * 33, "bad!"])
+    def test_rejects_a_malformed_tax_class(self, bad: str) -> None:
+        with pytest.raises(InvalidTaxClassError):
+            _product(tax_class=bad)
 
 
 class TestName:

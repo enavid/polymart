@@ -390,6 +390,7 @@ class CreateProductCommand:
     product_type: str
     values: tuple[AttributeValueInput, ...] = field(default_factory=tuple)
     metadata: Mapping[str, str] = field(default_factory=dict)
+    tax_class: str = "standard"
 
 
 class CreateProduct:
@@ -424,6 +425,7 @@ class CreateProduct:
                 for item in command.values
             ),
             metadata=command.metadata,
+            tax_class=command.tax_class,
         )
         code = product.code.value
 

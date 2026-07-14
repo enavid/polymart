@@ -166,6 +166,9 @@ class ProductModel(models.Model):
     # Storefront visibility gate: a product is a draft until explicitly published.
     # Indexed because the public read API filters on it on every request.
     is_published = models.BooleanField(default=False, db_index=True)
+    # The product's tax class code; a channel's TAX_CLASSES config maps it to a rate. Existing
+    # rows default to "standard" (the channel headline rate) via the field default.
+    tax_class = models.CharField(max_length=_CODE_MAX_LENGTH, default="standard")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

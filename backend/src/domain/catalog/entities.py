@@ -10,6 +10,7 @@ No Django, no DRF, no ORM.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 
@@ -27,6 +28,7 @@ from src.domain.catalog.exceptions import (
     InvalidProductMetadataError,
     InvalidProductNameError,
     InvalidProductTypeNameError,
+    InvalidTaxClassError,
     InvalidVariantNameError,
     InvalidVariantWeightError,
     SelfParentingCategoryError,
@@ -46,6 +48,10 @@ from src.domain.catalog.value_objects import (
 _NAME_MAX_LENGTH = 255
 # A variant weight is a non-negative gram count bounded to the stored 32-bit int column.
 _WEIGHT_GRAMS_MAX = 2_147_483_647
+# A tax class is a lower-case kebab-case code; "standard" is the default (channel headline rate).
+_TAX_CLASS_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+_TAX_CLASS_MAX_LENGTH = 32
+_DEFAULT_TAX_CLASS = "standard"
 _METADATA_KEY_MAX_LENGTH = 64
 _METADATA_VALUE_MAX_LENGTH = 1024
 
@@ -168,12 +174,26 @@ class Product:
     values: tuple[AttributeValue, ...] = ()
     metadata: Mapping[str, str] = field(default_factory=dict)
     is_published: bool = False
+    # The product's tax class code (e.g. "standard", "reduced", "exempt"). A channel's
+    # TAX_CLASSES config maps the code to a rate; an unmapped/exempt class levies no tax.
+    # Defaults to "standard" so an unset product is taxed at the channel's headline rate.
+    tax_class: str = _DEFAULT_TAX_CLASS
     id: int | None = field(default=None)
 
     def __post_init__(self) -> None:
         self.name = self._validated_name(self.name)
         self.values = self._validated_values(self.values)
         self.metadata = self._validated_metadata(self.metadata)
+        self.tax_class = self._validated_tax_class(self.tax_class)
+
+    @staticmethod
+    def _validated_tax_class(raw: str) -> str:
+        # A tax class is a lower-case kebab-case code (the stable key a channel's config maps
+        # to a rate); normalise casing/whitespace so "Standard" and "standard" are the same.
+        normalized = raw.strip().lower()
+        if not _TAX_CLASS_RE.match(normalized) or len(normalized) > _TAX_CLASS_MAX_LENGTH:
+            raise InvalidTaxClassError(raw)
+        return normalized
 
     @staticmethod
     def _validated_name(raw: str) -> str:

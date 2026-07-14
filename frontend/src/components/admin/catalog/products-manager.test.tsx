@@ -186,6 +186,7 @@ describe("ProductsManager", () => {
 
   it("creates a product and refreshes the list", async () => {
     let created = false;
+    let createdBody: Record<string, unknown> | null = null;
     server.use(
       http.get("*/catalog/product-types/", () =>
         HttpResponse.json([
@@ -202,8 +203,9 @@ describe("ProductsManager", () => {
       http.get("*/catalog/products/", () =>
         HttpResponse.json(created ? [espresso] : []),
       ),
-      http.post("*/catalog/products/", async () => {
+      http.post("*/catalog/products/", async ({ request }) => {
         created = true;
+        createdBody = (await request.json()) as Record<string, unknown>;
         return HttpResponse.json(espresso, { status: 201 });
       }),
     );
@@ -222,6 +224,9 @@ describe("ProductsManager", () => {
       screen.getByLabelText(messages.catalog.products.productType),
       "coffee",
     );
+    // Set a non-default tax class so the field is exercised.
+    await user.clear(screen.getByLabelText(messages.catalog.products.taxClass));
+    await user.type(screen.getByLabelText(messages.catalog.products.taxClass), "exempt");
     await user.click(
       screen.getByRole("button", { name: messages.catalog.create }),
     );
@@ -230,5 +235,7 @@ describe("ProductsManager", () => {
     expect(
       await screen.findByRole("button", { name: new RegExp(uncategorized) }),
     ).toBeInTheDocument();
+    // The chosen tax class is submitted to the backend.
+    expect(createdBody).toMatchObject({ tax_class: "exempt" });
   });
 });

@@ -28,6 +28,7 @@ from src.application.order.ports import (
     OrderRepository,
     OwnedAddress,
     PricingReader,
+    ProductTaxClassReader,
     ShippingQuote,
     ShippingRateReader,
     TaxCalculator,
@@ -125,6 +126,16 @@ class FakeWeights(VariantWeightReader):
         return {sku: self._weights[sku] for sku in skus if sku in self._weights}
 
 
+class FakeTaxClasses(ProductTaxClassReader):
+    """Per-sku product tax class; unset skus default to "standard"."""
+
+    def __init__(self, classes: dict[str, str] | None = None) -> None:
+        self._classes = classes or {}
+
+    def tax_class_of(self, skus: Sequence[str]) -> dict[str, str]:
+        return {sku: self._classes.get(sku, "standard") for sku in skus}
+
+
 class FakeChannels(ChannelReader):
     def __init__(self, currency: str | None) -> None:
         self._currency = currency
@@ -174,13 +185,20 @@ class FakeTax(TaxCalculator):
     same rounded value the real bridge produces.
     """
 
-    def __init__(self, rate: Decimal | None = None) -> None:
+    def __init__(
+        self, rate: Decimal | None = None, *, exempt_classes: set[str] | None = None
+    ) -> None:
         self._rate = rate
+        self._exempt_classes = exempt_classes or set()
         self.seen_taxable: Money | None = None
+        self.seen_classes: list[str] = []
 
-    def calculate(self, *, channel: str, taxable: Money) -> TaxQuote | None:
+    def calculate(
+        self, *, channel: str, taxable: Money, tax_class: str = "standard"
+    ) -> TaxQuote | None:
         self.seen_taxable = taxable
-        if self._rate is None:
+        self.seen_classes.append(tax_class)
+        if self._rate is None or tax_class in self._exempt_classes:
             return None
         amount = (taxable.amount * self._rate / Decimal("100")).quantize(
             Decimal("0.0001"), rounding=ROUND_HALF_UP
@@ -358,6 +376,7 @@ def _build_place_order(
     shipping: FakeShipping | None = None,
     tax: FakeTax | None = None,
     weights: FakeWeights | None = None,
+    tax_classes: FakeTaxClasses | None = None,
     audit: RecordingAudit | None = None,
     events: RecordingEventPublisher | None = None,
 ) -> PlaceOrder:
@@ -370,6 +389,7 @@ def _build_place_order(
         addresses=addresses or FakeAddresses(),
         shipping=shipping or FakeShipping(),
         tax=tax or FakeTax(),
+        tax_classes=tax_classes or FakeTaxClasses(),
         inventory=inventory or FakeInventory(stock),
         orders=orders or FakeOrders(),
         numbers=FakeNumbers(),
@@ -484,6 +504,7 @@ class TestPlaceOrder:
             carts=cart,
             pricing=FakePricing({"HB-250": _money("120000.00")}),
             weights=FakeWeights(),
+            tax_classes=FakeTaxClasses(),
             channels=FakeChannels("IRR"),
             addresses=FakeAddresses(),
             shipping=FakeShipping(),
@@ -790,14 +811,57 @@ class TestPlaceOrderTax:
             )
         )
 
-        # Tax base is goods 120000 + shipping 50000 = 170000; 9% = 15300.
-        assert tax.seen_taxable is not None
-        assert tax.seen_taxable.amount == Decimal("170000.00")
+        # Tax is computed per line (goods 120000 @ 9% = 10800) plus shipping (50000 @ 9% =
+        # 4500); the captured total is 15300 -- the same as 9% of the combined 170000 base.
+        assert tax.seen_classes == ["standard", "standard"]  # one goods line + shipping
         assert order.tax is not None
         assert order.tax.rate == Decimal("9")
         assert order.tax.amount.amount == Decimal("15300.00")
         # Grand total = goods + shipping + tax.
         assert order.total.amount == Decimal("185300.00")
+
+    def test_taxes_each_line_by_its_product_class_excluding_exempt(self) -> None:
+        # Two goods lines: DR-250 is exempt (no tax), HB-250 is standard (9%). Only the
+        # standard line and shipping are taxed; the exempt line contributes nothing.
+        place = _build_place_order(
+            cart_items=(CheckoutLine("HB-250", 1), CheckoutLine("DR-250", 1)),
+            prices={"HB-250": _money("120000.00"), "DR-250": _money("100000.00")},
+            stock={"HB-250": 5, "DR-250": 5},
+            shipping=FakeShipping({"standard": _money("50000.00")}),
+            tax=FakeTax(Decimal("9"), exempt_classes={"exempt"}),
+            tax_classes=FakeTaxClasses({"DR-250": "exempt"}),
+        )
+
+        order = place.execute(
+            PlaceOrderCommand(
+                owner="7", channel="ir-main", shipping_method="standard", address_id="ADDR-TEST01"
+            )
+        )
+
+        assert order.tax is not None
+        # HB-250 120000 @ 9% = 10800; shipping 50000 @ 9% = 4500; DR-250 exempt -> 0. Total 15300.
+        assert order.tax.amount.amount == Decimal("15300.00")
+        # Goods 220000 + shipping 50000 + tax 15300 = 285300 grand total.
+        assert order.total.amount == Decimal("285300.00")
+
+    def test_an_all_exempt_order_captures_no_tax(self) -> None:
+        place = _build_place_order(
+            cart_items=(CheckoutLine("HB-250", 1),),
+            prices={"HB-250": _money("120000.00")},
+            stock={"HB-250": 5},
+            # No shipping charge, and the only product is exempt -> nothing taxed at all.
+            tax=FakeTax(Decimal("9"), exempt_classes={"exempt"}),
+            tax_classes=FakeTaxClasses({"HB-250": "exempt"}),
+        )
+
+        order = place.execute(
+            PlaceOrderCommand(
+                owner="7", channel="ir-main", shipping_method="standard", address_id="ADDR-TEST01"
+            )
+        )
+
+        assert order.tax is None
+        assert order.total.amount == Decimal("120000.00")
 
     def test_no_tax_leaves_the_total_at_goods_plus_shipping(self) -> None:
         place = _build_place_order(
@@ -909,6 +973,7 @@ class TestPlaceOrderInlineShipping:
             carts=FakeCart((CheckoutLine("HB-250", 1),)),
             pricing=FakePricing({"HB-250": _money("120000.00")}),
             weights=FakeWeights(),
+            tax_classes=FakeTaxClasses(),
             channels=FakeChannels("IRR"),
             addresses=ExplodingAddresses(),
             shipping=FakeShipping(),
@@ -1001,6 +1066,7 @@ class TestListMyOrders:
                 carts=FakeCart((CheckoutLine("HB-250", 1),)),
                 pricing=FakePricing({"HB-250": _money("120000.00")}),
                 weights=FakeWeights(),
+                tax_classes=FakeTaxClasses(),
                 channels=FakeChannels("IRR"),
                 addresses=FakeAddresses(),
                 shipping=FakeShipping(),
@@ -1098,6 +1164,7 @@ class TestCancelMyOrder:
             carts=FakeCart((CheckoutLine("HB-250", 2),)),
             pricing=FakePricing({"HB-250": _money("120000.00")}),
             weights=FakeWeights(),
+            tax_classes=FakeTaxClasses(),
             channels=FakeChannels("IRR"),
             addresses=FakeAddresses(),
             shipping=FakeShipping(),
@@ -1192,6 +1259,7 @@ def _build_create_manual_order(
     inventory: FakeInventory | None = None,
     orders: FakeOrders | None = None,
     tax: FakeTax | None = None,
+    tax_classes: FakeTaxClasses | None = None,
     audit: RecordingAudit | None = None,
     events: RecordingEventPublisher | None = None,
 ) -> CreateManualOrder:
@@ -1200,6 +1268,7 @@ def _build_create_manual_order(
         pricing=FakePricing(prices),
         channels=FakeChannels(currency),
         tax=tax or FakeTax(),
+        tax_classes=tax_classes or FakeTaxClasses(),
         inventory=inventory or FakeInventory(stock),
         orders=orders or FakeOrders(),
         numbers=FakeNumbers(),

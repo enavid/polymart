@@ -6,7 +6,7 @@ import { useTranslations } from "next-intl";
 import { ProductThumb } from "@/components/storefront/product-thumb";
 import { Card } from "@/components/ui/card";
 import type { StorefrontProduct } from "@/lib/api/catalog";
-import { formatMoneyString } from "@/lib/format";
+import { formatMoneyString, formatPercent } from "@/lib/format";
 
 /**
  * A storefront product card: the whole tile is one link to the product, with the
@@ -44,11 +44,18 @@ export function ProductCard({ product }: { product: StorefrontProduct }) {
             {product.name}
           </h3>
           {priced ? (
-            <p className="text-base font-semibold text-foreground">
-              {t("priceFrom", {
-                price: formatMoneyString(product.from_price!, product.currency!),
-              })}
-            </p>
+            <>
+              <p className="text-base font-semibold text-foreground">
+                {t("priceFrom", {
+                  price: formatMoneyString(product.from_price!, product.currency!),
+                })}
+              </p>
+              {product.tax_rate != null ? (
+                <p className="text-xs text-muted-foreground">
+                  {t("taxIncluded", { rate: formatPercent(product.tax_rate) })}
+                </p>
+              ) : null}
+            </>
           ) : inChannel ? (
             <p className="text-sm text-muted-foreground">{t("noPrice")}</p>
           ) : null}

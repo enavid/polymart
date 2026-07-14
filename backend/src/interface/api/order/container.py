@@ -28,6 +28,7 @@ from src.infrastructure.order.repositories import (
     DjangoInventory,
     DjangoOrderRepository,
     DjangoPricingReader,
+    DjangoProductTaxClassReader,
     DjangoUnitOfWork,
     DjangoVariantWeightReader,
 )
@@ -45,6 +46,7 @@ def build_place_order() -> PlaceOrder:
         addresses=DjangoAddressReader(),
         shipping=ConfiguredShippingRateReader(),
         tax=ConfiguredTaxCalculator(),
+        tax_classes=DjangoProductTaxClassReader(),
         inventory=DjangoInventory(),
         orders=DjangoOrderRepository(),
         numbers=SecureOrderNumberGenerator(),
@@ -77,6 +79,7 @@ def build_create_manual_order() -> CreateManualOrder:
         pricing=DjangoPricingReader(),
         channels=DjangoChannelReader(),
         tax=ConfiguredTaxCalculator(),
+        tax_classes=DjangoProductTaxClassReader(),
         inventory=DjangoInventory(),
         orders=DjangoOrderRepository(),
         numbers=SecureOrderNumberGenerator(),

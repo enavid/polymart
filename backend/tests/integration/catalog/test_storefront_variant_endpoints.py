@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
+
 import pytest
 from django.contrib.auth import get_user_model
 from rest_framework.test import APIClient
@@ -94,6 +96,33 @@ class TestStorefrontVariants:
         assert variant["sku"] == "HB-250"
         assert "id" not in variant  # the internal id is never exposed publicly
         assert variant["price"] == {"amount": "120000.0000", "currency": "IRR"}
+
+    def test_exposes_the_products_tax_rate_for_the_pdp(
+        self, admin_client: APIClient, settings
+    ) -> None:  # type: ignore[no-untyped-def]
+        settings.TAX_RATES = {_CHANNEL: "9"}
+        _seed_channel()
+        _seed_product(admin_client, published=True, priced=True)
+
+        response = APIClient().get(_variants_url("house-blend"), {"channel": _CHANNEL})
+
+        # A standard-class product (the default) exposes the channel headline rate.
+        assert Decimal(response.data["tax_rate"]) == Decimal("9")
+
+    def test_an_exempt_product_exposes_a_null_tax_rate(
+        self, admin_client: APIClient, settings
+    ) -> None:  # type: ignore[no-untyped-def]
+        from src.infrastructure.catalog.models import ProductModel
+
+        settings.TAX_CLASSES = {_CHANNEL: {"standard": "9"}}
+        settings.TAX_RATES = {_CHANNEL: "9"}
+        _seed_channel()
+        _seed_product(admin_client, published=True, priced=True)
+        ProductModel.objects.filter(code="house-blend").update(tax_class="exempt")
+
+        response = APIClient().get(_variants_url("house-blend"), {"channel": _CHANNEL})
+
+        assert response.data["tax_rate"] is None
 
     def test_variant_without_a_price_in_the_channel_has_null_price(
         self, admin_client: APIClient

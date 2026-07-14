@@ -99,6 +99,8 @@ export interface Product {
   values: AttributeValue[];
   metadata: Record<string, string>;
   is_published: boolean;
+  /** The product's tax class code (a channel maps it to a rate); defaults to "standard". */
+  tax_class: string;
   // Category slugs the product belongs to, in assignment order. Present on the
   // management list projection; defaults to empty elsewhere.
   categories?: string[];
@@ -108,6 +110,8 @@ export interface CreateProductInput {
   code: string;
   name: string;
   product_type: string;
+  /** Optional tax class code (defaults to "standard" server-side). */
+  tax_class?: string;
   values?: AttributeValue[];
   metadata?: Record<string, string>;
 }
@@ -330,6 +334,9 @@ export interface StorefrontProduct {
   from_price?: string | null;
   currency?: string | null;
   available?: boolean;
+  // The product's tax-class rate (percentage string), or null for an exempt product /
+  // untaxed channel; present only when a viewing channel was supplied.
+  tax_rate?: string | null;
 }
 
 export interface StorefrontProductPage {
@@ -423,6 +430,9 @@ export interface StorefrontVariant {
 
 export interface StorefrontProductVariants {
   channel: string;
+  /** The product's tax-class rate (percentage string) in the channel, or null when exempt /
+   * untaxed -- so the PDP can show a "prices include X% VAT" note. */
+  tax_rate: string | null;
   variants: StorefrontVariant[];
 }
 

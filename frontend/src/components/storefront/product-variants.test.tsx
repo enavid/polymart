@@ -15,6 +15,7 @@ afterAll(() => server.close());
 
 const variants = {
   channel: "ir-main",
+  tax_rate: null as string | null,
   variants: [
     {
       sku: "HB-250",
@@ -92,12 +93,24 @@ describe("StorefrontProductVariants", () => {
   it("shows an empty message when the product has no variants", async () => {
     server.use(
       http.get("*/catalog/storefront/products/house-blend/variants/", () =>
-        HttpResponse.json({ channel: "ir-main", variants: [] }),
+        HttpResponse.json({ channel: "ir-main", tax_rate: null, variants: [] }),
       ),
     );
 
     renderWithProviders(<StorefrontProductVariants code="house-blend" />);
 
     expect(await screen.findByText(messages.storefront.noVariants)).toBeInTheDocument();
+  });
+
+  it("shows a 'prices include VAT' note when the product carries a tax rate", async () => {
+    server.use(
+      http.get("*/catalog/storefront/products/house-blend/variants/", () =>
+        HttpResponse.json({ ...variants, tax_rate: "9" }),
+      ),
+    );
+
+    renderWithProviders(<StorefrontProductVariants code="house-blend" />);
+
+    expect(await screen.findByText(/مالیات/)).toBeInTheDocument();
   });
 });

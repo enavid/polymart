@@ -15,8 +15,12 @@ from src.domain.tax.value_objects import TaxRate
 
 
 class TaxRateReader(ABC):
-    """Read boundary onto the configured tax rate of a channel."""
+    """Read boundary onto the configured tax rate of a channel, per tax class."""
 
     @abstractmethod
-    def rate_for(self, channel: str) -> TaxRate | None:
-        """Return the channel's tax rate, or ``None`` if the channel levies no tax."""
+    def rate_for(self, channel: str, tax_class: str = "standard") -> TaxRate | None:
+        """Return the channel's rate for a tax class, or ``None`` if that class is not taxed.
+
+        The ``standard`` class falls back to the channel's headline rate; any other class that
+        the channel does not map to a rate (an exempt class) levies no tax (``None``).
+        """

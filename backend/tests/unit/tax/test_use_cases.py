@@ -15,9 +15,11 @@ class FakeTaxRateReader(TaxRateReader):
     def __init__(self, rate: TaxRate | None) -> None:
         self._rate = rate
         self.calls: list[str] = []
+        self.seen_classes: list[str] = []
 
-    def rate_for(self, channel: str) -> TaxRate | None:
+    def rate_for(self, channel: str, tax_class: str = "standard") -> TaxRate | None:
         self.calls.append(channel)
+        self.seen_classes.append(tax_class)
         return self._rate
 
 

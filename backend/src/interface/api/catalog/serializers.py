@@ -82,6 +82,7 @@ class ProductSerializer(serializers.Serializer):
     values = AttributeValueSerializer(many=True)
     metadata = serializers.DictField(child=serializers.CharField())
     is_published = serializers.BooleanField()
+    tax_class = serializers.CharField()
     # Present on the management list projection; absent (defaults to empty) on the
     # single-product responses that do not carry membership.
     categories = serializers.ListField(child=serializers.CharField(), required=False, default=list)
@@ -119,6 +120,9 @@ class StorefrontProductSerializer(serializers.Serializer):
     from_price = serializers.CharField(required=False, allow_null=True)
     currency = serializers.CharField(required=False, allow_null=True)
     available = serializers.BooleanField(required=False)
+    # The product's tax-class rate (percentage string), or null for an exempt product /
+    # untaxed channel; present only when a viewing channel was supplied.
+    tax_rate = serializers.CharField(required=False, allow_null=True)
 
 
 class StorefrontProductPageSerializer(serializers.Serializer):
@@ -162,6 +166,8 @@ class CreateProductSerializer(serializers.Serializer):
     code = serializers.CharField()
     name = serializers.CharField()
     product_type = serializers.CharField()
+    # Optional tax class code (default "standard"); a channel maps it to a rate.
+    tax_class = serializers.CharField(required=False, default="standard")
     values = AttributeValueSerializer(many=True, required=False, default=list)
     metadata = serializers.DictField(child=serializers.CharField(), required=False, default=dict)
 
@@ -209,6 +215,9 @@ class StorefrontProductVariantsSerializer(serializers.Serializer):
     """Response projection of a published product's purchasable variants in a channel."""
 
     channel = serializers.CharField()
+    # The product's tax-class rate (percentage string) in the channel, or null when exempt /
+    # untaxed -- so the PDP can show a "prices include X% VAT" note.
+    tax_rate = serializers.CharField(allow_null=True)
     variants = StorefrontVariantSerializer(many=True)
 
 

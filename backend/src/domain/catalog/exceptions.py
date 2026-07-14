@@ -147,6 +147,14 @@ class InvalidProductNameError(CatalogError):
         self.value = value
 
 
+class InvalidTaxClassError(CatalogError):
+    """Raised when a product's tax class code is malformed (not lower kebab-case, or too long)."""
+
+    def __init__(self, value: str) -> None:
+        super().__init__(f"invalid tax class: {value!r}")
+        self.value = value
+
+
 class InvalidProductMetadataError(CatalogError):
     """Raised when a product metadata key or value is blank or too long."""
 

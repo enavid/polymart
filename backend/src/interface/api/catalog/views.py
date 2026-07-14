@@ -153,6 +153,7 @@ from src.interface.api.catalog.serializers import (
     VariantStockSerializer,
 )
 from src.interface.api.common import ErrorSerializer
+from src.interface.api.tax.container import build_get_tax_rate
 
 # A bulk import is loaded into memory before parsing, so its byte size is capped at
 # the edge (the row count is capped separately by the use case) to bound the upload.
@@ -321,6 +322,7 @@ def _product_payload(product: Product) -> dict[str, object]:
         ],
         "metadata": dict(product.metadata),
         "is_published": product.is_published,
+        "tax_class": product.tax_class,
     }
 
 
@@ -359,6 +361,7 @@ class ProductListCreateView(APIView):
             code=data["code"],
             name=data["name"],
             product_type=data["product_type"],
+            tax_class=data["tax_class"],
             values=tuple(
                 AttributeValueInput(attribute=item["attribute"], value=item["value"])
                 for item in data["values"]
@@ -941,6 +944,9 @@ def _storefront_product_payload(
         payload["from_price"] = None if from_price is None else str(from_price.amount)
         payload["currency"] = None if from_price is None else from_price.currency
         payload["available"] = summary.available
+        # The product's tax-class rate (percentage string), or null for an exempt product /
+        # untaxed channel, so the storefront can show a "prices include X% VAT" note.
+        payload["tax_rate"] = None if summary.tax_rate is None else str(summary.tax_rate)
     return payload
 
 
@@ -1098,11 +1104,19 @@ class StorefrontProductVariantsView(APIView):
         params.is_valid(raise_exception=True)
         channel = params.validated_data["channel"]
         try:
+            product = build_get_published_product().execute(code=code)
             variants = build_get_storefront_product_variants().execute(code=code, channel=channel)
         except ProductNotFoundError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_404_NOT_FOUND)
+        # The product's tax-class rate in the channel (None when exempt / untaxed), so the PDP
+        # can show a "prices include X% VAT" note next to the per-variant prices.
+        rate = build_get_tax_rate().execute(channel=channel, tax_class=product.tax_class)
         return Response(
-            {"channel": channel, "variants": [_storefront_variant_payload(v) for v in variants]}
+            {
+                "channel": channel,
+                "tax_rate": None if rate is None else str(rate.value),
+                "variants": [_storefront_variant_payload(v) for v in variants],
+            }
         )
 
 

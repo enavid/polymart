@@ -36,3 +36,31 @@ class TestSettingsTaxRateReader:
     ) -> None:
         settings.TAX_RATES = {"ir-main": bad}
         assert SettingsTaxRateReader().rate_for("ir-main") is None
+
+
+class TestTaxClasses:
+    def test_a_configured_class_uses_its_rate(self, settings) -> None:  # type: ignore[no-untyped-def]
+        settings.TAX_CLASSES = {"ir-main": {"standard": "9", "reduced": "5"}}
+        assert SettingsTaxRateReader().rate_for("ir-main", "reduced") == TaxRate(Decimal("5"))
+        assert SettingsTaxRateReader().rate_for("ir-main", "standard") == TaxRate(Decimal("9"))
+
+    def test_standard_falls_back_to_the_legacy_channel_rate(self, settings) -> None:  # type: ignore[no-untyped-def]
+        settings.TAX_CLASSES = {}
+        settings.TAX_RATES = {"ir-main": "9"}
+        assert SettingsTaxRateReader().rate_for("ir-main", "standard") == TaxRate(Decimal("9"))
+        assert SettingsTaxRateReader().rate_for("ir-main") == TaxRate(Decimal("9"))
+
+    def test_an_unmapped_non_standard_class_is_exempt(self, settings) -> None:  # type: ignore[no-untyped-def]
+        settings.TAX_CLASSES = {"ir-main": {"standard": "9"}}
+        settings.TAX_RATES = {"ir-main": "9"}
+        # "exempt" (any unmapped, non-standard class) levies no tax.
+        assert SettingsTaxRateReader().rate_for("ir-main", "exempt") is None
+
+    def test_a_class_configured_at_zero_is_taxed_at_zero_not_exempt(self, settings) -> None:  # type: ignore[no-untyped-def]
+        settings.TAX_CLASSES = {"ir-main": {"zero": "0"}}
+        # A configured 0 rate is a real (taxed-at-zero) rate, distinct from an unmapped class.
+        assert SettingsTaxRateReader().rate_for("ir-main", "zero") == TaxRate(Decimal("0"))
+
+    def test_a_malformed_class_rate_degrades_to_untaxed(self, settings) -> None:  # type: ignore[no-untyped-def]
+        settings.TAX_CLASSES = {"ir-main": {"reduced": "not-a-number"}}
+        assert SettingsTaxRateReader().rate_for("ir-main", "reduced") is None

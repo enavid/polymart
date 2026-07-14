@@ -25,6 +25,7 @@ from src.application.order.ports import (
     OrderRepository,
     OwnedAddress,
     PricingReader,
+    ProductTaxClassReader,
     ShippingQuote,
     ShippingRateReader,
     TaxCalculator,
@@ -246,6 +247,18 @@ class DjangoVariantWeightReader(VariantWeightReader):
         return {sku: int(weight) for sku, weight in rows}
 
 
+class DjangoProductTaxClassReader(ProductTaxClassReader):
+    """Read a variant's product tax class from the catalog context, batched."""
+
+    def tax_class_of(self, skus: Sequence[str]) -> dict[str, str]:
+        if not skus:
+            return {}
+        rows = ProductVariantModel.objects.filter(sku__in=list(skus)).values_list(
+            "sku", "product__tax_class"
+        )
+        return dict(rows)
+
+
 class DjangoAddressReader(AddressReader):
     """Read a shopper's saved address from the address context, for checkout capture.
 
@@ -351,10 +364,13 @@ class ConfiguredTaxCalculator(TaxCalculator):
     def __init__(self) -> None:
         self._calculate = CalculateTax(SettingsTaxRateReader())
 
-    def calculate(self, *, channel: str, taxable: Money) -> TaxQuote | None:
+    def calculate(
+        self, *, channel: str, taxable: Money, tax_class: str = "standard"
+    ) -> TaxQuote | None:
         result = self._calculate.execute(
             channel=channel,
             taxable=TaxMoney(amount=taxable.amount, currency=taxable.currency),
+            tax_class=tax_class,
         )
         if result is None:
             return None

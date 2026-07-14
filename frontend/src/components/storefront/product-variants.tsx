@@ -19,7 +19,7 @@ import {
   type StorefrontVariant,
 } from "@/lib/api/catalog";
 import { ApiError } from "@/lib/api/client";
-import { formatMoneyString } from "@/lib/format";
+import { formatMoneyString, formatPercent } from "@/lib/format";
 import { STOREFRONT_CHANNEL } from "@/lib/storefront/channel";
 
 /** The PDP's purchasable surface: a product's variants with per-channel price + add-to-cart. */
@@ -34,6 +34,7 @@ export function StorefrontProductVariants({ code }: { code: string }) {
   });
 
   const variants = query.data?.variants ?? [];
+  const taxRate = query.data?.tax_rate ?? null;
 
   return (
     <Card>
@@ -42,6 +43,12 @@ export function StorefrontProductVariants({ code }: { code: string }) {
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
         {query.isLoading ? <p>{tCommon("loading")}</p> : null}
+
+        {taxRate != null ? (
+          <p className="text-xs text-muted-foreground">
+            {t("taxIncluded", { rate: formatPercent(taxRate) })}
+          </p>
+        ) : null}
 
         {query.isError ? (
           <Alert variant="destructive">

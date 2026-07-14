@@ -397,11 +397,14 @@ class PriceSummary:
     variants in the channel (a "starting at" price), or ``None`` when no variant is
     priced there. ``available`` is true when at least one variant is both priced in
     the channel and has stock on hand -- so an out-of-stock or unpriced product can
-    be shown but flagged, never silently offered.
+    be shown but flagged, never silently offered. ``tax_rate`` is the product's tax-class
+    rate (a percentage) in the channel, or ``None`` for a tax-exempt product / untaxed
+    channel -- so the storefront can show "prices include X% VAT".
     """
 
     from_price: Money | None
     available: bool
+    tax_rate: Decimal | None = None
 
 
 class ProductQueryRepository(ABC):

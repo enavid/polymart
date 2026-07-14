@@ -28,15 +28,33 @@ logger = structlog.get_logger(__name__)
 
 
 class SettingsTaxRateReader(TaxRateReader):
-    """Resolve a channel's tax rate from the ``TAX_RATES`` Django setting."""
+    """Resolve a channel's tax rate per tax class from Django settings.
 
-    def rate_for(self, channel: str) -> TaxRate | None:
-        configured = getattr(settings, "TAX_RATES", {}).get(channel)
+    ``TAX_CLASSES`` maps a class code to a rate string per channel::
+
+        TAX_CLASSES = {"ir-main": {"standard": "9", "reduced": "5"}}
+
+    A class present in the map uses that rate (0 is a valid taxed-at-zero rate). The
+    ``standard`` class falls back to the legacy single ``TAX_RATES[channel]`` rate when it is
+    not in ``TAX_CLASSES``; any *other* class the channel does not map (an exempt class) levies
+    no tax. A malformed rate is treated as untaxed (logged), never crashing checkout.
+    """
+
+    def rate_for(self, channel: str, tax_class: str = "standard") -> TaxRate | None:
+        classes = getattr(settings, "TAX_CLASSES", {}).get(channel, {})
+        if tax_class in classes:
+            configured: object | None = classes[tax_class]
+        elif tax_class == "standard":
+            # Backward-compatible fallback: the single channel rate is the standard class.
+            configured = getattr(settings, "TAX_RATES", {}).get(channel)
+        else:
+            # An unmapped, non-standard class is exempt (no tax).
+            return None
         if configured is None:
             return None
         try:
             return TaxRate(Decimal(str(configured)))
         except (TypeError, ValueError, InvalidOperation, TaxError):
-            # A misconfigured rate must not take down checkout; treat the channel as untaxed.
-            logger.warning("tax_rate_misconfigured", channel=channel)
+            # A misconfigured rate must not take down checkout; treat the class as untaxed.
+            logger.warning("tax_rate_misconfigured", channel=channel, tax_class=tax_class)
             return None

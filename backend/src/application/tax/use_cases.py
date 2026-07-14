@@ -20,14 +20,16 @@ logger = structlog.get_logger(__name__)
 
 
 class GetTaxRate:
-    """Read the tax rate a channel levies (``None`` when the channel is not taxed)."""
+    """Read the tax rate a channel levies for a class (``None`` when that class is untaxed)."""
 
     def __init__(self, reader: TaxRateReader) -> None:
         self._reader = reader
 
-    def execute(self, *, channel: str) -> TaxRate | None:
-        rate = self._reader.rate_for(channel)
-        logger.debug("tax_rate_read", channel=channel, configured=rate is not None)
+    def execute(self, *, channel: str, tax_class: str = "standard") -> TaxRate | None:
+        rate = self._reader.rate_for(channel, tax_class)
+        logger.debug(
+            "tax_rate_read", channel=channel, tax_class=tax_class, configured=rate is not None
+        )
         return rate
 
 
@@ -50,10 +52,12 @@ class CalculateTax:
     def __init__(self, reader: TaxRateReader) -> None:
         self._reader = reader
 
-    def execute(self, *, channel: str, taxable: Money) -> TaxResult | None:
-        rate = self._reader.rate_for(channel)
+    def execute(
+        self, *, channel: str, taxable: Money, tax_class: str = "standard"
+    ) -> TaxResult | None:
+        rate = self._reader.rate_for(channel, tax_class)
         if rate is None:
             return None
         amount = calculate_tax(taxable, rate)
-        logger.debug("tax_calculated", channel=channel, rate=str(rate.value))
+        logger.debug("tax_calculated", channel=channel, tax_class=tax_class, rate=str(rate.value))
         return TaxResult(rate=rate, amount=amount)

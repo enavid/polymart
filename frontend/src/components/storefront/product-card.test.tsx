@@ -54,4 +54,15 @@ describe("ProductCard", () => {
     expect(screen.getByText("هدفون بی‌سیم")).toBeInTheDocument();
     expect(screen.queryByText(messages.storefront.noPrice)).not.toBeInTheDocument();
   });
+
+  it("shows a 'prices include VAT' note when the product carries a tax rate", () => {
+    renderWithProviders(<ProductCard product={{ ...base, tax_rate: "9" }} />);
+    // The note (with the rate through the app's percent formatter) mentions VAT.
+    expect(screen.getByText(/مالیات/)).toBeInTheDocument();
+  });
+
+  it("omits the VAT note for an exempt product (null tax rate)", () => {
+    renderWithProviders(<ProductCard product={{ ...base, tax_rate: null }} />);
+    expect(screen.queryByText(/مالیات/)).not.toBeInTheDocument();
+  });
 });

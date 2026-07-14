@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+from decimal import Decimal
 
 import structlog
 
@@ -31,6 +32,7 @@ from src.application.order.ports import (
     OrderRepository,
     OwnedAddress,
     PricingReader,
+    ProductTaxClassReader,
     ShippingQuote,
     ShippingRateReader,
     TaxCalculator,
@@ -40,7 +42,7 @@ from src.application.order.ports import (
 from src.application.shared.events import EventPublisher
 from src.application.shared.owner import safe_owner
 from src.domain.audit.entities import FieldChange
-from src.domain.order.entities import Order
+from src.domain.order.entities import Order, OrderLine
 from src.domain.order.events import OrderPlaced
 from src.domain.order.exceptions import (
     EmptyCartError,
@@ -130,17 +132,40 @@ def _capture_and_deduct(
     return priced
 
 
-def _resolve_tax(tax: TaxCalculator, channel: str, taxable: Money) -> CapturedTax | None:
-    """Compute and capture the tax due on the taxable base, or ``None`` if the channel is untaxed.
+def _resolve_captured_tax(
+    tax: TaxCalculator,
+    channel: str,
+    currency: str,
+    lines: tuple[OrderLine, ...],
+    shipping_cost: Money,
+    class_by_sku: dict[str, str],
+) -> CapturedTax | None:
+    """Compute the order's tax per line by the product's tax class, and capture the total.
 
-    The amount is computed by the tax context (with its rounding rule) and captured verbatim;
-    the order context never recomputes it from the rate, so the captured amount and the total
-    can never drift. Shared by checkout and manual order creation.
+    Each line is taxed at its product's tax class (an exempt product contributes nothing);
+    shipping is taxed at the ``standard`` class. Each amount is computed by the tax context
+    (with its rounding rule) and summed, so the captured amount is authoritative and the order
+    never recomputes it from a rate. ``None`` means no tax at all (an untaxed channel, or an
+    all-exempt order). The captured ``rate`` is the headline (highest) rate applied -- the label
+    shown on the order; a mixed-class order's exact tax lives in the amount, not the rate.
+    Shared by checkout and manual order creation.
     """
-    quote = tax.calculate(channel=channel, taxable=taxable)
-    if quote is None:
+    total = Money.zero(currency)
+    applied_rates: set[Decimal] = set()
+    for line in lines:
+        tax_class = class_by_sku.get(line.sku.value, "standard")
+        quote = tax.calculate(channel=channel, taxable=line.line_total, tax_class=tax_class)
+        if quote is not None:
+            total = total.add(quote.amount)
+            applied_rates.add(quote.rate)
+    if shipping_cost.amount > 0:
+        ship_quote = tax.calculate(channel=channel, taxable=shipping_cost, tax_class="standard")
+        if ship_quote is not None:
+            total = total.add(ship_quote.amount)
+            applied_rates.add(ship_quote.rate)
+    if not applied_rates:
         return None
-    return CapturedTax(rate=quote.rate, amount=quote.amount)
+    return CapturedTax(rate=max(applied_rates), amount=total)
 
 
 def _tax_amount(captured_tax: CapturedTax | None) -> Money | None:
@@ -202,6 +227,7 @@ class PlaceOrder:
         addresses: AddressReader,
         shipping: ShippingRateReader,
         tax: TaxCalculator,
+        tax_classes: ProductTaxClassReader,
         inventory: Inventory,
         orders: OrderRepository,
         numbers: OrderNumberGenerator,
@@ -217,6 +243,7 @@ class PlaceOrder:
         self._addresses = addresses
         self._shipping = shipping
         self._tax = tax
+        self._tax_classes = tax_classes
         self._inventory = inventory
         self._orders = orders
         self._numbers = numbers
@@ -262,10 +289,12 @@ class PlaceOrder:
                 inventory=self._inventory,
             )
             lines = build_order_lines(priced_items)
-            # Tax applies to the goods subtotal plus shipping (the pre-tax total); resolve it
-            # against that base and capture the computed amount onto the order.
-            taxable = order_total(lines, currency, captured_shipping.cost)
-            captured_tax = _resolve_tax(self._tax, channel.value, taxable)
+            # Tax is resolved per line by the product's tax class (exempt lines pay none) plus
+            # shipping at the standard class, and the computed total is captured onto the order.
+            class_by_sku = self._tax_classes.tax_class_of([line.sku.value for line in lines])
+            captured_tax = _resolve_captured_tax(
+                self._tax, channel.value, currency, lines, captured_shipping.cost, class_by_sku
+            )
             total = order_total(lines, currency, captured_shipping.cost, _tax_amount(captured_tax))
             order = Order(
                 number=self._numbers.next(),
@@ -414,6 +443,7 @@ class CreateManualOrder:
         pricing: PricingReader,
         channels: ChannelReader,
         tax: TaxCalculator,
+        tax_classes: ProductTaxClassReader,
         inventory: Inventory,
         orders: OrderRepository,
         numbers: OrderNumberGenerator,
@@ -425,6 +455,7 @@ class CreateManualOrder:
         self._pricing = pricing
         self._channels = channels
         self._tax = tax
+        self._tax_classes = tax_classes
         self._inventory = inventory
         self._orders = orders
         self._numbers = numbers
@@ -446,8 +477,12 @@ class CreateManualOrder:
                 inventory=self._inventory,
             )
             lines = build_order_lines(priced_items)
-            # A manual order has no shipping charge, so tax applies to the goods subtotal alone.
-            captured_tax = _resolve_tax(self._tax, channel.value, order_total(lines, currency))
+            # A manual order has no shipping charge, so tax applies to the goods lines alone,
+            # each at its product's tax class (an exempt line pays none).
+            class_by_sku = self._tax_classes.tax_class_of([line.sku.value for line in lines])
+            captured_tax = _resolve_captured_tax(
+                self._tax, channel.value, currency, lines, Money.zero(currency), class_by_sku
+            )
             total = order_total(lines, currency, None, _tax_amount(captured_tax))
             # An empty line list can build no order (EmptyOrderError from the aggregate)
             # and a repeated sku is rejected (DuplicateOrderLineError) -- both roll back.

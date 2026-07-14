@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from decimal import Decimal
 
 import structlog
 from django.db import IntegrityError, transaction
@@ -108,6 +109,7 @@ from src.infrastructure.inventory.repositories import (
     DjangoStockPolicyRepository,
     DjangoStockSourceRepository,
 )
+from src.infrastructure.tax.rates import SettingsTaxRateReader
 
 logger = structlog.get_logger(__name__)
 
@@ -378,10 +380,21 @@ class DjangoProductQueryRepository(ProductQueryRepository):
             for code, sku in priced_variants
             if available_by_sku.get(sku, 0) > 0 or sku in backorderable
         }
+        # Resolve each product's tax-class rate in the channel (None for an exempt product or
+        # an untaxed channel) so the storefront can show a "prices include X% VAT" note.
+        tax_reader = SettingsTaxRateReader()
+        class_by_code = dict(
+            ProductModel.objects.filter(code__in=codes).values_list("code", "tax_class")
+        )
+        rate_by_code: dict[str, Decimal | None] = {}
+        for code in codes:
+            rate = tax_reader.rate_for(channel, class_by_code.get(code, "standard"))
+            rate_by_code[code] = rate.value if rate is not None else None
         return {
             code: PriceSummary(
                 from_price=from_by_code.get(code),
                 available=code in available_codes,
+                tax_rate=rate_by_code[code],
             )
             for code in codes
         }

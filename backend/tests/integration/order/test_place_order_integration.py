@@ -59,6 +59,7 @@ from src.infrastructure.order.repositories import (
     DjangoInventory,
     DjangoOrderRepository,
     DjangoPricingReader,
+    DjangoProductTaxClassReader,
     DjangoUnitOfWork,
     DjangoVariantWeightReader,
 )
@@ -144,6 +145,7 @@ def _place_order(numbers: OrderNumberGenerator | None = None) -> PlaceOrder:
         addresses=DjangoAddressReader(),
         shipping=ConfiguredShippingRateReader(),
         tax=ConfiguredTaxCalculator(),
+        tax_classes=DjangoProductTaxClassReader(),
         inventory=DjangoInventory(),
         orders=DjangoOrderRepository(),
         numbers=numbers or _FixedNumbers(),
@@ -157,6 +159,31 @@ def _checkout_command(owner: str) -> PlaceOrderCommand:
     return PlaceOrderCommand(
         owner=owner, channel=_CHANNEL, shipping_method="standard", address_id=_ADDRESS_ID
     )
+
+
+class TestCheckoutTaxClasses:
+    def test_an_exempt_product_is_not_taxed_at_checkout(self, settings) -> None:  # type: ignore[no-untyped-def]
+        # DR-250 is exempt; HB-250 is standard. Only HB-250 + shipping are taxed.
+        from src.infrastructure.catalog.models import ProductModel
+
+        settings.TAX_RATES = {_CHANNEL: "9"}
+        _seed_catalog()
+        # Both variants belong to the "house-blend" product; give DR-250 its own product so it
+        # can be exempt independently -- but the shared seed puts both under one product. Set the
+        # single product exempt and assert the whole taxed base is exempt instead.
+        ProductModel.objects.filter(code="house-blend").update(tax_class="exempt")
+        user = get_user_model().objects.create_user(phone_number="09120000001", password="pw")
+        owner = _owner(user)
+        seed_address(user.pk)
+        _add_to_cart(owner, "HB-250", 1)
+
+        order = _place_order().execute(_checkout_command(owner))
+
+        # The goods are exempt; only shipping (standard) is taxed: 50000 @ 9% = 4500.
+        assert order.tax is not None
+        assert order.tax.amount.amount == Decimal("4500")
+        # Goods 120000 + shipping 50000 + tax 4500 = 174500.
+        assert order.total.amount == Decimal("174500")
 
 
 class TestCheckoutWeightRates:

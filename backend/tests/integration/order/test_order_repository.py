@@ -44,6 +44,8 @@ from src.infrastructure.order.repositories import (
     DjangoInventory,
     DjangoOrderRepository,
     DjangoPricingReader,
+    DjangoProductTaxClassReader,
+    DjangoVariantWeightReader,
 )
 
 pytestmark = [pytest.mark.django_db, pytest.mark.integration]
@@ -257,6 +259,26 @@ class TestPricingReaderBridge:
         # A variant with no price row in the channel cannot be captured for an order, so
         # the reader returns None (the use case then refuses the line).
         assert DjangoPricingReader().price_of("NO-SUCH-SKU", "ir-main") is None
+
+
+class TestCatalogBridges:
+    def test_variant_weight_reader_reads_grams_and_handles_empty(self) -> None:
+        _seed_variant("HB-250", 5)
+        from src.infrastructure.catalog.models import ProductVariantModel
+
+        ProductVariantModel.objects.filter(sku="HB-250").update(weight_grams=250)
+        reader = DjangoVariantWeightReader()
+        assert reader.weight_of(["HB-250"]) == {"HB-250": 250}
+        assert reader.weight_of([]) == {}
+
+    def test_product_tax_class_reader_reads_class_and_handles_empty(self) -> None:
+        _seed_variant("HB-250", 5)
+        from src.infrastructure.catalog.models import ProductModel
+
+        ProductModel.objects.filter(code="house-blend").update(tax_class="reduced")
+        reader = DjangoProductTaxClassReader()
+        assert reader.tax_class_of(["HB-250"]) == {"HB-250": "reduced"}
+        assert reader.tax_class_of([]) == {}
 
 
 class TestModelRepr:

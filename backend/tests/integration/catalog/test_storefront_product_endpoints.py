@@ -260,6 +260,30 @@ class TestChannelPricing:
         item = next(p for p in response.data["results"] if p["code"] == "house-blend")
         assert "from_price" not in item
         assert "available" not in item
+        assert "tax_rate" not in item
+
+    def test_exposes_the_products_tax_class_rate(self, settings) -> None:  # type: ignore[no-untyped-def]
+        settings.TAX_RATES = {"ir-main": "9"}
+        self._seed_priced()
+
+        response = APIClient().get(_LIST_URL, {"channel": "ir-main"})
+
+        item = next(p for p in response.data["results"] if p["code"] == "house-blend")
+        # A standard-class product (the default) gets the channel headline rate.
+        assert Decimal(item["tax_rate"]) == Decimal("9")
+
+    def test_an_exempt_product_reads_a_null_tax_rate(self, settings) -> None:  # type: ignore[no-untyped-def]
+        from src.infrastructure.catalog.models import ProductModel
+
+        settings.TAX_CLASSES = {"ir-main": {"standard": "9"}}
+        settings.TAX_RATES = {"ir-main": "9"}
+        self._seed_priced()
+        ProductModel.objects.filter(code="house-blend").update(tax_class="exempt")
+
+        response = APIClient().get(_LIST_URL, {"channel": "ir-main"})
+
+        item = next(p for p in response.data["results"] if p["code"] == "house-blend")
+        assert item["tax_rate"] is None
 
     def test_a_zero_stock_variant_reads_as_out_of_stock(self) -> None:
         from src.domain.catalog.value_objects import StockQuantity

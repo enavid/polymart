@@ -206,13 +206,30 @@ class TaxCalculator(ABC):
     """
 
     @abstractmethod
-    def calculate(self, *, channel: str, taxable: Money) -> TaxQuote | None:
-        """Return the tax due on ``taxable`` in the channel, or ``None`` if the channel is untaxed.
+    def calculate(
+        self, *, channel: str, taxable: Money, tax_class: str = "standard"
+    ) -> TaxQuote | None:
+        """Return the tax due on ``taxable`` for a tax class, or ``None`` if that class is untaxed.
 
-        The ``taxable`` amount is the base the tax applies to (goods subtotal plus shipping) in
-        the resolved order currency. ``None`` means the channel levies no tax, so the order
-        captures no tax line and its total is the pre-tax amount.
+        The ``taxable`` amount is the base the tax applies to (a line's goods total, or the
+        shipping charge) in the resolved order currency; ``tax_class`` selects the rate (a
+        product's class, or ``"standard"`` for shipping). ``None`` means that class levies no
+        tax (an exempt product, or an untaxed channel), so it contributes nothing to the order's
+        tax.
         """
+
+
+class ProductTaxClassReader(ABC):
+    """Narrow read boundary onto the catalog for a variant's product tax class.
+
+    Checkout taxes each line at its product's tax class, so it needs the class per SKU; an
+    unknown SKU falls back to ``"standard"`` (the catalog guarantees a class on every product,
+    so this is only a defensive default).
+    """
+
+    @abstractmethod
+    def tax_class_of(self, skus: Sequence[str]) -> dict[str, str]:
+        """Return the per-sku product tax class, batched (missing skus omitted)."""
 
 
 @dataclass(frozen=True)
